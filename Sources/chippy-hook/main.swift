@@ -111,10 +111,57 @@ func install(_ args: [String]) -> Never {
     exit(0)
 }
 
+/// `chippy-hook demo approval|queue|done`: sends synthetic events so you can see the notch react. Touches no real session.
+func demo(_ args: [String]) -> Never {
+    let kind = args.first ?? "approval"
+    func send(_ o: [String: Any], wait: Bool = false) -> String? {
+        guard let fd = SocketClient.connect() else { print("Chippy.app is not running."); exit(1) }
+        writeLine(fd: fd, try! JSONSerialization.data(withJSONObject: o))
+        guard wait else { close(fd); return nil }
+        var tv = timeval(tv_sec: 60, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+        defer { close(fd) }
+        return readLine(fd: fd).flatMap { String(data: $0, encoding: .utf8) } ?? "(no answer)"
+    }
+    func ev(_ sid: String, _ name: String, _ extra: [String: Any] = [:]) -> [String: Any] {
+        var o: [String: Any] = ["session_id": sid, "hook_event_name": name, "cwd": "/demo/\(sid == "demo-a" ? "api-server" : "web-app")",
+                                "chippy_branch": sid == "demo-a" ? "fix/login-timeout" : "feat/dashboard"]
+        for (k, v) in extra { o[k] = v }
+        return o
+    }
+    switch kind {
+    case "done":
+        _ = send(ev("demo-a", "UserPromptSubmit", ["prompt": "Fix the login timeout bug"]))
+        _ = send(ev("demo-a", "PostToolUse", ["tool_name": "Edit", "tool_input": ["file_path": "/demo/api-server/auth.ts", "old_string": "a", "new_string": "a\nb\nc"]]))
+        _ = send(ev("demo-a", "Stop"))
+        print("Done chip is up and stays until you click Dismiss (or 10 min). Click it for detail.")
+    case "approval", "queue":
+        _ = send(ev("demo-a", "UserPromptSubmit", ["prompt": "Clean up the build output and reinstall dependencies"]))
+        let group = DispatchGroup()
+        let reqs: [(String, String)] = kind == "queue"
+            ? [("demo-a", "rm -rf node_modules && npm install"), ("demo-b", "git push origin feat/dashboard --force-with-lease")]
+            : [("demo-a", "rm -rf node_modules && npm install")]
+        for (sid, cmd) in reqs {
+            group.enter()
+            DispatchQueue.global().async {
+                let r = send(ev(sid, "PermissionRequest", ["tool_name": "Bash", "tool_input": ["command": cmd]]), wait: true)
+                print("\(sid): \(r ?? "")"); group.leave()
+            }
+            Thread.sleep(forTimeInterval: 0.2) // keep arrival order = queue order
+        }
+        print("Waiting for your answer on the notch (60s)…")
+        group.wait()
+    default:
+        print("usage: chippy-hook demo approval|queue|done"); exit(2)
+    }
+    exit(0)
+}
+
 let args = Array(CommandLine.arguments.dropFirst())
 switch args.first {
 case "relay": relay(Array(args.dropFirst()))
 case "install": install(Array(args.dropFirst()))
+case "demo": demo(Array(args.dropFirst()))
 case "stats":
     let events = EventLog.read(ChippyPaths.supportDir.appendingPathComponent("events.jsonl"))
     let w = WaitSummary(events)

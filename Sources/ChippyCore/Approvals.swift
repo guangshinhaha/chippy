@@ -20,6 +20,11 @@ public struct PendingRequest: Identifiable, Equatable {
     /// One-line ask, verbatim from the tool input (e.g. "Bash: npm install").
     public let ask: String
     public let createdAt: Date
+    public let branch: String?
+    /// Full command / path / input, for the detail card (capped). In memory only.
+    public let detail: String
+    /// The thread's last prompt, for context. In memory only.
+    public var lastPrompt: String?
     /// SHA-256 of the full tool input, so "Always" on an Edit can't cover other content in the same file.
     let inputDigest: String
 
@@ -31,17 +36,24 @@ public struct PendingRequest: Identifiable, Equatable {
         toolName = p.toolName ?? "tool"
         ask = Self.oneLine(tool: p.toolName ?? "tool", input: p.toolInput)
         createdAt = now
+        branch = p.branch
+        detail = String(Self.rawDetail(p.toolInput).prefix(800))
         let canon = (try? JSONSerialization.data(withJSONObject: p.toolInput, options: [.sortedKeys])) ?? Data()
         inputDigest = AlwaysStore.sha256(canon)
     }
 
-    static func oneLine(tool: String, input: [String: Any]) -> String {
+    static func rawDetail(_ input: [String: Any]) -> String {
         let detail: String
         if let c = input["command"] as? String { detail = c }
         else if let f = input["file_path"] as? String { detail = f }
         else if let d = try? JSONSerialization.data(withJSONObject: input, options: [.sortedKeys]),
                 let s = String(data: d, encoding: .utf8), s != "{}" { detail = s }
         else { detail = "" }
+        return detail
+    }
+
+    static func oneLine(tool: String, input: [String: Any]) -> String {
+        let detail = rawDetail(input)
         let flat = detail.split(whereSeparator: \.isNewline).joined(separator: " ⏎ ")
         return detail.isEmpty ? tool : "\(tool): \(flat)"
     }

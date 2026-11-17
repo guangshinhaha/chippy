@@ -7,6 +7,9 @@ public struct HookPayload {
     public let event: String
     public let toolName: String?
     public let toolInput: [String: Any]
+    /// The user's prompt (UserPromptSubmit only). Kept in memory for context on the card, never logged or sent anywhere.
+    public let prompt: String?
+    private let branchOverride: String?
 
     public init?(json: Data) {
         guard let o = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
@@ -17,6 +20,8 @@ public struct HookPayload {
         cwd = o["cwd"] as? String ?? ""
         toolName = o["tool_name"] as? String
         toolInput = o["tool_input"] as? [String: Any] ?? [:]
+        prompt = o["prompt"] as? String
+        branchOverride = o["chippy_branch"] as? String // only the demo command sets this
     }
 
     /// Repo name for the session. A Claude worktree (`<repo>/.claude/worktrees/agent-xyz`) is labelled by its repo,
@@ -32,6 +37,8 @@ public struct HookPayload {
 
     /// An automated agent running in its own worktree: nobody is waiting on its "finished".
     public var isAgentWorktree: Bool { cwd.contains("/.claude/worktrees/agent-") }
+
+    public var branch: String? { branchOverride ?? GitInfo.branch(cwd: cwd) }
 
     public var filePath: String? { toolInput["file_path"] as? String }
 }
