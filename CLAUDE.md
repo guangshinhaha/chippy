@@ -1,0 +1,3 @@
+# Chippy
+
+shinstack-mode: auto
