@@ -40,9 +40,10 @@ public final class EventLog {
     }
 
     public static func read(_ url: URL) -> [WaitEvent] {
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+        guard let data = try? Data(contentsOf: url) else { return [] }
         let dec = JSONDecoder()
-        return text.split(separator: "\n").compactMap { try? dec.decode(WaitEvent.self, from: Data($0.utf8)) }
+        // Split bytes, not a String: one bad byte must not drop the whole log.
+        return data.split(separator: UInt8(ascii: "\n")).compactMap { try? dec.decode(WaitEvent.self, from: Data($0)) }
     }
 }
 
@@ -60,7 +61,7 @@ public struct WaitSummary: Equatable {
         total = events.count
         totalWaitMs = events.reduce(0) { $0 + $1.waitMs }
         let w = events.map(\.waitMs).sorted()
-        medianWaitMs = w.isEmpty ? 0 : w[w.count / 2]
+        medianWaitMs = w.isEmpty ? 0 : (w.count % 2 == 1 ? w[w.count / 2] : (w[w.count / 2 - 1] + w[w.count / 2]) / 2)
         fromNotch = events.filter { $0.channel == .notch }.count
         fromTerminal = events.filter { $0.channel == .terminal }.count
     }

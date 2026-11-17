@@ -108,7 +108,7 @@ case "install": install(Array(args.dropFirst()))
 case "stats":
     let events = EventLog.read(ChippyPaths.supportDir.appendingPathComponent("events.jsonl"))
     let w = WaitSummary(events)
-    print("approvals: \(w.total)  from notch: \(w.fromNotch)  from terminal: \(w.fromTerminal)  notch share: \(Int(w.notchShare * 100))%")
+    print("approvals: \(w.total)  from notch: \(w.fromNotch)  from terminal: \(w.fromTerminal)  notch share: \(Int((w.notchShare * 100).rounded()))%")
     print("idle wait: total \(w.totalWaitMs)ms  median \(w.medianWaitMs)ms")
     exit(0)
 default:

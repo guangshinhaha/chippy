@@ -57,5 +57,6 @@ final class EventLogTests: XCTestCase {
         let s = WaitSummary([mk(1000, .notch), mk(3000, .notch), mk(20000, .terminal), mk(2000, .notch)])
         XCTAssertEqual(s.totalWaitMs, 26000)          // idle-wait baseline
         XCTAssertEqual(s.notchShare, 0.75)            // share actioned from notch vs terminal
+        XCTAssertEqual(s.medianWaitMs, 2500)          // even count averages the middle two
     }
 }
