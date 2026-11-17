@@ -135,4 +135,16 @@ final class NotchModelTests: XCTestCase {
         m.apply(HookPayload(json: Data(#"{"session_id":"b","hook_event_name":"Stop","cwd":"/w/web"}"#.utf8))!)
         XCTAssertEqual(m.doneItems[1].headline, "finished"); XCTAssertFalse(m.doneItems[1].asksYou)
     }
+
+    func testClickOutsideFoldsDetailButKeepsTheChipAndApprovals() {
+        let m = model()
+        m.apply(ev("Stop"), now: Date())
+        m.toggleOpen(); XCTAssertEqual(m.density, Density.expanded)
+        m.closeDetail()
+        XCTAssertEqual(m.density, Density.compact); XCTAssertEqual(m.doneItems.count, 1)   // folded, not dismissed
+        let (c, _) = pair()
+        m.receiveApproval(HookPayload(json: Data(#"{"session_id":"a","hook_event_name":"PermissionRequest","cwd":"/w","tool_name":"Bash","tool_input":{"command":"x"}}"#.utf8))!, c)
+        m.closeDetail()
+        XCTAssertEqual(m.pending.count, 1); XCTAssertEqual(m.density, Density.expanded)   // approval stays
+    }
 }
