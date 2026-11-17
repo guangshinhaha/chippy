@@ -11,6 +11,8 @@ public struct HookPayload {
     public let prompt: String?
     /// Claude's final message (Stop only). In memory for the done card; never logged or sent anywhere.
     public let lastMessage: String?
+    /// Host app + tty added by the relay (SessionStart/UserPromptSubmit/Stop). In memory only.
+    public let host: HostInfo?
     private let branchOverride: String?
 
     public init?(json: Data) {
@@ -24,6 +26,9 @@ public struct HookPayload {
         toolInput = o["tool_input"] as? [String: Any] ?? [:]
         prompt = o["prompt"] as? String
         lastMessage = o["last_assistant_message"] as? String
+        let hp = (o["chippy_host_pid"] as? NSNumber)?.int32Value
+        let hb = o["chippy_host_bundle"] as? String, tty = o["chippy_tty"] as? String
+        host = (hp != nil || hb != nil || tty != nil) ? HostInfo(pid: hp, bundle: hb, tty: tty) : nil
         branchOverride = o["chippy_branch"] as? String // only the demo command sets this
     }
 

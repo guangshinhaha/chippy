@@ -14,6 +14,7 @@ public struct SessionRow: Identifiable, Equatable {
     public var filesEdited: Set<String> = []
     public var added = 0
     public var removed = 0
+    public var host: HostInfo?
     public var updatedAt: Date
 
     /// One-line live status, e.g. "Claude Code · editing 3 files".
@@ -40,6 +41,8 @@ public struct SessionStore {
             return rows.count - 1
         }()
         rows[i].updatedAt = now
+        // Latest wins, but a tty-only report must not erase a known host app.
+        if let h = p.host, h.hasHost || rows[i].host == nil { rows[i].host = h }
         switch p.event {
         case "SessionStart":
             rows[i].status = .idle; rows[i].detail = "Session started"

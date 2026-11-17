@@ -182,7 +182,7 @@ public final class NotchModel: ObservableObject {
             if let r = sessions.first(where: { $0.id == payload.sessionId }) {
                 doneItems.removeAll { $0.sessionId == r.id }
                 doneItems.append(DoneItem(sessionId: r.id, project: r.project, branch: r.branch,
-                                          files: r.filesEdited.count, added: r.added, removed: r.removed, reply: r.lastReply, prompt: r.lastPrompt, at: now))
+                                          files: r.filesEdited.count, added: r.added, removed: r.removed, reply: r.lastReply, prompt: r.lastPrompt, at: now, host: r.host))
             }
         case "UserPromptSubmit", "SessionEnd", "PreToolUse", "PostToolUse":
             // Only the thread itself moving on (new prompt, tool use after a Stop, or ending) clears its chip; another thread's activity must not.
@@ -204,6 +204,7 @@ public struct DoneItem: Identifiable, Equatable {
     public let reply: String?
     public let prompt: String?
     public let at: Date
+    public var host: HostInfo? = nil
 
     /// Claude ended on a question: the thread is waiting for you, not just done.
     public var asksYou: Bool { reply?.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("?") ?? false }
