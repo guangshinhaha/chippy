@@ -89,7 +89,7 @@ struct NotchView: View {
                     if req.questions != nil {
                         QuestionCard(req: req, send: { model.answer(req.id, $0) }, handBack: { model.handBack(req.id) }).id(req.id)
                     } else {
-                        ApprovalCard(req: req, decide: { model.resolve(req.id, $0) }, handBack: { model.handBack(req.id) })
+                        ApprovalCard(req: req) { model.resolve(req.id, $0) }
                     }
                 } else if model.pinnedOpen {
                     ForEach(model.doneItems.reversed().prefix(3)) { d in DoneCard(item: d) { model.dismissDone(d.sessionId) } }
@@ -119,7 +119,6 @@ struct ContentHeightKey: PreferenceKey {
 struct ApprovalCard: View {
     let req: PendingRequest
     let decide: (Decision) -> Void
-    let handBack: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -141,8 +140,6 @@ struct ApprovalCard: View {
                 ChipButton(title: "Always allow this", hint: "\(ShortcutKeys.prefix)A", kind: .quiet) { decide(.always) }
             }
             .padding(.top, 2)
-            // No keyboard shortcut for hand-back (#34): left out on purpose, the gate in HotKeys.swift is per-action.
-            ChipButton(title: "Answer in terminal", kind: .quiet, action: handBack)
         }
     }
 }
