@@ -201,6 +201,11 @@ struct ChipStyle: ButtonStyle {
 }
 
 /// Claude's own multiple-choice question. Pick an option per question; the last pick sends the answers.
+private struct QuestionBodyHeight: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
 struct QuestionCard: View {
     let req: PendingRequest
     let send: ([String: String]) -> Void
@@ -209,6 +214,8 @@ struct QuestionCard: View {
     @State private var answers: [String: String] = [:]
     @State private var sent = false
     @State private var leadExpanded = false
+    @State private var bodyHeight: CGFloat = 0
+    private static let maxBodyHeight: CGFloat = 330
 
     @ViewBuilder private func questionBody(_ q: AskQuestion, _ count: Int) -> some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -250,11 +257,15 @@ struct QuestionCard: View {
             }
             // Short card: hugs its content. Tall one: this part scrolls at a FIXED height (a flexible one would
             // fill whatever the panel offers and the card would keep growing), like the done card.
-            ViewThatFits(in: .vertical) {
-                questionBody(q, qs.count)
-                ScrollView { questionBody(q, qs.count) }.frame(height: 330)
+            // Measured, not ViewThatFits + maxHeight: a flexible container fills the 330pt it is offered and
+            // centres the content, leaving dead space above and below a short question.
+            let content = questionBody(q, qs.count)
+                .fixedSize(horizontal: false, vertical: true)
+                .background(GeometryReader { g in Color.clear.preference(key: QuestionBodyHeight.self, value: g.size.height) })
+            Group {
+                if bodyHeight > Self.maxBodyHeight { ScrollView { content }.frame(height: Self.maxBodyHeight) } else { content }
             }
-            .frame(maxHeight: 330)
+            .onPreferenceChange(QuestionBodyHeight.self) { bodyHeight = $0 }
             ChipButton(title: "Answer in terminal", kind: .quiet) { if !sent { sent = true; handBack() } }
             TourCaption(sessionId: req.sessionId, step: .question)
         }
