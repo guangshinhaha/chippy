@@ -13,7 +13,7 @@ func debug(_ s: String) {
 
 func relay(_ args: [String]) -> Never {
     var timeout = SettingsInstaller.defaultApprovalTimeout
-    if let i = args.firstIndex(of: "--timeout"), i + 1 < args.count, let t = Int(args[i + 1]) { timeout = t }
+    if let i = args.firstIndex(of: "--timeout"), i + 1 < args.count, let t = Int(args[i + 1]) { timeout = min(max(t, 1), 120) }
     let start = DispatchTime.now()
     func ms() -> String { String(format: "%.1fms", Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1e6) }
     let input = FileHandle.standardInput.readDataToEndOfFile()
@@ -53,7 +53,7 @@ func install(_ args: [String]) -> Never {
     var i = 0
     while i < args.count {
         if args[i] == "--yes" { yes = true }
-        else if args[i] == "--timeout", i + 1 < args.count, let t = Int(args[i + 1]) { timeout = t; i += 1 }
+        else if args[i] == "--timeout", i + 1 < args.count, let t = Int(args[i + 1]) { timeout = min(max(t, 1), 120); i += 1 }
         else if args[i] == "--settings", i + 1 < args.count { settingsPath = args[i + 1]; i += 1 }
         i += 1
     }

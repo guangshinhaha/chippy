@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public enum Decision: Equatable {
@@ -19,6 +20,8 @@ public struct PendingRequest: Identifiable, Equatable {
     /// One-line ask, verbatim from the tool input (e.g. "Bash: npm install").
     public let ask: String
     public let createdAt: Date
+    /// SHA-256 of the full tool input, so "Always" on an Edit can't cover other content in the same file.
+    let inputDigest: String
 
     public init(payload p: HookPayload, id: String = UUID().uuidString, now: Date = Date()) {
         self.id = id
@@ -28,6 +31,8 @@ public struct PendingRequest: Identifiable, Equatable {
         toolName = p.toolName ?? "tool"
         ask = Self.oneLine(tool: p.toolName ?? "tool", input: p.toolInput)
         createdAt = now
+        let canon = (try? JSONSerialization.data(withJSONObject: p.toolInput, options: [.sortedKeys])) ?? Data()
+        inputDigest = AlwaysStore.sha256(canon)
     }
 
     static func oneLine(tool: String, input: [String: Any]) -> String {
@@ -54,7 +59,12 @@ public final class AlwaysStore {
         } else { keys = [] }
     }
 
-    static func key(_ r: PendingRequest) -> String { [r.cwd, r.toolName, r.ask].joined(separator: "\u{1F}") }
+    static func sha256(_ d: Data) -> String { SHA256.hash(data: d).map { String(format: "%02x", $0) }.joined() }
+
+    /// Hashed, so always.json never holds raw commands, paths or anything pasted into them (PDPA).
+    static func key(_ r: PendingRequest) -> String {
+        sha256(Data([r.cwd, r.toolName, r.ask, r.inputDigest].joined(separator: "\u{1F}").utf8))
+    }
     public func contains(_ r: PendingRequest) -> Bool { keys.contains(Self.key(r)) }
 
     public func insert(_ r: PendingRequest) {
