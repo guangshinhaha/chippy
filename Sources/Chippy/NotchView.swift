@@ -134,10 +134,10 @@ struct ApprovalCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.4)).lineLimit(1).truncationMode(.head)
             HStack(spacing: 8) {
-                ChipButton(title: "Allow", kind: .primary) { decide(.allow) }
-                ChipButton(title: "Deny", kind: .destructive) { decide(.deny) }
+                ChipButton(title: "Allow", hint: "\(ShortcutKeys.prefix)Y", kind: .primary) { decide(.allow) }
+                ChipButton(title: "Deny", hint: "\(ShortcutKeys.prefix)N", kind: .destructive) { decide(.deny) }
                 Spacer(minLength: 0)
-                ChipButton(title: "Always allow this", kind: .quiet) { decide(.always) }
+                ChipButton(title: "Always allow this", hint: "\(ShortcutKeys.prefix)A", kind: .quiet) { decide(.always) }
             }
             .padding(.top, 2)
         }
@@ -149,12 +149,18 @@ struct ApprovalCard: View {
 struct ChipButton: View {
     enum Kind { case primary, destructive, neutral, quiet }
     let title: String
+    var hint: String? = nil
     let kind: Kind
     let action: () -> Void
     @State private var hover = false
 
     var body: some View {
-        Button(action: action) { Text(title) }
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Text(title)
+                if let hint { Text(hint).font(.caption2).opacity(0.5) }
+            }
+        }
             .buttonStyle(ChipStyle(kind: kind, hover: hover))
             .onHover { hover = $0 }
     }
@@ -210,23 +216,38 @@ struct QuestionCard: View {
             Text(qs.count > 1 ? "\(q.header.isEmpty ? "Question" : q.header) · \(step + 1) of \(qs.count)" : (q.header.isEmpty ? "Claude asks" : q.header))
                 .font(.caption2).foregroundStyle(.white.opacity(0.6))
             Text(q.question).font(.caption.bold()).foregroundStyle(.white).lineLimit(3)
-            ForEach(Array(q.options.enumerated()), id: \.offset) { _, o in
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(o.label).font(.caption.bold()).foregroundStyle(.white)
-                    if !o.description.isEmpty { Text(o.description).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(1) }
+            ForEach(Array(q.options.enumerated()), id: \.offset) { i, o in
+                HStack(alignment: .top, spacing: 8) {
+                    if i < 9 { Text("\(i + 1)").font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.4)).padding(.top, 1) }
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(o.label).font(.caption.bold()).foregroundStyle(.white)
+                        if !o.description.isEmpty { Text(o.description).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(1) }
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10).padding(.vertical, 5)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: 0.18)))
                 .contentShape(Rectangle())
-                .onTapGesture {
-                    guard !sent else { return } // a double-click must not answer the next question too
-                    answers[q.question] = o.label
-                    if step + 1 < qs.count { step += 1 } else { sent = true; send(answers) }
-                }
+                .onTapGesture { pick(i) }
             }
             Text("Or answer in the terminal").font(.caption2).foregroundStyle(.white.opacity(0.4))
         }
+        .onReceive(ShortcutBus.events) { e in
+            // Keys take the same path as a tap, for this card only.
+            guard e.requestId == req.id, case .option(let n) = e.action,
+                  let i = ShortcutGate.optionIndex(forKey: n, optionCount: q.options.count) else { return }
+            pick(i)
+        }
+    }
+
+    /// The one answer path for taps and keys: the `sent` guard and multi-question stepping live here.
+    private func pick(_ index: Int) {
+        let qs = req.questions ?? []
+        guard !sent, !qs.isEmpty else { return } // a double-click or key repeat must not answer the next question too
+        let q = qs[min(step, qs.count - 1)]
+        guard q.options.indices.contains(index) else { return }
+        answers[q.question] = q.options[index].label
+        if step + 1 < qs.count { step += 1 } else { sent = true; send(answers) }
     }
 }
 
