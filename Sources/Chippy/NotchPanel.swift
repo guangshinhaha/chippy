@@ -58,6 +58,10 @@ final class NotchPanel: NSPanel {
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         contentView = NSHostingView(rootView: NotchView(model: model, box: metrics))
         model.$density.receive(on: RunLoop.main).sink { [weak self] d in self?.dock(d) }.store(in: &bag)
+        model.$visible.receive(on: RunLoop.main).sink { [weak self] v in
+            guard let self else { return }
+            if v { self.dock(self.model.density); self.orderFrontRegardless() } else { self.orderOut(nil) }
+        }.store(in: &bag)
         dock(model.density)
         NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
             .receive(on: RunLoop.main).sink { [weak self] _ in

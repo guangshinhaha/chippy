@@ -24,6 +24,12 @@ struct NotchView: View {
         .onTapGesture { model.toggleOpen() }
     }
 
+    /// Toast text: which project just finished, so several threads can be told apart.
+    private var compactText: String {
+        guard let latest = model.sessions.max(by: { $0.updatedAt < $1.updatedAt }) else { return model.state.title }
+        return "\(latest.project) · \(model.state == .done ? "finished" : latest.detail)"
+    }
+
     /// Content beside the camera: icon in the left wing, text in the right wing, nothing under the cutout.
     @ViewBuilder
     var content: some View {
@@ -42,7 +48,7 @@ struct NotchView: View {
                     .padding(.leading, 10).frame(width: wing)
                 Color.clear.frame(width: m.width)
                 HStack(spacing: 6) {
-                    Text(model.sessions.first?.detail ?? model.state.title)
+                    Text(compactText)
                         .font(.caption.bold()).foregroundStyle(.white)
                         .lineLimit(1).truncationMode(.tail)
                     if model.sessions.count > 1 {
@@ -59,7 +65,8 @@ struct NotchView: View {
                 Spacer().frame(height: box.metrics.height + 2)
                 HStack(spacing: 10) {
                     StateIcon(state: model.state, size: 28)
-                    Text(model.state.title).font(.headline).foregroundStyle(.white)
+                    Text(model.pending.isEmpty ? model.state.title : "\(model.state.title) · 1 of \(model.pending.count)")
+                        .font(.headline).foregroundStyle(.white)
                 }
                 if let req = model.pending.first {
                     ApprovalCard(req: req, more: model.pending.count - 1) { model.resolve(req.id, $0) }
@@ -67,7 +74,8 @@ struct NotchView: View {
                 if model.sessions.isEmpty && model.pending.isEmpty {
                     Text("No agent sessions.").font(.caption).foregroundStyle(.white.opacity(0.6))
                 }
-                ForEach(model.sessions) { row in
+                // The list is a peek the user asked for; an approval shows only the approval.
+                ForEach(model.pending.isEmpty ? model.sessions : []) { row in
                     VStack(alignment: .leading, spacing: 1) {
                         Text("\(row.project) · \(row.headline)").font(.caption.bold()).foregroundStyle(.white)
                         Text(row.detail).font(.caption2).foregroundStyle(.white.opacity(0.6))
