@@ -68,7 +68,10 @@ final class KeepAwake {
 
     private func refreshMenu() {
         toggleItem.state = enabled ? .on : .off
-        lidItem.title = Self.setupInstalled ? "Also when the lid is closed" : "Also when the lid is closed…"
+        let nameOK = SudoersRule.isValidUser(NSUserName())
+        lidItem.title = Self.setupInstalled ? "Also when the lid is closed"
+            : (nameOK ? "Also when the lid is closed…" : "Lid-closed mode unavailable: account name not allowed in sudoers")
+        lidItem.isEnabled = Self.setupInstalled || nameOK
         lidItem.state = lidMode ? .on : .off
         removeItem.isHidden = !Self.setupInstalled
         let hold = assertion != 0
