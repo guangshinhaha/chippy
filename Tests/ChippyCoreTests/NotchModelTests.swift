@@ -43,6 +43,13 @@ final class NotchModelTests: XCTestCase {
         XCTAssertFalse(m.visible)
     }
 
+    func testAnotherThreadsPromptDoesNotDismissMyToast() {
+        let m = model(); let t = Date()
+        m.apply(ev("Stop", "a"), now: t)
+        m.apply(ev("UserPromptSubmit", "b"), now: t)
+        XCTAssertTrue(m.visible)
+    }
+
     func testClickPeeksSessionListAndSecondClickHidesIt() {
         let m = model()
         m.apply(ev("SessionStart"))

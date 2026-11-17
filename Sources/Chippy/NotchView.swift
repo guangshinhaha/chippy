@@ -24,13 +24,13 @@ struct NotchView: View {
         .onTapGesture { model.toggleOpen() }
     }
 
-    /// Content beside the camera: icon in the left wing, text in the right wing, nothing under the cutout.
     /// Toast text: which project just finished, so several threads can be told apart.
     private var compactText: String {
         guard let latest = model.sessions.max(by: { $0.updatedAt < $1.updatedAt }) else { return model.state.title }
         return "\(latest.project) · \(model.state == .done ? "finished" : latest.detail)"
     }
 
+    /// Content beside the camera: icon in the left wing, text in the right wing, nothing under the cutout.
     @ViewBuilder
     var content: some View {
         let m = box.metrics

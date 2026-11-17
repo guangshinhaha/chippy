@@ -33,6 +33,7 @@ public final class NotchModel: ObservableObject {
     /// The notch only appears when something needs the user: an approval, a just-finished toast, or a menu-bar peek.
     @Published public private(set) var visible = false
     private var toastUntil: Date?
+    private var toastSession: String?
     public static let toastSeconds: TimeInterval = 6
     private var store = SessionStore()
     private var connections: [String: Connection] = [:]
@@ -111,8 +112,9 @@ public final class NotchModel: ObservableObject {
     public func apply(_ payload: HookPayload, now: Date = Date()) {
         store.apply(payload)
         sessions = store.rows
-        if payload.event == "Stop" { toastUntil = now.addingTimeInterval(Self.toastSeconds) } // finished: say so briefly
-        if payload.event == "SessionEnd" || payload.event == "UserPromptSubmit" { toastUntil = nil }
+        if payload.event == "Stop" { toastUntil = now.addingTimeInterval(Self.toastSeconds); toastSession = payload.sessionId } // finished: say so briefly
+        // Only the session that finished can dismiss its own toast; another thread's activity must not.
+        if (payload.event == "SessionEnd" || payload.event == "UserPromptSubmit"), payload.sessionId == toastSession { toastUntil = nil }
         refresh(now: now)
     }
 }
