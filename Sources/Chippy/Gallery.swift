@@ -70,4 +70,22 @@ enum Gallery {
         do { try png.write(to: URL(fileURLWithPath: path)) } catch { print(error); exit(1) }
         print("wrote \(path)")
     }
+
+    /// `Chippy --render-done-detail out.png`: the opened finished-thread card with a long reply.
+    @MainActor
+    static func renderDoneDetail(to path: String) {
+        let model = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("gal.jsonl")))
+        let reply = "Fixed the login timeout: the session cookie was expiring at 5 minutes instead of 30.\n\nWhat changed:\n- **auth.ts**: session TTL 5 min → 30 min\n- **auth.test.ts**: new expiry test\n- **config.ts**: TTL read from SESSION_TTL_MINUTES\n\nNot touched: refresh-token lifetime (7 days), remember-me cookie, admin console session.\n\nRisk: users already logged in keep the old 5-minute expiry until they next sign in.\n\nShould I also bump the refresh-token lifetime, or leave it at 7 days?"
+        func p(_ ev: String, _ extra: String = "") -> HookPayload { HookPayload(json: Data(#"{"session_id":"a","hook_event_name":"\#(ev)","cwd":"/demo/api-server","chippy_branch":"fix/login-timeout"\#(extra)}"#.utf8))! }
+        model.apply(p("UserPromptSubmit", #","prompt":"Fix the login timeout bug""#))
+        model.apply(p("Stop", ",\"last_assistant_message\":\"\(reply.replacingOccurrences(of: "\n", with: "\\n"))\""))
+        model.toggleOpen()
+        let m = NotchMetrics(width: 185, height: 32)
+        let sz = m.size(for: .expanded, tall: model.tall)
+        let r = ImageRenderer(content: NotchView(model: model, box: box(m)).frame(width: sz.width, height: sz.height).background(Color(white: 0.25)))
+        r.scale = 2
+        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
+              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
+        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path) tall=\(model.tall)")
+    }
 }

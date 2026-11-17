@@ -23,11 +23,11 @@ struct NotchMetrics: Equatable {
     /// Height of the strip beside the camera, where collapsed and compact content lives.
     var band: CGFloat { max(height + 2, 30) }
 
-    func size(for density: Density) -> CGSize {
+    func size(for density: Density, tall: Bool = false) -> CGSize {
         switch density {
         case .collapsed: return CGSize(width: width + 2 * 48, height: band)
         case .compact: return CGSize(width: width + 2 * 190, height: band + 14)
-        case .expanded: return CGSize(width: max(width + 220, 380), height: 300 + (height - 28))
+        case .expanded: return CGSize(width: max(width + 220, tall ? 460 : 380), height: (tall ? 470 : 300) + (height - 28))
         }
     }
 
@@ -58,6 +58,7 @@ final class NotchPanel: NSPanel {
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         contentView = NSHostingView(rootView: NotchView(model: model, box: metrics))
         model.$density.receive(on: RunLoop.main).sink { [weak self] d in self?.dock(d) }.store(in: &bag)
+        model.$tall.dropFirst().receive(on: RunLoop.main).sink { [weak self] _ in self?.dock(self?.model.density ?? .collapsed) }.store(in: &bag)
         model.$visible.receive(on: RunLoop.main).sink { [weak self] v in
             guard let self else { return }
             if v { self.dock(self.model.density); self.orderFrontRegardless() } else { self.orderOut(nil) }
@@ -78,7 +79,7 @@ final class NotchPanel: NSPanel {
         if metrics.metrics != m { metrics.metrics = m }
         // No notch: a collapsed panel would sit over the menu bar, so let clicks through.
         ignoresMouseEvents = (density == .collapsed && !m.hasNotch)
-        let size = m.size(for: density)
+        let size = m.size(for: density, tall: model.tall)
         let f = screen.frame
         setFrame(CGRect(x: f.midX - size.width / 2, y: f.maxY - size.height,
                         width: size.width, height: size.height), display: true)
