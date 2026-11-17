@@ -15,6 +15,9 @@ public struct HostInfo: Equatable {
 public enum ProcessTree {
     public static let maxSteps = 32
 
+    /// A process counts as the host only if it is a regular app with a bundle id; otherwise the walk goes on to the real terminal.
+    public static func isGUIHost(regularApp: Bool, bundleId: String?) -> Bool { regularApp && bundleId != nil }
+
     /// Walks from `start` up through parents. Stops at the first pid `isApp` accepts, at pid <= 1, on a cycle,
     /// or after `maxSteps` steps. `tty` is the nearest tty seen on the way (start included).
     public static func walk(start: Int32, parent: (Int32) -> Int32?, isApp: (Int32) -> Bool,

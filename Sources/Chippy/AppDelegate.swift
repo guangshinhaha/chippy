@@ -15,6 +15,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let hotKeys = HotKeys()
     private var shortcutCard: (id: String, shownAt: Date)?
     private var pendingWatch: AnyCancellable?
+    private var stepWatch: AnyCancellable?
+    private var questionStep = 0
+    private var menuKey: (Date?, Int, Date, Int)?
+    private var menuGen = 0
     private lazy var tour = TourRunner(model: model)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -52,6 +56,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: keyboard shortcuts (#36). Keys exist only while a card is on screen.
     private func startShortcuts() {
         hotKeys.onAction = { [weak self] in self?.handleShortcut($0) }
+        stepWatch = ShortcutBus.steps.receive(on: DispatchQueue.main).sink { [weak self] s in
+            guard let self, let req = self.model.pending.first, req.id == s.requestId, req.questions != nil else { return }
+            self.questionStep = s.step
+            self.registerQuestionKeys(req) // the next question may have fewer options
+        }
         pendingWatch = model.$pending.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.syncShortcuts() }
     }
 
@@ -59,11 +68,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let req = model.pending.first else { shortcutCard = nil; hotKeys.unregister(); return }
         if shortcutCard?.id == req.id { return } // same card: keep keys and its shownAt
         shortcutCard = (req.id, Date())
-        if let qs = req.questions {
-            hotKeys.register(ShortcutKeys.question(optionCount: qs.map { $0.options.count }.max() ?? 0))
+        questionStep = 0
+        if req.questions != nil {
+            registerQuestionKeys(req)
         } else {
             hotKeys.register(ShortcutKeys.approval)
         }
+    }
+
+    /// Digits for the question on screen only, so an unused digit isn't swallowed.
+    private func registerQuestionKeys(_ req: PendingRequest) {
+        let counts = (req.questions ?? []).map { $0.options.count }
+        hotKeys.register(ShortcutKeys.question(optionCount: ShortcutGate.optionCount(step: questionStep, counts: counts)))
     }
 
     private func handleShortcut(_ action: ShortcutAction) {
@@ -136,11 +152,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) {
-        let events = EventLog.read(EventLog().url)
+        // The log can be large: read it off the main thread, and only when the file changed.
+        // Keyed on mtime, size and today's date, so a new day recomputes.
+        let url = EventLog().url
+        let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let stamp = (mtime: attrs?[.modificationDate] as? Date, size: (attrs?[.size] as? Int) ?? 0)
         let midnight = Calendar.current.startOfDay(for: Date())
-        let week = Date().addingTimeInterval(-7 * 86_400)
-        todayItem.title = WaitSummary(events, since: midnight).menuLine(label: "Waited on you today")
-        weekItem.title = WaitSummary(events, since: week).menuLine(label: "This week", showAsks: true)
+        let key = (stamp.mtime, stamp.size, midnight, Int(Date().timeIntervalSince1970 / 300)) // 5-min bucket: the week window slides
+        menuGen += 1; let gen = menuGen
+        if let last = menuKey, last == key { return }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let dated = WaitSummary.dated(EventLog.read(url))
+            let today = WaitSummary(dated: dated, since: midnight).menuLine(label: "Waited on you today")
+            let week = WaitSummary(dated: dated, since: Date().addingTimeInterval(-7 * 86_400)).menuLine(label: "This week", showAsks: true)
+            DispatchQueue.main.async {
+                guard let self, gen == self.menuGen else { return } // a newer open superseded this read
+                self.todayItem.title = today; self.weekItem.title = week
+                self.menuKey = key
+            }
+        }
     }
 
     private func header(_ t: String) -> NSMenuItem {

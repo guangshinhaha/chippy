@@ -18,7 +18,7 @@ enum HostLookup {
             start: getpid(),
             parent: { kinfo($0).map { $0.kp_eproc.e_ppid } },
             isApp: { pid in
-                guard let app = NSRunningApplication(processIdentifier: pid), app.activationPolicy == .regular else { return false }
+                guard let app = NSRunningApplication(processIdentifier: pid), ProcessTree.isGUIHost(regularApp: app.activationPolicy == .regular, bundleId: app.bundleIdentifier) else { return false }
                 bundle = app.bundleIdentifier
                 return true
             },

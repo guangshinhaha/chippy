@@ -11,6 +11,12 @@ public enum ShortcutGate {
         return now.timeIntervalSince(shownAt) >= minimumVisible
     }
 
+    /// Option count of the question shown at `step`, so keys never outnumber its options (clamped like the card does).
+    public static func optionCount(step: Int, counts: [Int]) -> Int {
+        guard !counts.isEmpty else { return 0 }
+        return counts[min(max(step, 0), counts.count - 1)]
+    }
+
     /// Digit keys 1...9 map to option indexes 0...; a key beyond the option count is ignored.
     public static func optionIndex(forKey key: Int, optionCount: Int) -> Int? {
         guard key >= 1, key <= 9, key <= optionCount else { return nil }

@@ -17,6 +17,8 @@ struct ShortcutEvent {
 /// QuestionCard listens here; approvals are answered straight through the model.
 enum ShortcutBus {
     static let events = PassthroughSubject<ShortcutEvent, Never>()
+    /// QuestionCard reports which question it is on, so keys can match that question's options.
+    static let steps = PassthroughSubject<(requestId: String, step: Int), Never>()
 }
 
 /// The one table of keys. All use Control+Option.

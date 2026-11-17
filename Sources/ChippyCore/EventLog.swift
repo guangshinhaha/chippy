@@ -66,6 +66,17 @@ public struct WaitSummary: Equatable {
         fromTerminal = events.filter { $0.channel == .terminal }.count
     }
 
+    /// Parse `ts` once per event; events with an unparseable `ts` are left out.
+    public static func dated(_ events: [WaitEvent]) -> [(date: Date, event: WaitEvent)] {
+        let f = ISO8601DateFormatter()
+        return events.compactMap { e in f.date(from: e.ts).map { ($0, e) } }
+    }
+
+    /// Events at or after `since`, from `dated(_:)`.
+    public init(dated: [(date: Date, event: WaitEvent)], since: Date) {
+        self.init(dated.filter { $0.date >= since }.map(\.event))
+    }
+
     /// Events at or after `since` (by `ts`; an unparseable `ts` is left out).
     public init(_ events: [WaitEvent], since: Date) {
         let f = ISO8601DateFormatter()
@@ -83,7 +94,7 @@ public struct WaitSummary: Equatable {
 
     /// One menu line, e.g. "Waited on you today: 3m 20s · 62% from notch". `showAsks` appends "(27 asks)".
     public func menuLine(label: String, showAsks: Bool = false) -> String {
-        guard total > 0 else { return "No approvals yet" }
+        guard total > 0 else { return "\(label): none yet" }
         let asks = showAsks ? " (\(total) \(total == 1 ? "ask" : "asks"))" : ""
         return "\(label): \(Self.duration(ms: totalWaitMs)) · \(Int((notchShare * 100).rounded()))% from notch\(asks)"
     }
