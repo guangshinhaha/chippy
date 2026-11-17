@@ -147,6 +147,16 @@ public final class NotchModel: ObservableObject {
         refresh()
     }
 
+    /// "Answer in terminal": reply with nothing so the hook prints nothing and Claude Code shows its own dialog at once.
+    public func handBack(_ id: String, now: Date = Date()) {
+        guard let i = pending.firstIndex(where: { $0.id == id }), let conn = connections.removeValue(forKey: id) else { return }
+        let req = pending.remove(at: i)
+        questionInputs.removeValue(forKey: id)
+        conn.respond(nil)
+        record(req, channel: .terminal, decision: "handed_back", now: now)
+        refresh()
+    }
+
     /// Drop requests whose hook went away (timeout fallback, or answered in the terminal).
     public func sweep(now: Date = Date()) {
         let gone = pending.filter { connections[$0.id]?.peerGone ?? true }

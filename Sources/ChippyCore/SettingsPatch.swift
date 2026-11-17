@@ -5,11 +5,12 @@ import Foundation
 /// can't patch safely; the caller then falls back to a full re-render.
 extension SettingsInstaller {
     public static func patched(_ text: String, binary: String, events: [String] = hookEvents,
-                               approvalTimeout: Int = defaultApprovalTimeout) -> String? {
+                               approvalTimeout: Int = defaultApprovalTimeout,
+                               questionTimeout: Int = defaultQuestionTimeout) -> String? {
         var cur = Array(text.utf8)
         let crlf = usesCRLF(cur)
         for ev in events {
-            guard let next = insert(into: cur, event: ev, binary: binary, approvalTimeout: approvalTimeout, crlf: crlf) else { return nil }
+            guard let next = insert(into: cur, event: ev, binary: binary, approvalTimeout: approvalTimeout, questionTimeout: questionTimeout, crlf: crlf) else { return nil }
             cur = next
         }
         return String(decoding: cur, as: UTF8.self)
@@ -39,6 +40,17 @@ extension SettingsInstaller {
         return entries.contains { entry in
             ((entry as? [String: Any])?["hooks"] as? [Any] ?? []).contains {
                 (($0 as? [String: Any])?["command"] as? String)?.contains("chippy-hook") == true
+            }
+        }
+    }
+
+    private static func permissionUpToDate(_ eventValue: Any, binary: String, approvalTimeout: Int, questionTimeout: Int) -> Bool {
+        let cmd = command(for: binary, approvalTimeout: approvalTimeout, questionTimeout: questionTimeout)
+        let timeout = hookTimeout(approvalTimeout: approvalTimeout, questionTimeout: questionTimeout)
+        return (eventValue as? [Any] ?? []).allSatisfy { entry in
+            ((entry as? [String: Any])?["hooks"] as? [Any] ?? []).allSatisfy { h in
+                guard let hook = h as? [String: Any], (hook["command"] as? String)?.contains("chippy-hook") == true else { return true }
+                return hook["command"] as? String == cmd && hook["timeout"] as? Int == timeout
             }
         }
     }
@@ -128,10 +140,10 @@ extension SettingsInstaller {
         return String(decoding: d, as: UTF8.self)
     }
 
-    private static func entryText(event: String, binary: String, approvalTimeout: Int, indent: String, unit: String) -> String {
+    private static func entryText(event: String, binary: String, approvalTimeout: Int, questionTimeout: Int, indent: String, unit: String) -> String {
         let permission = event == "PermissionRequest"
-        let cmd = jsonString(command(for: binary, approvalTimeout: permission ? approvalTimeout : nil))
-        let hook = "{ \"type\": \"command\", \"command\": \(cmd)" + (permission ? ", \"timeout\": \(approvalTimeout + 10) }" : " }")
+        let cmd = jsonString(command(for: binary, approvalTimeout: permission ? approvalTimeout : nil, questionTimeout: permission ? questionTimeout : nil))
+        let hook = "{ \"type\": \"command\", \"command\": \(cmd)" + (permission ? ", \"timeout\": \(hookTimeout(approvalTimeout: approvalTimeout, questionTimeout: questionTimeout)) }" : " }")
         return ["{", "\(unit)\"matcher\": \"*\",", "\(unit)\"hooks\": [", "\(unit)\(unit)\(hook)", "\(unit)]", "}"]
             .enumerated().map { $0.offset == 0 ? $0.element : indent + $0.element }.joined(separator: "\n")
     }
@@ -151,13 +163,13 @@ extension SettingsInstaller {
         return splice(b, (o.open + 1)..<o.close, "\n\(ind)\(jsonString(key)): \(value(ind))\n\(baseIndent)", crlf: crlf)
     }
 
-    private static func insert(into b: [UInt8], event: String, binary: String, approvalTimeout: Int, crlf: Bool) -> [UInt8]? {
+    private static func insert(into b: [UInt8], event: String, binary: String, approvalTimeout: Int, questionTimeout: Int, crlf: Bool) -> [UInt8]? {
         guard let rootStart = Optional(ws(b, 0)), let root = parseObject(b, at: rootStart) else { return nil }
         let unit: String = {
             if let f = root.members.first, let ind = lineIndent(b, f.keyStart), !ind.isEmpty { return ind }
             return "  "
         }()
-        func entry(_ ind: String) -> String { entryText(event: event, binary: binary, approvalTimeout: approvalTimeout, indent: ind, unit: unit) }
+        func entry(_ ind: String) -> String { entryText(event: event, binary: binary, approvalTimeout: approvalTimeout, questionTimeout: questionTimeout, indent: ind, unit: unit) }
 
         guard let hooksMember = root.members.first(where: { $0.key == "hooks" }) else {
             return insertMember(b, into: root, key: "hooks", value: { ind in
@@ -174,7 +186,11 @@ extension SettingsInstaller {
         }
         // Event exists: already ours -> nothing to do; else append to its array.
         guard let evValue = try? JSONSerialization.jsonObject(with: Data(b[evMember.valStart..<evMember.valEnd]), options: .fragmentsAllowed) else { return nil }
-        if hasChippyHook(evValue) { return b }
+        if hasChippyHook(evValue) {
+            // An existing PermissionRequest hook with old flags needs rewriting: decline, the full re-render does it.
+            guard event == "PermissionRequest" else { return b }
+            return permissionUpToDate(evValue, binary: binary, approvalTimeout: approvalTimeout, questionTimeout: questionTimeout) ? b : nil
+        }
         guard b[evMember.valStart] == 91 else { return nil }
         let arrClose = evMember.valEnd - 1
         var lastEnd: Int? = nil, firstStart: Int? = nil

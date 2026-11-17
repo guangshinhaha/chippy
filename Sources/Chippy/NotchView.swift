@@ -87,9 +87,9 @@ struct NotchView: View {
                 }
                 if let req = model.pending.first {
                     if req.questions != nil {
-                        QuestionCard(req: req) { model.answer(req.id, $0) }.id(req.id)
+                        QuestionCard(req: req, send: { model.answer(req.id, $0) }, handBack: { model.handBack(req.id) }).id(req.id)
                     } else {
-                        ApprovalCard(req: req) { model.resolve(req.id, $0) }
+                        ApprovalCard(req: req, decide: { model.resolve(req.id, $0) }, handBack: { model.handBack(req.id) })
                     }
                 } else if model.pinnedOpen {
                     ForEach(model.doneItems.reversed().prefix(3)) { d in DoneCard(item: d) { model.dismissDone(d.sessionId) } }
@@ -119,6 +119,7 @@ struct ContentHeightKey: PreferenceKey {
 struct ApprovalCard: View {
     let req: PendingRequest
     let decide: (Decision) -> Void
+    let handBack: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -140,6 +141,8 @@ struct ApprovalCard: View {
                 ChipButton(title: "Always allow this", hint: "\(ShortcutKeys.prefix)A", kind: .quiet) { decide(.always) }
             }
             .padding(.top, 2)
+            // No keyboard shortcut for hand-back (#34): left out on purpose, the gate in HotKeys.swift is per-action.
+            ChipButton(title: "Answer in terminal", kind: .quiet, action: handBack)
         }
     }
 }
@@ -203,6 +206,7 @@ struct ChipStyle: ButtonStyle {
 struct QuestionCard: View {
     let req: PendingRequest
     let send: ([String: String]) -> Void
+    let handBack: () -> Void
     @State private var step = 0
     @State private var answers: [String: String] = [:]
     @State private var sent = false
@@ -230,7 +234,7 @@ struct QuestionCard: View {
                 .contentShape(Rectangle())
                 .onTapGesture { pick(i) }
             }
-            Text("Or answer in the terminal").font(.caption2).foregroundStyle(.white.opacity(0.4))
+            ChipButton(title: "Answer in terminal", kind: .quiet, action: handBack)
         }
         .onReceive(ShortcutBus.events) { e in
             // Keys take the same path as a tap, for this card only.
