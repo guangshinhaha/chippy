@@ -24,9 +24,22 @@ public enum Density: String, CaseIterable {
 public final class NotchModel: ObservableObject {
     @Published public var state: ChippyState
     @Published public var density: Density
+    @Published public private(set) var sessions: [SessionRow] = []
+    /// When true (debug menu), live sessions don't drive state/density.
+    @Published public var debugLock = false
+    private var store = SessionStore()
 
     public init(state: ChippyState = .idle, density: Density = .collapsed) {
         self.state = state
         self.density = density
+    }
+
+    /// Apply a live hook event. Main thread only.
+    public func apply(_ payload: HookPayload) {
+        store.apply(payload)
+        sessions = store.rows
+        guard !debugLock else { return }
+        state = store.derivedState
+        density = sessions.isEmpty ? .collapsed : .compact
     }
 }
