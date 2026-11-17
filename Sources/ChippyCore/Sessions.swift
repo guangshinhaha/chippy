@@ -8,6 +8,7 @@ public struct SessionRow: Identifiable, Equatable {
     public var cwd = ""
     public var branch: String?
     public var lastPrompt: String?
+    public var lastReply: String?
     public var status: SessionStatus = .idle
     public var detail: String = "Session started"
     public var filesEdited: Set<String> = []
@@ -58,6 +59,7 @@ public struct SessionStore {
         case "Stop":
             rows[i].status = .done; rows[i].detail = "Finished"
             rows[i].branch = p.branch ?? rows[i].branch
+            rows[i].lastReply = p.lastMessage.map { String($0.prefix(1500)) }
         default: break
         }
     }
