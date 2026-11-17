@@ -176,6 +176,7 @@ case "stats":
     let w = WaitSummary(events)
     print("approvals: \(w.total)  from notch: \(w.fromNotch)  from terminal: \(w.fromTerminal)  notch share: \(Int((w.notchShare * 100).rounded()))%")
     print("idle wait: total \(w.totalWaitMs)ms  median \(w.medianWaitMs)ms")
+    print(WaitSummary(events, since: Date().addingTimeInterval(-7 * 86_400)).menuLine(label: "This week", showAsks: true))
     exit(0)
 default:
     print("usage: chippy-hook relay | install [--settings PATH] [--yes] [--timeout SECS] | stats")

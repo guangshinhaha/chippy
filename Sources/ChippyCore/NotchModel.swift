@@ -101,12 +101,18 @@ public final class NotchModel: ObservableObject {
         req.lastPrompt = sessions.first { $0.id == payload.sessionId }?.lastPrompt
         if req.questions == nil, always.contains(req) {
             conn.respond(Decision.allow.reply)
-            log.append(req, channel: .notch, decision: "auto_always", now: req.createdAt)
+            record(req, channel: .notch, decision: "auto_always", now: req.createdAt)
             return
         }
         pending.append(req)
         connections[req.id] = conn
         refresh()
+    }
+
+    /// Log a handled approval, except demo cards (`chippy-hook demo`, session ids `demo-*`), which would skew the measure.
+    private func record(_ r: PendingRequest, channel: Channel, decision: String, now: Date) {
+        guard !r.sessionId.hasPrefix("demo-") else { return }
+        log.append(r, channel: channel, decision: decision, now: now)
     }
 
     /// Resolve exactly the request with this id. Stale or unknown ids are ignored.
@@ -116,13 +122,13 @@ public final class NotchModel: ObservableObject {
         let req = pending.remove(at: i)
         if conn.peerGone { // the hook already gave up (timeout) or the terminal answered: this click is stale
             conn.respond(nil)
-            log.append(req, channel: .terminal, decision: "none", now: now)
+            record(req, channel: .terminal, decision: "none", now: now)
             refresh()
             return
         }
         if decision == .always { always.insert(req) }
         conn.respond(decision.reply)
-        log.append(req, channel: .notch, decision: "\(decision)", now: now)
+        record(req, channel: .notch, decision: "\(decision)", now: now)
         refresh()
     }
 
@@ -133,11 +139,11 @@ public final class NotchModel: ObservableObject {
         let req = pending.remove(at: i)
         // A complete set of real option labels, or nothing: a partial answer would run the tool with a wrong one.
         let valid = req.questions?.allSatisfy { q in answers[q.question].map { a in q.options.contains { $0.label == a } } ?? false } ?? false
-        if conn.peerGone || !valid { conn.respond(nil); log.append(req, channel: .terminal, decision: "none", now: now); refresh(); return }
+        if conn.peerGone || !valid { conn.respond(nil); record(req, channel: .terminal, decision: "none", now: now); refresh(); return }
         input["answers"] = answers
         let reply: [String: Any] = ["behavior": "allow", "updatedInput": input]
         conn.respond(try? JSONSerialization.data(withJSONObject: reply))
-        log.append(req, channel: .notch, decision: "answered", now: now)
+        record(req, channel: .notch, decision: "answered", now: now)
         refresh()
     }
 
@@ -150,7 +156,7 @@ public final class NotchModel: ObservableObject {
         guard !gone.isEmpty else { return }
         for r in gone {
             connections.removeValue(forKey: r.id)?.respond(nil); questionInputs.removeValue(forKey: r.id)
-            log.append(r, channel: .terminal, decision: "none", now: now)
+            record(r, channel: .terminal, decision: "none", now: now)
         }
         pending.removeAll { r in gone.contains { $0.id == r.id } }
         refresh()
