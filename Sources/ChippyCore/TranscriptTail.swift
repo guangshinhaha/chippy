@@ -9,7 +9,7 @@ public enum TranscriptTail {
     public static let tailBytes = 64 * 1024
     public static let maxChars = 600
 
-    /// Last assistant text block in this turn, truncated. nil if unreadable or none.
+    /// Last assistant text block, truncated, provided no tool result or user prompt came after it (so it really is what Claude said just before asking). nil if unreadable or none.
     public static func leadIn(path: String, tailBytes: Int = TranscriptTail.tailBytes, maxChars: Int = TranscriptTail.maxChars) -> String? {
         guard path.hasPrefix("/"), let fh = FileHandle(forReadingAtPath: path) else { return nil }
         defer { try? fh.close() }
@@ -30,7 +30,7 @@ public enum TranscriptTail {
             if type == "user" {
                 if msg["content"] is String { return nil } // a real prompt: nothing Claude said in this turn
                 if let blocks = msg["content"] as? [[String: Any]], blocks.contains(where: { $0["type"] as? String == "text" }) { return nil }
-                continue // tool_result
+                return nil // a tool_result: Claude has been working since it last spoke, so any earlier text is not a lead-in
             }
             guard type == "assistant" else { continue }
             if let s = msg["content"] as? String, let t = clean(s) { return truncate(t, to: maxChars) }

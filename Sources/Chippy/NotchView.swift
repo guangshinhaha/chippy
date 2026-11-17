@@ -258,7 +258,7 @@ struct QuestionCard: View {
             ChipButton(title: "Answer in terminal", kind: .quiet) { if !sent { sent = true; handBack() } }
             TourCaption(sessionId: req.sessionId, step: .question)
         }
-        .onChange(of: step) { ShortcutBus.steps.send((req.id, $0)) }
+        .onChange(of: step) { leadExpanded = false; ShortcutBus.steps.send((req.id, $0)) }
         .onReceive(ShortcutBus.events) { e in
             // Keys take the same path as a tap, for this card only.
             guard e.requestId == req.id, case .option(let n) = e.action,

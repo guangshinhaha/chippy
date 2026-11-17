@@ -40,9 +40,10 @@ final class TranscriptTailTests: XCTestCase {
         XCTAssertEqual(parse([asst([text("ok")]), "{not json", "", "[1,2]", line(["type": "assistant"])]), "ok")
     }
 
-    func testToolResultsAreSkippedButARealPromptStops() {
+    func testToolResultsOrARealPromptMakeEarlierTextStale() {
         let toolResult = line(["type": "user", "message": ["content": [["type": "tool_result", "content": "x"]]]])
-        XCTAssertEqual(parse([asst([text("lead")]), toolResult]), "lead")
+        XCTAssertEqual(parse([asst([text("lead")]), asst([["type": "tool_use"]])]), "lead") // the ask itself follows the lead-in
+        XCTAssertNil(parse([asst([text("Let me read the config")]), asst([["type": "tool_use"]]), toolResult, asst([["type": "tool_use"]])]))
         let prompt = line(["type": "user", "message": ["content": "new prompt"]])
         XCTAssertNil(parse([asst([text("stale, from a previous turn")]), prompt, asst([["type": "tool_use"]])]))
     }
