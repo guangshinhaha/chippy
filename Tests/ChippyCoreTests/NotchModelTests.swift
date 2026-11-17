@@ -50,6 +50,15 @@ final class NotchModelTests: XCTestCase {
         XCTAssertTrue(m.visible)
     }
 
+    func testAgentWorktreeIsLabelledByRepoAndNeverToasts() {
+        let cwd = "/Users/x/shinstack/.claude/worktrees/agent-afe33cb8"
+        let p = HookPayload(json: Data(#"{"session_id":"w","hook_event_name":"Stop","cwd":"\#(cwd)"}"#.utf8))!
+        XCTAssertEqual(p.project, "shinstack")
+        let m = model()
+        m.apply(p)
+        XCTAssertFalse(m.visible)
+    }
+
     func testClickPeeksSessionListAndSecondClickHidesIt() {
         let m = model()
         m.apply(ev("SessionStart"))
