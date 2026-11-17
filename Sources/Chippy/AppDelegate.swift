@@ -1,6 +1,7 @@
 import AppKit
 import ChippyCore
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = NotchModel()
     private var panel: NotchPanel?

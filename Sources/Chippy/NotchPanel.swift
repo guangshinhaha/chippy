@@ -22,6 +22,11 @@ final class NotchPanel: NSPanel {
         contentView = NSHostingView(rootView: NotchView(model: model))
         model.$density.receive(on: RunLoop.main).sink { [weak self] d in self?.dock(d) }.store(in: &bag)
         dock(model.density)
+        NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
+            .receive(on: RunLoop.main).sink { [weak self] _ in
+                guard let self else { return }
+                self.dock(self.model.density)
+            }.store(in: &bag)
     }
 
     override var canBecomeKey: Bool { true }
@@ -39,6 +44,9 @@ final class NotchPanel: NSPanel {
         let left = screen.auxiliaryTopLeftArea?.width ?? 0
         let right = screen.auxiliaryTopRightArea?.width ?? 0
         let notch = (left > 0 && right > 0) ? screen.frame.width - left - right : 160
+        let hasNotch = screen.safeAreaInsets.top > 0
+        // No notch: a collapsed panel would sit over the menu bar, so let clicks through.
+        ignoresMouseEvents = (density == .collapsed && !hasNotch)
         let size = Self.size(for: density, notchWidth: notch)
         let f = screen.frame
         setFrame(CGRect(x: f.midX - size.width / 2, y: f.maxY - size.height,

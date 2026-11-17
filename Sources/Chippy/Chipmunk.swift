@@ -64,16 +64,16 @@ struct ChipmunkView: View {
             }
 
             // state badge, top-right
-            let badge: (String, Color)
+            let badge: (String, Color, CGFloat)
             switch state {
-            case .idle: badge = ("z", .gray)
-            case .working: badge = ("···", .blue)
-            case .needsYou: badge = ("!", .orange)
-            case .done: badge = ("✓", .green)
+            case .idle: badge = ("z", .gray, 15)
+            case .working: badge = ("···", .blue, 13)
+            case .needsYou: badge = ("!", .orange, 15)
+            case .done: badge = ("✓", .green, 15)
             }
-            ctx.fill(Path(ellipseIn: CGRect(x: 70, y: 0, width: 30, height: 30)), with: .color(badge.1))
-            ctx.draw(Text(badge.0).font(.system(size: 20, weight: .black)).foregroundColor(.white),
-                     at: CGPoint(x: 85, y: badge.0 == "···" ? 13 : 15))
+            ctx.fill(Path(ellipseIn: CGRect(x: 58, y: 0, width: 42, height: 42)), with: .color(badge.1))
+            ctx.draw(Text(badge.0).font(.system(size: 28, weight: .black)).foregroundColor(.white),
+                     at: CGPoint(x: 79, y: badge.2 + 6))
         }
         .aspectRatio(1, contentMode: .fit)
     }

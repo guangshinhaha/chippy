@@ -6,8 +6,10 @@ if let i = args.firstIndex(of: "--render-gallery"), i + 1 < args.count {
     exit(0)
 }
 
-let app = NSApplication.shared
-let delegate = AppDelegate()
-app.delegate = delegate
-app.setActivationPolicy(.accessory) // no Dock icon
-app.run()
+MainActor.assumeIsolated {
+    let app = NSApplication.shared
+    let delegate = AppDelegate()
+    app.delegate = delegate
+    app.setActivationPolicy(.accessory) // no Dock icon
+    app.run()
+}
