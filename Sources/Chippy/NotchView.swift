@@ -1,33 +1,13 @@
 import ChippyCore
 import SwiftUI
 
-/// Placeholder per-state look; real mascot art lands in #6.
+/// Chippy's static look for a state, sized like the old placeholder icon.
 struct StateIcon: View {
     let state: ChippyState
     var size: CGFloat = 18
 
-    var symbol: String {
-        switch state {
-        case .idle: return "moon.zzz.fill"
-        case .working: return "gearshape.2.fill"
-        case .needsYou: return "exclamationmark.bubble.fill"
-        case .done: return "checkmark.circle.fill"
-        }
-    }
-
-    var color: Color {
-        switch state {
-        case .idle: return .gray
-        case .working: return .blue
-        case .needsYou: return .orange
-        case .done: return .green
-        }
-    }
-
     var body: some View {
-        Image(systemName: symbol)
-            .font(.system(size: size))
-            .foregroundStyle(color)
+        ChipmunkView(state: state).frame(width: size * 1.4, height: size * 1.4)
     }
 }
 
