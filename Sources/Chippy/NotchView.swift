@@ -50,7 +50,11 @@ struct NotchView: View {
             HStack(spacing: 8) {
                 StateIcon(state: model.state)
                 Spacer()
-                Text(model.state.title).font(.caption.bold()).foregroundStyle(.white)
+                Text(model.sessions.first?.detail ?? model.state.title)
+                    .font(.caption.bold()).foregroundStyle(.white).lineLimit(1)
+                if model.sessions.count > 1 {
+                    Text("+\(model.sessions.count - 1)").font(.caption2).foregroundStyle(.white.opacity(0.6))
+                }
             }
         case .expanded:
             VStack(alignment: .leading, spacing: 8) {
@@ -59,8 +63,15 @@ struct NotchView: View {
                     StateIcon(state: model.state, size: 28)
                     Text(model.state.title).font(.headline).foregroundStyle(.white)
                 }
-                Text("Expanded view: details land with #4 and #5.")
-                    .font(.caption).foregroundStyle(.white.opacity(0.6))
+                if model.sessions.isEmpty {
+                    Text("No agent sessions.").font(.caption).foregroundStyle(.white.opacity(0.6))
+                }
+                ForEach(model.sessions) { row in
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("\(row.project) · \(row.headline)").font(.caption.bold()).foregroundStyle(.white)
+                        Text(row.detail).font(.caption2).foregroundStyle(.white.opacity(0.6))
+                    }
+                }
                 Spacer()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
