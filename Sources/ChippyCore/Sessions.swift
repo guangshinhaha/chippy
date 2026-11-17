@@ -41,7 +41,8 @@ public struct SessionStore {
             return rows.count - 1
         }()
         rows[i].updatedAt = now
-        if let h = p.host { rows[i].host = h }   // latest non-nil wins
+        // Latest wins, but a tty-only report must not erase a known host app.
+        if let h = p.host, h.hasHost || rows[i].host == nil { rows[i].host = h }
         switch p.event {
         case "SessionStart":
             rows[i].status = .idle; rows[i].detail = "Session started"

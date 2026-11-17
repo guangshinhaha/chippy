@@ -43,6 +43,13 @@ final class HostCarryTests: XCTestCase {
         XCTAssertEqual(m.doneItems[0].host, want)
     }
 
+    func testTTYOnlyReportKeepsKnownHost() {
+        let m = NotchModel()
+        m.apply(ev("UserPromptSubmit", host: true))
+        m.apply(payload(["session_id": "s", "cwd": "/w/p", "hook_event_name": "Stop", "chippy_branch": "b", "chippy_tty": "ttys009"]))
+        XCTAssertEqual(m.doneItems[0].host, want)
+    }
+
     func testNoHostMeansNoButton() {
         let m = NotchModel()
         m.apply(ev("Stop", host: false))

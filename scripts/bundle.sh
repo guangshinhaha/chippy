@@ -19,6 +19,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>CFBundleShortVersionString</key><string>0.1.0</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>LSUIElement</key><true/>
+<key>NSAppleEventsUsageDescription</key><string>Chippy selects the terminal tab where a finished Claude Code session ran.</string>
 </dict></plist>
 PLIST
 codesign --force --sign - "$APP" >/dev/null

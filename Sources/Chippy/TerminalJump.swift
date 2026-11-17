@@ -13,7 +13,7 @@ enum TerminalJump {
 
     /// Only plain tty names reach the script text.
     static func validTTY(_ s: String?) -> String? {
-        guard let s, s.range(of: "^ttys[0-9]{1,5}$", options: .regularExpression) != nil else { return nil }
+        guard let s, s.range(of: "^ttys[0-9]{1,5}\\z", options: .regularExpression) != nil else { return nil }
         return s
     }
 
@@ -66,7 +66,11 @@ enum TerminalJump {
             p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
             p.arguments = ["-e", src]
             p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
-            try? p.run(); p.waitUntilExit()   // on failure we still activate below
+            if (try? p.run()) != nil {
+                // A hung target app or an unanswered permission prompt must not strand the jump: give up after 5s.
+                DispatchQueue.global().asyncAfter(deadline: .now() + 5) { if p.isRunning { p.terminate() } }
+                p.waitUntilExit()
+            }   // on failure we still activate below
             DispatchQueue.main.async { activate() }
         }
     }
