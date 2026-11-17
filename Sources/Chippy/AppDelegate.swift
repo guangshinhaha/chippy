@@ -2,10 +2,11 @@ import AppKit
 import ChippyCore
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let model = NotchModel()
     private var panel: NotchPanel?
     private var statusItem: NSStatusItem?
+    private let todayItem = NSMenuItem(), weekItem = NSMenuItem()
     private var server: SocketServer?
     private var sweeper: Timer?
     private var outsideClick: Any?
@@ -47,6 +48,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.title = "🐿"
         let menu = NSMenu()
+        menu.delegate = self
+        for i in [todayItem, weekItem] { i.isEnabled = false; menu.addItem(i) }
+        menu.addItem(.separator())
         let peek = NSMenuItem(title: "Show sessions", action: #selector(peekSessions), keyEquivalent: "")
         peek.target = self
         menu.addItem(peek)
@@ -89,6 +93,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Quit Chippy", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         item.menu = menu
         statusItem = item
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        let events = EventLog.read(EventLog().url)
+        let midnight = Calendar.current.startOfDay(for: Date())
+        let week = Date().addingTimeInterval(-7 * 86_400)
+        todayItem.title = WaitSummary(events, since: midnight).menuLine(label: "Waited on you today")
+        weekItem.title = WaitSummary(events, since: week).menuLine(label: "This week", showAsks: true)
     }
 
     private func header(_ t: String) -> NSMenuItem {

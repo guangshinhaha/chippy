@@ -65,4 +65,26 @@ public struct WaitSummary: Equatable {
         fromNotch = events.filter { $0.channel == .notch }.count
         fromTerminal = events.filter { $0.channel == .terminal }.count
     }
+
+    /// Events at or after `since` (by `ts`; an unparseable `ts` is left out).
+    public init(_ events: [WaitEvent], since: Date) {
+        let f = ISO8601DateFormatter()
+        self.init(events.filter { e in f.date(from: e.ts).map { $0 >= since } ?? false })
+    }
+
+    /// "3m 20s", "45s", "41m", "1h 5m": whole seconds under an hour, whole minutes beyond.
+    public static func duration(ms: Int) -> String {
+        let s = max(0, ms / 1000)
+        if s < 60 { return "\(s)s" }
+        if s < 3600 { let m = s / 60, r = s % 60; return r == 0 ? "\(m)m" : "\(m)m \(r)s" }
+        let h = s / 3600, m = (s % 3600) / 60
+        return m == 0 ? "\(h)h" : "\(h)h \(m)m"
+    }
+
+    /// One menu line, e.g. "Waited on you today: 3m 20s · 62% from notch". `showAsks` appends "(27 asks)".
+    public func menuLine(label: String, showAsks: Bool = false) -> String {
+        guard total > 0 else { return "No approvals yet" }
+        let asks = showAsks ? " (\(total) \(total == 1 ? "ask" : "asks"))" : ""
+        return "\(label): \(Self.duration(ms: totalWaitMs)) · \(Int((notchShare * 100).rounded()))% from notch\(asks)"
+    }
 }
