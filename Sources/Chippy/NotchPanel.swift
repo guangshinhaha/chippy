@@ -16,6 +16,8 @@ final class MetricsBox: ObservableObject {
     @Published var metrics = NotchMetrics.none
     /// Natural height of the expanded content, reported by the view.
     @Published var contentHeight: CGFloat = 0
+    /// Pointer is over the island (set by the panel's pointer tracking).
+    @Published var hover = false
 }
 
 /// Borderless panel docked top-center of the screen, over the notch.
@@ -70,7 +72,7 @@ final class NotchPanel: NSPanel {
 
     private func startPointerTracking() {
         acceptsMouseMovedEvents = true
-        let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged]
+        let mask: NSEvent.EventTypeMask = [.mouseMoved]
         if let g = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] _ in self?.syncMouse() }) { monitors.append(g) }
         if let l = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { [weak self] e in self?.syncMouse(); return e }) { monitors.append(l) }
     }
@@ -78,8 +80,9 @@ final class NotchPanel: NSPanel {
     deinit { monitors.forEach { NSEvent.removeMonitor($0) } }
 
     private func syncMouse() {
-        let want = !hitRect.contains(NSEvent.mouseLocation)
-        if ignoresMouseEvents != want { ignoresMouseEvents = want }
+        let inside = hitRect.contains(NSEvent.mouseLocation)
+        if ignoresMouseEvents == inside { ignoresMouseEvents = !inside }
+        if metrics.hover != inside { metrics.hover = inside } // an ignoring window gets no hover-exit, so hover comes from here
     }
 
     /// Where the pointer counts as "on the island": the larger of the old and new shape while it is moving.
@@ -99,7 +102,7 @@ final class NotchPanel: NSPanel {
             self.syncMouse()
         }
         settleWork = w
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7, execute: w)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: w)
     }
 
     /// Fixed frame (max size, top-centred on the notch screen). The shape animates inside it, so this never

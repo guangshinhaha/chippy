@@ -35,13 +35,12 @@ struct NotchView: View {
     @ObservedObject var model: NotchModel
     @ObservedObject var box: MetricsBox
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var hover = false
     @State private var pressed = false
 
     /// The shape's resting size for the current state. The window never changes; only this does.
     private var target: CGSize {
         var s = box.metrics.size(for: model.density, tall: model.tall, contentHeight: box.contentHeight)
-        if model.density == .collapsed && hover && !reduceMotion { s.width += 6 }
+        if model.density == .collapsed && box.hover && !reduceMotion { s.width += 6 }
         return s
     }
 
@@ -61,7 +60,8 @@ struct NotchView: View {
             }
             .frame(width: size.width, height: size.height, alignment: .top)
             .animation(nil, value: size)
-            .clipShape(NotchShape(radius: radius))
+            // The mask is outside the `animation(nil)` above, so it springs with the shape and the edge reveals the content.
+            .mask(NotchShape(radius: radius).frame(width: size.width, height: size.height).frame(maxHeight: .infinity, alignment: .top))
             icon(size)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -70,7 +70,6 @@ struct NotchView: View {
         .animation(motion, value: model.density)
         .scaleEffect(pressed && model.density == .collapsed && !reduceMotion ? 0.97 : 1, anchor: .top)
         .animation(.easeOut(duration: 0.12), value: pressed)
-        .onHover { hover = $0 }
         .contentShape(Rectangle())
         .onTapGesture { model.toggleOpen() }
         .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in pressed = true }.onEnded { _ in pressed = false })
