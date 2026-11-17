@@ -1,0 +1,88 @@
+import ChippyCore
+import SwiftUI
+
+/// Placeholder per-state look; real mascot art lands in #6.
+struct StateIcon: View {
+    let state: ChippyState
+    var size: CGFloat = 18
+
+    var symbol: String {
+        switch state {
+        case .idle: return "moon.zzz.fill"
+        case .working: return "gearshape.2.fill"
+        case .needsYou: return "exclamationmark.bubble.fill"
+        case .done: return "checkmark.circle.fill"
+        }
+    }
+
+    var color: Color {
+        switch state {
+        case .idle: return .gray
+        case .working: return .blue
+        case .needsYou: return .orange
+        case .done: return .green
+        }
+    }
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: size))
+            .foregroundStyle(color)
+    }
+}
+
+struct NotchView: View {
+    @ObservedObject var model: NotchModel
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            NotchShape().fill(.black)
+            content.padding(.horizontal, 16).padding(.bottom, 8)
+        }
+    }
+
+    @ViewBuilder
+    var content: some View {
+        switch model.density {
+        case .collapsed:
+            HStack { StateIcon(state: model.state); Spacer() }
+        case .compact:
+            HStack(spacing: 8) {
+                StateIcon(state: model.state)
+                Spacer()
+                Text(model.state.title).font(.caption.bold()).foregroundStyle(.white)
+            }
+        case .expanded:
+            VStack(alignment: .leading, spacing: 8) {
+                Spacer().frame(height: 28)
+                HStack(spacing: 10) {
+                    StateIcon(state: model.state, size: 28)
+                    Text(model.state.title).font(.headline).foregroundStyle(.white)
+                }
+                Text("Expanded view: details land with #4 and #5.")
+                    .font(.caption).foregroundStyle(.white.opacity(0.6))
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// Flat top edge (flush with the screen), rounded bottom corners.
+struct NotchShape: Shape {
+    var radius: CGFloat = 14
+
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - radius))
+        p.addQuadCurve(to: CGPoint(x: rect.maxX - radius, y: rect.maxY),
+                       control: CGPoint(x: rect.maxX, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.minX + radius, y: rect.maxY))
+        p.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.maxY - radius),
+                       control: CGPoint(x: rect.minX, y: rect.maxY))
+        p.closeSubpath()
+        return p
+    }
+}
