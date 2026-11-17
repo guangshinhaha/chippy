@@ -132,7 +132,7 @@ func demo(_ args: [String]) -> Never {
     case "done":
         _ = send(ev("demo-a", "UserPromptSubmit", ["prompt": "Fix the login timeout bug"]))
         _ = send(ev("demo-a", "PostToolUse", ["tool_name": "Edit", "tool_input": ["file_path": "/demo/api-server/auth.ts", "old_string": "a", "new_string": "a\nb\nc"]]))
-        _ = send(ev("demo-a", "Stop"))
+        _ = send(ev("demo-a", "Stop", ["last_assistant_message": "Fixed the login timeout: the session cookie was expiring at 5 minutes instead of 30. I changed the TTL in auth.ts and added a test.\n\nShould I also bump the refresh-token lifetime?"]))
         print("Done chip is up and stays until you click Dismiss (or 10 min). Click it for detail.")
     case "question":
         _ = send(ev("demo-a", "UserPromptSubmit", ["prompt": "Set up the login page"]))

@@ -126,4 +126,13 @@ final class NotchModelTests: XCTestCase {
         m.resolve(m.pending[0].id, .allow)
         XCTAssertEqual(m.pending.first?.detail, "two")
     }
+
+    func testDoneChipCarriesClaudesReplyAndFlagsAQuestion() {
+        let m = model()
+        m.apply(HookPayload(json: Data(###"{"session_id":"a","hook_event_name":"Stop","cwd":"/w/api","last_assistant_message":"## Fixed it\n\nShould I bump the TTL too?"}"###.utf8))!)
+        let d = m.doneItems[0]
+        XCTAssertEqual(d.headline, "Fixed it"); XCTAssertTrue(d.asksYou)
+        m.apply(HookPayload(json: Data(#"{"session_id":"b","hook_event_name":"Stop","cwd":"/w/web"}"#.utf8))!)
+        XCTAssertEqual(m.doneItems[1].headline, "finished"); XCTAssertFalse(m.doneItems[1].asksYou)
+    }
 }

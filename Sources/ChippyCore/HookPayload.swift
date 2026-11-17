@@ -9,6 +9,8 @@ public struct HookPayload {
     public let toolInput: [String: Any]
     /// The user's prompt (UserPromptSubmit only). Kept in memory for context on the card, never logged or sent anywhere.
     public let prompt: String?
+    /// Claude's final message (Stop only). In memory for the done card; never logged or sent anywhere.
+    public let lastMessage: String?
     private let branchOverride: String?
 
     public init?(json: Data) {
@@ -21,6 +23,7 @@ public struct HookPayload {
         toolName = o["tool_name"] as? String
         toolInput = o["tool_input"] as? [String: Any] ?? [:]
         prompt = o["prompt"] as? String
+        lastMessage = o["last_assistant_message"] as? String
         branchOverride = o["chippy_branch"] as? String // only the demo command sets this
     }
 

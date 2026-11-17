@@ -151,7 +151,7 @@ public final class NotchModel: ObservableObject {
             if let r = sessions.first(where: { $0.id == payload.sessionId }) {
                 doneItems.removeAll { $0.sessionId == r.id }
                 doneItems.append(DoneItem(sessionId: r.id, project: r.project, branch: r.branch,
-                                          files: r.filesEdited.count, added: r.added, removed: r.removed, at: now))
+                                          files: r.filesEdited.count, added: r.added, removed: r.removed, reply: r.lastReply, at: now))
             }
         case "UserPromptSubmit", "SessionEnd", "PreToolUse", "PostToolUse":
             // Only the thread itself moving on (new prompt, tool use after a Stop, or ending) clears its chip; another thread's activity must not.
@@ -170,7 +170,18 @@ public struct DoneItem: Identifiable, Equatable {
     public let files: Int
     public let added: Int
     public let removed: Int
+    public let reply: String?
     public let at: Date
+
+    /// Claude ended on a question: the thread is waiting for you, not just done.
+    public var asksYou: Bool { reply?.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("?") ?? false }
+
+    /// First non-empty line of the reply, for the one-line glance.
+    public var headline: String {
+        let line = reply?.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty && !$0.allSatisfy { "#*-`>".contains($0) } } ?? ""
+        return line.isEmpty ? "finished" : line.trimmingCharacters(in: CharacterSet(charactersIn: "#*>` "))
+    }
 
     /// "repo · branch", or just the repo.
     public var identity: String { branch.map { "\(project) · \($0)" } ?? project }

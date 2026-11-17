@@ -27,7 +27,7 @@ struct NotchView: View {
     /// Glance text: who finished (repo · branch), so several threads can be told apart.
     private var compactText: String {
         guard let d = model.doneItems.last else { return model.state.title }
-        return "\(d.identity) · finished"
+        return (d.asksYou ? "? " : "") + "\(d.project): \(d.headline)"
     }
 
     private var headerTitle: String {
@@ -183,14 +183,19 @@ struct DoneCard: View {
     let dismiss: () -> Void
 
     var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.identity).font(.caption.bold()).foregroundStyle(.white)
-                Text(item.files == 0 ? "Finished · no file edits" : "Finished · \(item.files) file\(item.files == 1 ? "" : "s") · +\(item.added) −\(item.removed)")
-                    .font(.caption2).foregroundStyle(.white.opacity(0.6))
+        VStack(alignment: .leading, spacing: 6) {
+            Text(item.identity + (item.asksYou ? " · waiting for your reply" : " · finished"))
+                .font(.caption.bold()).foregroundStyle(item.asksYou ? Color.orange : .white)
+            if let r = item.reply, !r.isEmpty {
+                Text(r).font(.caption).foregroundStyle(.white.opacity(0.9)).lineLimit(6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            Spacer()
-            ChipButton(title: "Dismiss", fill: Color(white: 0.35), action: dismiss)
+            HStack {
+                Text(item.files == 0 ? "No file edits" : "\(item.files) file\(item.files == 1 ? "" : "s") · +\(item.added) −\(item.removed)")
+                    .font(.caption2).foregroundStyle(.white.opacity(0.6))
+                Spacer()
+                ChipButton(title: "Dismiss", fill: Color(white: 0.35), action: dismiss)
+            }
         }
     }
 }
