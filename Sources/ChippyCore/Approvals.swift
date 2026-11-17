@@ -26,9 +26,11 @@ public struct AskQuestion: Equatable {
             guard q["multiSelect"] as? Bool != true, let text = q["question"] as? String,
                   let opts = q["options"] as? [[String: Any]], !opts.isEmpty else { return nil }
             let options = opts.compactMap { o in (o["label"] as? String).map { Option(label: $0, description: o["description"] as? String ?? "") } }
-            guard options.count == opts.count else { return nil }
+            guard options.count == opts.count, Set(options.map(\.label)).count == options.count,
+                  !options.contains(where: { $0.label.isEmpty }) else { return nil }
             out.append(AskQuestion(question: text, header: q["header"] as? String ?? "", options: options))
         }
+        guard Set(out.map(\.question)).count == out.count else { return nil } // answers are keyed by question text
         return out
     }
 }

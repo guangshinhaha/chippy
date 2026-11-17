@@ -117,7 +117,9 @@ public final class NotchModel: ObservableObject {
         guard let i = pending.firstIndex(where: { $0.id == id }), let conn = connections.removeValue(forKey: id),
               var input = questionInputs.removeValue(forKey: id) else { return }
         let req = pending.remove(at: i)
-        if conn.peerGone { conn.respond(nil); log.append(req, channel: .terminal, decision: "none", now: now); refresh(); return }
+        // A complete set of real option labels, or nothing: a partial answer would run the tool with a wrong one.
+        let valid = req.questions?.allSatisfy { q in answers[q.question].map { a in q.options.contains { $0.label == a } } ?? false } ?? false
+        if conn.peerGone || !valid { conn.respond(nil); log.append(req, channel: .terminal, decision: "none", now: now); refresh(); return }
         input["answers"] = answers
         let reply: [String: Any] = ["behavior": "allow", "updatedInput": input]
         conn.respond(try? JSONSerialization.data(withJSONObject: reply))

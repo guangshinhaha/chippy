@@ -115,6 +115,24 @@ final class ApprovalTests: XCTestCase {
         XCTAssertTrue(m.pending.isEmpty)
     }
 
+    func testIncompleteOrUnknownAnswerIsNotSent() {
+        let m = model(); let (c, f) = pair()
+        m.receiveApproval(question(), c)
+        m.answer(m.pending[0].id, ["Which?": "not an option"])
+        XCTAssertNil(reply(f))                            // left to the terminal, nothing written
+        XCTAssertTrue(m.pending.isEmpty)
+    }
+
+    func testDuplicateQuestionTextStaysInTheTerminal() {
+        let q: [String: Any] = ["question": "Which?", "header": "H", "multiSelect": false, "options": [["label": "A", "description": ""]]]
+        let p = HookPayload(json: try! JSONSerialization.data(withJSONObject: [
+            "session_id": "s", "cwd": "/w", "hook_event_name": "PermissionRequest", "tool_name": "AskUserQuestion",
+            "tool_input": ["questions": [q, q]]]))!
+        let m = model(); let (c, _) = pair()
+        m.receiveApproval(p, c)
+        XCTAssertTrue(m.pending.isEmpty)
+    }
+
     func testSweepDropsRequestWhenHookGivesUp() {
         let m = model(); let (c, f) = pair()
         m.receiveApproval(payload(), c)

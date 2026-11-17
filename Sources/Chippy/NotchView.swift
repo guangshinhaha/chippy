@@ -147,6 +147,7 @@ struct QuestionCard: View {
     let send: ([String: String]) -> Void
     @State private var step = 0
     @State private var answers: [String: String] = [:]
+    @State private var sent = false
 
     var body: some View {
         let qs = req.questions ?? []
@@ -167,8 +168,9 @@ struct QuestionCard: View {
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: 0.18)))
                 .contentShape(Rectangle())
                 .onTapGesture {
+                    guard !sent else { return } // a double-click must not answer the next question too
                     answers[q.question] = o.label
-                    if step + 1 < qs.count { step += 1 } else { send(answers) }
+                    if step + 1 < qs.count { step += 1 } else { sent = true; send(answers) }
                 }
             }
             Text("Or answer in the terminal").font(.caption2).foregroundStyle(.white.opacity(0.4))
