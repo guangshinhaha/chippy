@@ -16,10 +16,7 @@ public enum SettingsInstaller {
         var hooks = out["hooks"] as? [String: Any] ?? [:]
         for ev in events {
             var entries = hooks[ev] as? [[String: Any]] ?? []
-            let already = entries.contains { entry in
-                (entry["hooks"] as? [[String: Any]] ?? []).contains { ($0["command"] as? String)?.contains("chippy-hook") == true }
-            }
-            if already { continue }
+            if hasChippyHook(entries) { continue }
             var hook: [String: Any] = ["type": "command", "command": command(for: binary)]
             if ev == "PermissionRequest" {
                 hook["command"] = command(for: binary, approvalTimeout: approvalTimeout)

@@ -63,6 +63,14 @@ func install(_ args: [String]) -> Never {
     else if let o = try? JSONSerialization.jsonObject(with: oldData) as? [String: Any] { old = o }
     else { print("error: \(settingsPath) is not valid JSON, not touching it"); exit(1) }
 
+    if let text = String(data: oldData, encoding: .utf8) {
+        let dups = SettingsInstaller.duplicateKeys(text)
+        if !dups.isEmpty {
+            for k in dups { print("error: duplicate \"\(k)\" in \(settingsPath); Claude Code reads the last one. Fix the file and re-run.") }
+            exit(1)
+        }
+    }
+
     // argv[0] can be a bare name found via PATH; the bundle path is always absolute.
     let me = URL(fileURLWithPath: Bundle.main.executablePath ?? CommandLine.arguments[0]).resolvingSymlinksInPath().path
     let newData: Data
