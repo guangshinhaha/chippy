@@ -255,9 +255,11 @@ struct DoneCard: View {
             if let r = item.reply, !r.isEmpty {
                 if full {
                     // Short reply: just the text (the card hugs it). Long reply: scrolls inside a capped area.
+                    // The scroll fallback has a FIXED height: a flexible one fills whatever the panel offers,
+                    // the panel grows to fit it, and the card keeps expanding.
                     ViewThatFits(in: .vertical) {
                         replyBody
-                        ScrollView { replyBody }
+                        ScrollView { replyBody }.frame(height: 290)
                     }
                     .frame(maxHeight: 290)
                 } else {
