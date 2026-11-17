@@ -7,11 +7,45 @@ extension SettingsInstaller {
     public static func patched(_ text: String, binary: String, events: [String] = hookEvents,
                                approvalTimeout: Int = defaultApprovalTimeout) -> String? {
         var cur = Array(text.utf8)
+        let crlf = usesCRLF(cur)
         for ev in events {
-            guard let next = insert(into: cur, event: ev, binary: binary, approvalTimeout: approvalTimeout) else { return nil }
+            guard let next = insert(into: cur, event: ev, binary: binary, approvalTimeout: approvalTimeout, crlf: crlf) else { return nil }
             cur = next
         }
         return String(decoding: cur, as: UTF8.self)
+    }
+
+    /// Keys that appear more than once in the top-level object or in its `hooks` object (decoded, so
+    /// `"\u0068ooks"` counts as `hooks`). Claude Code reads the last duplicate, so the installer refuses these files.
+    public static func duplicateKeys(_ text: String) -> [String] {
+        let b = Array(text.utf8)
+        guard let root = parseObject(b, at: ws(b, 0)) else { return [] }
+        var out: [String] = []
+        func dups(_ o: Obj) {
+            var seen = Set<String>()
+            for m in o.members where !seen.insert(m.key).inserted && !out.contains(m.key) { out.append(m.key) }
+        }
+        dups(root)
+        for m in root.members where m.key == "hooks" {
+            if let h = parseObject(b, at: m.valStart) { dups(h) }
+        }
+        return out
+    }
+
+    /// True when `eventValue` (the parsed array under one hook event) already holds a hook whose `command`
+    /// runs chippy-hook. Looks at hook objects' `command` only, never other fields such as a description.
+    public static func hasChippyHook(_ eventValue: Any?) -> Bool {
+        guard let entries = eventValue as? [Any] else { return false }
+        return entries.contains { entry in
+            ((entry as? [String: Any])?["hooks"] as? [Any] ?? []).contains {
+                (($0 as? [String: Any])?["command"] as? String)?.contains("chippy-hook") == true
+            }
+        }
+    }
+
+    private static func usesCRLF(_ b: [UInt8]) -> Bool {
+        guard let nl = b.firstIndex(of: 10) else { return false }
+        return nl > 0 && b[nl - 1] == 13
     }
 
     // MARK: scanner
@@ -63,7 +97,8 @@ extension SettingsInstaller {
         var members: [Member] = []
         while i < b.count, b[i] != 125 {
             guard let ke = skipString(b, i) else { return nil }
-            let key = String(decoding: b[(i + 1)..<(ke - 1)], as: UTF8.self)
+            let key = (try? JSONSerialization.jsonObject(with: Data(b[i..<ke]), options: .fragmentsAllowed)) as? String
+                ?? String(decoding: b[(i + 1)..<(ke - 1)], as: UTF8.self)
             var j = ws(b, ke)
             guard j < b.count, b[j] == 58 else { return nil }
             j = ws(b, j + 1)
@@ -101,21 +136,22 @@ extension SettingsInstaller {
             .enumerated().map { $0.offset == 0 ? $0.element : indent + $0.element }.joined(separator: "\n")
     }
 
-    private static func splice(_ b: [UInt8], _ range: Range<Int>, _ s: String) -> [UInt8] {
-        Array(b[..<range.lowerBound]) + Array(s.utf8) + Array(b[range.upperBound...])
+    private static func splice(_ b: [UInt8], _ range: Range<Int>, _ s: String, crlf: Bool) -> [UInt8] {
+        let s = crlf ? s.replacingOccurrences(of: "\n", with: "\r\n") : s
+        return Array(b[..<range.lowerBound]) + Array(s.utf8) + Array(b[range.upperBound...])
     }
 
-    private static func insertMember(_ b: [UInt8], into o: Obj, key: String, value: (String) -> String, unit: String, baseIndent: String) -> [UInt8]? {
+    private static func insertMember(_ b: [UInt8], into o: Obj, key: String, value: (String) -> String, unit: String, baseIndent: String, crlf: Bool) -> [UInt8]? {
         if let first = o.members.first {
             guard let ind = lineIndent(b, first.keyStart) else { return nil }
             let at = o.members.last!.valEnd
-            return splice(b, at..<at, ",\n\(ind)\(jsonString(key)): \(value(ind))")
+            return splice(b, at..<at, ",\n\(ind)\(jsonString(key)): \(value(ind))", crlf: crlf)
         }
         let ind = baseIndent + unit
-        return splice(b, (o.open + 1)..<o.close, "\n\(ind)\(jsonString(key)): \(value(ind))\n\(baseIndent)")
+        return splice(b, (o.open + 1)..<o.close, "\n\(ind)\(jsonString(key)): \(value(ind))\n\(baseIndent)", crlf: crlf)
     }
 
-    private static func insert(into b: [UInt8], event: String, binary: String, approvalTimeout: Int) -> [UInt8]? {
+    private static func insert(into b: [UInt8], event: String, binary: String, approvalTimeout: Int, crlf: Bool) -> [UInt8]? {
         guard let rootStart = Optional(ws(b, 0)), let root = parseObject(b, at: rootStart) else { return nil }
         let unit: String = {
             if let f = root.members.first, let ind = lineIndent(b, f.keyStart), !ind.isEmpty { return ind }
@@ -126,7 +162,7 @@ extension SettingsInstaller {
         guard let hooksMember = root.members.first(where: { $0.key == "hooks" }) else {
             return insertMember(b, into: root, key: "hooks", value: { ind in
                 "{\n\(ind)\(unit)\(jsonString(event)): [\n\(ind)\(unit)\(unit)\(entry(ind + unit + unit))\n\(ind)\(unit)]\n\(ind)}"
-            }, unit: unit, baseIndent: "")
+            }, unit: unit, baseIndent: "", crlf: crlf)
         }
         guard let hooks = parseObject(b, at: hooksMember.valStart) else { return nil }
         let hooksIndent = lineIndent(b, hooksMember.keyStart) ?? ""
@@ -134,11 +170,11 @@ extension SettingsInstaller {
         guard let evMember = hooks.members.first(where: { $0.key == event }) else {
             return insertMember(b, into: hooks, key: event, value: { ind in
                 "[\n\(ind)\(unit)\(entry(ind + unit))\n\(ind)]"
-            }, unit: unit, baseIndent: hooksIndent)
+            }, unit: unit, baseIndent: hooksIndent, crlf: crlf)
         }
         // Event exists: already ours -> nothing to do; else append to its array.
-        let evText = String(decoding: b[evMember.valStart..<evMember.valEnd], as: UTF8.self)
-        if evText.contains("chippy-hook") { return b }
+        guard let evValue = try? JSONSerialization.jsonObject(with: Data(b[evMember.valStart..<evMember.valEnd]), options: .fragmentsAllowed) else { return nil }
+        if hasChippyHook(evValue) { return b }
         guard b[evMember.valStart] == 91 else { return nil }
         let arrClose = evMember.valEnd - 1
         var lastEnd: Int? = nil, firstStart: Int? = nil
@@ -152,11 +188,12 @@ extension SettingsInstaller {
         }
         guard let le = lastEnd, let fs = firstStart, let ind = lineIndent(b, fs) else {
             if lastEnd == nil { // empty array
-                let ind = hooksIndent + unit + unit
-                return splice(b, (evMember.valStart + 1)..<arrClose, "\n\(ind)\(entry(ind))\n\(hooksIndent + unit)")
+                let evIndent = lineIndent(b, evMember.keyStart) ?? hooksIndent + unit
+                let ind = evIndent + unit
+                return splice(b, (evMember.valStart + 1)..<arrClose, "\n\(ind)\(entry(ind))\n\(evIndent)", crlf: crlf)
             }
             return nil
         }
-        return splice(b, le..<le, ",\n\(ind)\(entry(ind))")
+        return splice(b, le..<le, ",\n\(ind)\(entry(ind))", crlf: crlf)
     }
 }
