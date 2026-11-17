@@ -39,6 +39,7 @@ public final class NotchModel: ObservableObject {
     public static let doneSeconds: TimeInterval = 600
     private var store = SessionStore()
     private var connections: [String: Connection] = [:]
+    private var questionInputs: [String: [String: Any]] = [:]
     private let always: AlwaysStore
     private let log: EventLog
 
@@ -76,12 +77,15 @@ public final class NotchModel: ObservableObject {
     }
 
     /// A PermissionRequest hook is waiting on `conn`. Main thread only.
-    /// AskUserQuestion is never intercepted: no reply, so it goes to the terminal as normal.
+    /// AskUserQuestion is answerable only when every question is single-select; otherwise no reply, so the terminal handles it.
     public func receiveApproval(_ payload: HookPayload, _ conn: Connection) {
-        guard payload.toolName != "AskUserQuestion" else { conn.respond(nil); return }
         var req = PendingRequest(payload: payload)
+        if payload.toolName == "AskUserQuestion" {
+            guard req.questions != nil else { conn.respond(nil); return }
+            questionInputs[req.id] = payload.toolInput
+        }
         req.lastPrompt = sessions.first { $0.id == payload.sessionId }?.lastPrompt
-        if always.contains(req) {
+        if req.questions == nil, always.contains(req) {
             conn.respond(Decision.allow.reply)
             log.append(req, channel: .notch, decision: "auto_always", now: req.createdAt)
             return
@@ -93,7 +97,8 @@ public final class NotchModel: ObservableObject {
 
     /// Resolve exactly the request with this id. Stale or unknown ids are ignored.
     public func resolve(_ id: String, _ decision: Decision, now: Date = Date()) {
-        guard let i = pending.firstIndex(where: { $0.id == id }), let conn = connections.removeValue(forKey: id) else { return }
+        guard let i = pending.firstIndex(where: { $0.id == id }), pending[i].questions == nil,
+              let conn = connections.removeValue(forKey: id) else { return } // questions are answered via answer(), not Allow/Deny
         let req = pending.remove(at: i)
         if conn.peerGone { // the hook already gave up (timeout) or the terminal answered: this click is stale
             conn.respond(nil)
@@ -107,6 +112,19 @@ public final class NotchModel: ObservableObject {
         refresh()
     }
 
+    /// Answer a question request with one chosen option label per question (keyed by question text).
+    public func answer(_ id: String, _ answers: [String: String], now: Date = Date()) {
+        guard let i = pending.firstIndex(where: { $0.id == id }), let conn = connections.removeValue(forKey: id),
+              var input = questionInputs.removeValue(forKey: id) else { return }
+        let req = pending.remove(at: i)
+        if conn.peerGone { conn.respond(nil); log.append(req, channel: .terminal, decision: "none", now: now); refresh(); return }
+        input["answers"] = answers
+        let reply: [String: Any] = ["behavior": "allow", "updatedInput": input]
+        conn.respond(try? JSONSerialization.data(withJSONObject: reply))
+        log.append(req, channel: .notch, decision: "answered", now: now)
+        refresh()
+    }
+
     /// Drop requests whose hook went away (timeout fallback, or answered in the terminal).
     public func sweep(now: Date = Date()) {
         let gone = pending.filter { connections[$0.id]?.peerGone ?? true }
@@ -115,7 +133,7 @@ public final class NotchModel: ObservableObject {
         if doneItems.count != before { refresh() }
         guard !gone.isEmpty else { return }
         for r in gone {
-            connections.removeValue(forKey: r.id)?.respond(nil)
+            connections.removeValue(forKey: r.id)?.respond(nil); questionInputs.removeValue(forKey: r.id)
             log.append(r, channel: .terminal, decision: "none", now: now)
         }
         pending.removeAll { r in gone.contains { $0.id == r.id } }

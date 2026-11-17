@@ -50,7 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dev.addItem(live)
         dev.addItem(.separator())
         dev.addItem(header("Try a demo (fake session)"))
-        for (title, kind) in [("Needs your approval", "approval"), ("Two approvals waiting", "queue"), ("Thread finished", "done")] {
+        for (title, kind) in [("Needs your approval", "approval"), ("Two approvals waiting", "queue"), ("A question from Claude", "question"), ("Thread finished", "done")] {
             let mi = NSMenuItem(title: title, action: #selector(runDemo(_:)), keyEquivalent: "")
             mi.representedObject = kind; mi.target = self
             dev.addItem(mi)

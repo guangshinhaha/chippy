@@ -74,7 +74,11 @@ struct NotchView: View {
                     Text(headerTitle).font(.headline).foregroundStyle(.white)
                 }
                 if let req = model.pending.first {
-                    ApprovalCard(req: req) { model.resolve(req.id, $0) }
+                    if req.questions != nil {
+                        QuestionCard(req: req) { model.answer(req.id, $0) }.id(req.id)
+                    } else {
+                        ApprovalCard(req: req) { model.resolve(req.id, $0) }
+                    }
                 } else if model.pinnedOpen {
                     ForEach(model.doneItems.reversed().prefix(3)) { d in DoneCard(item: d) { model.dismissDone(d.sessionId) } }
                     if model.sessions.isEmpty { Text("No agent sessions.").font(.caption).foregroundStyle(.white.opacity(0.6)) }
@@ -134,6 +138,41 @@ struct ChipButton: View {
             .background(Capsule().fill(fill))
             .contentShape(Capsule())
             .onTapGesture(perform: action)
+    }
+}
+
+/// Claude's own multiple-choice question. Pick an option per question; the last pick sends the answers.
+struct QuestionCard: View {
+    let req: PendingRequest
+    let send: ([String: String]) -> Void
+    @State private var step = 0
+    @State private var answers: [String: String] = [:]
+
+    var body: some View {
+        let qs = req.questions ?? []
+        let q = qs[min(step, qs.count - 1)]
+        VStack(alignment: .leading, spacing: 6) {
+            Text(req.branch.map { "\(req.project) · \($0)" } ?? req.project)
+                .font(.caption.bold()).foregroundStyle(.white.opacity(0.85))
+            Text(qs.count > 1 ? "\(q.header.isEmpty ? "Question" : q.header) · \(step + 1) of \(qs.count)" : (q.header.isEmpty ? "Claude asks" : q.header))
+                .font(.caption2).foregroundStyle(.white.opacity(0.6))
+            Text(q.question).font(.caption.bold()).foregroundStyle(.white).lineLimit(3)
+            ForEach(Array(q.options.enumerated()), id: \.offset) { _, o in
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(o.label).font(.caption.bold()).foregroundStyle(.white)
+                    if !o.description.isEmpty { Text(o.description).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(1) }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: 0.18)))
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    answers[q.question] = o.label
+                    if step + 1 < qs.count { step += 1 } else { send(answers) }
+                }
+            }
+            Text("Or answer in the terminal").font(.caption2).foregroundStyle(.white.opacity(0.4))
+        }
     }
 }
 

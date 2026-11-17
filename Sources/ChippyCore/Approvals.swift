@@ -11,6 +11,28 @@ public enum Decision: Equatable {
     }
 }
 
+/// One of Claude's own multiple-choice questions (AskUserQuestion). Only single-select ones are answerable from the notch.
+public struct AskQuestion: Equatable {
+    public struct Option: Equatable { public let label: String; public let description: String }
+    public let question: String
+    public let header: String
+    public let options: [Option]
+
+    /// nil unless every question is single-select with at least one option, so anything else goes to the terminal.
+    static func parse(_ input: [String: Any]) -> [AskQuestion]? {
+        guard let qs = input["questions"] as? [[String: Any]], !qs.isEmpty else { return nil }
+        var out: [AskQuestion] = []
+        for q in qs {
+            guard q["multiSelect"] as? Bool != true, let text = q["question"] as? String,
+                  let opts = q["options"] as? [[String: Any]], !opts.isEmpty else { return nil }
+            let options = opts.compactMap { o in (o["label"] as? String).map { Option(label: $0, description: o["description"] as? String ?? "") } }
+            guard options.count == opts.count else { return nil }
+            out.append(AskQuestion(question: text, header: q["header"] as? String ?? "", options: options))
+        }
+        return out
+    }
+}
+
 public struct PendingRequest: Identifiable, Equatable {
     public let id: String
     public let sessionId: String
@@ -25,6 +47,8 @@ public struct PendingRequest: Identifiable, Equatable {
     public let detail: String
     /// The thread's last prompt, for context. In memory only.
     public var lastPrompt: String?
+    /// Set for an answerable AskUserQuestion; the card shows options instead of Allow/Deny.
+    public let questions: [AskQuestion]?
     /// SHA-256 of the full tool input, so "Always" on an Edit can't cover other content in the same file.
     let inputDigest: String
 
@@ -37,6 +61,7 @@ public struct PendingRequest: Identifiable, Equatable {
         ask = Self.oneLine(tool: p.toolName ?? "tool", input: p.toolInput)
         createdAt = now
         branch = p.branch
+        questions = p.toolName == "AskUserQuestion" ? AskQuestion.parse(p.toolInput) : nil
         detail = String(Self.rawDetail(p.toolInput).prefix(800))
         let canon = (try? JSONSerialization.data(withJSONObject: p.toolInput, options: [.sortedKeys])) ?? Data()
         inputDigest = AlwaysStore.sha256(canon)

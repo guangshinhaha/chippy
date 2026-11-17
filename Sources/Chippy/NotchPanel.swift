@@ -27,7 +27,7 @@ struct NotchMetrics: Equatable {
         switch density {
         case .collapsed: return CGSize(width: width + 2 * 48, height: band)
         case .compact: return CGSize(width: width + 2 * 190, height: band + 14)
-        case .expanded: return CGSize(width: max(width + 220, 380), height: 250 + (height - 28))
+        case .expanded: return CGSize(width: max(width + 220, 380), height: 300 + (height - 28))
         }
     }
 
