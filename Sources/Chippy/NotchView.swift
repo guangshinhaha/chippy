@@ -11,29 +11,92 @@ struct StateIcon: View {
     }
 }
 
+/// Incoming content: fades in with a small scale and blur, a beat after the shape starts growing.
+/// Reduce Motion: a near-instant fade, no scale or blur.
+struct Reveal: ViewModifier {
+    let delay: Double
+    @Environment(\.accessibilityReduceMotion) private var reduce
+    @State private var on = false
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(on ? 1 : 0)
+            .scaleEffect(reduce || on ? 1 : 0.96, anchor: .top)
+            .blur(radius: reduce || on ? 0 : 4)
+            .onAppear { withAnimation(reduce ? .linear(duration: 0.01) : .easeOut(duration: 0.24).delay(delay)) { on = true } }
+    }
+}
+
+extension View {
+    func reveal(_ delay: Double) -> some View { modifier(Reveal(delay: delay)) }
+}
+
 struct NotchView: View {
     @ObservedObject var model: NotchModel
     @ObservedObject var box: MetricsBox
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hover = false
+    @State private var pressed = false
+
+    /// The shape's resting size for the current state. The window never changes; only this does.
+    private var target: CGSize {
+        var s = box.metrics.size(for: model.density, tall: model.tall, contentHeight: box.contentHeight)
+        if model.density == .collapsed && hover && !reduceMotion { s.width += 6 }
+        return s
+    }
+
+    private var radius: CGFloat { model.density == .expanded ? 20 : 12 }
 
     var body: some View {
+        let size = target
         ZStack(alignment: .top) {
-            NotchShape().fill(.black)
-            content.padding(.bottom, 8)
+            NotchShape(radius: radius).fill(.black)
+                .frame(width: size.width, height: size.height)
+            // Content keeps its final width and height at all times (no text reflow while the shape grows)
+            // and is revealed by the shape's edge.
+            ZStack(alignment: .top) {
+                content
+                    .id(model.density)
+                    .transition(.asymmetric(insertion: .identity, removal: .opacity.animation(.easeOut(duration: reduceMotion ? 0.01 : 0.1))))
+            }
+            .frame(width: size.width, height: size.height, alignment: .top)
+            .animation(nil, value: size)
+            .clipShape(NotchShape(radius: radius))
+            icon(size)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .animation(motion, value: size)
+        .animation(motion, value: radius)
+        .animation(motion, value: model.density)
+        .scaleEffect(pressed && model.density == .collapsed && !reduceMotion ? 0.97 : 1, anchor: .top)
+        .animation(.easeOut(duration: 0.12), value: pressed)
+        .onHover { hover = $0 }
         .contentShape(Rectangle())
         .onTapGesture { model.toggleOpen() }
-        .animation(motion, value: model.density)
-        .animation(motion, value: model.pending.count)
-        .animation(motion, value: model.tall)
+        .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in pressed = true }.onEnded { _ in pressed = false })
+    }
+
+    /// One chipmunk for every density, so it never pops: it rides the shape's left edge and scales between
+    /// the glance size and the header size.
+    private func icon(_ size: CGSize) -> some View {
+        let m = box.metrics
+        let big: CGFloat = 28 * 1.4
+        let small: CGFloat = 18 * 1.4
+        let open = model.density == .expanded
+        return ChipmunkView(state: model.state).frame(width: big, height: big)
+            .scaleEffect(open ? 1 : small / big, anchor: .topLeading)
+            .offset(x: open ? 16 : 10, y: open ? m.height + 2 : (m.band - small) / 2)
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
+            .allowsHitTesting(false)
     }
 
     private func report(_ h: CGFloat) {
         DispatchQueue.main.async { if h > 0, abs(box.contentHeight - h) > 0.5 { box.contentHeight = h } }
     }
 
-    /// Short ease-out, interruptible; off when the user asked for reduced motion.
-    private var motion: Animation? {
-        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : .easeOut(duration: 0.18)
+    /// One spring for the shape (slight settle, no bounce); a near-instant change when the user asked for reduced motion.
+    private var motion: Animation {
+        reduceMotion ? .linear(duration: 0.01) : .spring(response: 0.38, dampingFraction: 0.82)
     }
 
     /// Glance text: who finished (repo · branch), so several threads can be told apart.
@@ -54,16 +117,11 @@ struct NotchView: View {
         let m = box.metrics
         switch model.density {
         case .collapsed:
-            HStack(spacing: 0) {
-                StateIcon(state: model.state).padding(.leading, 10)
-                Spacer(minLength: 0)
-            }
-            .frame(height: m.band, alignment: .center)
+            Color.clear.frame(height: m.band) // the icon is drawn once, by NotchView.icon
         case .compact:
             let wing = m.wing(for: .compact)
             HStack(spacing: 0) {
-                HStack { StateIcon(state: model.state); Spacer(minLength: 0) }
-                    .padding(.leading, 10).frame(width: wing)
+                Color.clear.frame(width: wing)
                 Color.clear.frame(width: m.width)
                 HStack(spacing: 6) {
                     Text(compactText)
@@ -78,21 +136,23 @@ struct NotchView: View {
             }
             .frame(height: m.band, alignment: .center)
             .frame(maxHeight: .infinity, alignment: .top)
+            .reveal(0.08)
         case .expanded:
             VStack(alignment: .leading, spacing: 8) {
                 Spacer().frame(height: box.metrics.height + 2)
                 HStack(spacing: 10) {
-                    StateIcon(state: model.state, size: 28)
+                    Color.clear.frame(width: 28 * 1.4, height: 28 * 1.4) // where NotchView.icon sits
                     Text(headerTitle).font(.headline.monospacedDigit()).foregroundStyle(.white)
                 }
+                .reveal(0.08)
                 if let req = model.pending.first {
                     if req.questions != nil {
-                        QuestionCard(req: req, send: { model.answer(req.id, $0) }, handBack: { model.handBack(req.id) }).id(req.id)
+                        QuestionCard(req: req, send: { model.answer(req.id, $0) }, handBack: { model.handBack(req.id) }).id(req.id).reveal(0.12)
                     } else {
-                        ApprovalCard(req: req) { model.resolve(req.id, $0) }
+                        ApprovalCard(req: req) { model.resolve(req.id, $0) }.reveal(0.12)
                     }
                 } else if model.pinnedOpen {
-                    ForEach(model.doneItems.reversed().prefix(3)) { d in DoneCard(item: d) { model.dismissDone(d.sessionId) } }
+                    ForEach(model.doneItems.reversed().prefix(3)) { d in DoneCard(item: d) { model.dismissDone(d.sessionId) }.reveal(0.12) }
                     if model.sessions.isEmpty { Text("No agent sessions.").font(.caption).foregroundStyle(.white.opacity(0.6)) }
                     ForEach(model.sessions) { row in
                         VStack(alignment: .leading, spacing: 1) {
@@ -101,7 +161,7 @@ struct NotchView: View {
                         }
                     }
                 } else {
-                    ForEach(model.doneItems.reversed().prefix(model.tall ? 1 : 3)) { d in DoneCard(item: d, full: model.tall) { model.dismissDone(d.sessionId) } }
+                    ForEach(model.doneItems.reversed().prefix(model.tall ? 1 : 3)) { d in DoneCard(item: d, full: model.tall) { model.dismissDone(d.sessionId) }.reveal(0.12) }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -308,6 +368,11 @@ struct DoneCard: View {
 /// Flat top edge (flush with the screen), rounded bottom corners.
 struct NotchShape: Shape {
     var radius: CGFloat = 14
+
+    var animatableData: CGFloat {
+        get { radius }
+        set { radius = newValue }
+    }
 
     func path(in rect: CGRect) -> Path {
         var p = Path()
