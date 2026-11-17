@@ -208,14 +208,18 @@ struct QuestionCard: View {
     @State private var step = 0
     @State private var answers: [String: String] = [:]
     @State private var sent = false
+    @State private var leadExpanded = false
 
-    var body: some View {
-        let qs = req.questions ?? []
-        let q = qs[min(step, qs.count - 1)]
+    @ViewBuilder private func questionBody(_ q: AskQuestion, _ count: Int) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(req.branch.map { "\(req.project) · \($0)" } ?? req.project)
-                .font(.caption.bold()).foregroundStyle(.white.opacity(0.85))
-            Text(qs.count > 1 ? "\(q.header.isEmpty ? "Question" : q.header) · \(step + 1) of \(qs.count)" : (q.header.isEmpty ? "Claude asks" : q.header))
+            if let lead = req.leadIn, !lead.isEmpty {
+                Text(lead).font(.caption2).foregroundStyle(.white.opacity(0.55))
+                    .lineLimit(leadExpanded ? nil : 4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture { leadExpanded.toggle() }
+            }
+            Text(count > 1 ? "\(q.header.isEmpty ? "Question" : q.header) · \(step + 1) of \(count)" : (q.header.isEmpty ? "Claude asks" : q.header))
                 .font(.caption2).foregroundStyle(.white.opacity(0.6))
             Text(q.question).font(.caption.bold()).foregroundStyle(.white).lineLimit(3)
             ForEach(Array(q.options.enumerated()), id: \.offset) { i, o in
@@ -223,7 +227,7 @@ struct QuestionCard: View {
                     if i < 9 { Text("\(i + 1)").font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.4)).padding(.top, 1) }
                     VStack(alignment: .leading, spacing: 1) {
                         Text(o.label).font(.caption.bold()).foregroundStyle(.white)
-                        if !o.description.isEmpty { Text(o.description).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(1) }
+                        if !o.description.isEmpty { Text(o.description).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(3) }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -232,6 +236,25 @@ struct QuestionCard: View {
                 .contentShape(Rectangle())
                 .onTapGesture { pick(i) }
             }
+        }
+    }
+
+    var body: some View {
+        let qs = req.questions ?? []
+        let q = qs[min(step, qs.count - 1)]
+        VStack(alignment: .leading, spacing: 6) {
+            Text(req.branch.map { "\(req.project) · \($0)" } ?? req.project)
+                .font(.caption.bold()).foregroundStyle(.white.opacity(0.85))
+            if let p = req.lastPrompt, !p.isEmpty {
+                Text("You asked: \(p)").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
+            }
+            // Short card: hugs its content. Tall one: this part scrolls at a FIXED height (a flexible one would
+            // fill whatever the panel offers and the card would keep growing), like the done card.
+            ViewThatFits(in: .vertical) {
+                questionBody(q, qs.count)
+                ScrollView { questionBody(q, qs.count) }.frame(height: 330)
+            }
+            .frame(maxHeight: 330)
             ChipButton(title: "Answer in terminal", kind: .quiet) { if !sent { sent = true; handBack() } }
             TourCaption(sessionId: req.sessionId, step: .question)
         }
