@@ -3,9 +3,46 @@ import ChippyCore
 import Combine
 import SwiftUI
 
+/// The camera cutout of the screen the panel sits on. Notch size differs per Mac (14" vs 16" vs Air),
+/// and external displays and older Macs have none, so it is measured, never assumed.
+struct NotchMetrics: Equatable {
+    var width: CGFloat   // 0 when the screen has no notch
+    var height: CGFloat  // camera housing height, or the menu-bar height when there is none
+    var hasNotch: Bool { width > 0 }
+
+    static let none = NotchMetrics(width: 0, height: 24)
+    static let sample14 = NotchMetrics(width: 185, height: 32) // for the gallery
+
+    @MainActor static func detect(_ screen: NSScreen) -> NotchMetrics {
+        let top = screen.safeAreaInsets.top
+        guard top > 0, let l = screen.auxiliaryTopLeftArea?.width, let r = screen.auxiliaryTopRightArea?.width,
+              l > 0, r > 0 else { return NotchMetrics(width: 0, height: max(NSStatusBar.system.thickness, 22)) }
+        return NotchMetrics(width: screen.frame.width - l - r, height: top)
+    }
+
+    /// Height of the strip beside the camera, where collapsed and compact content lives.
+    var band: CGFloat { max(height + 2, 30) }
+
+    func size(for density: Density) -> CGSize {
+        switch density {
+        case .collapsed: return CGSize(width: width + 2 * 48, height: band)
+        case .compact: return CGSize(width: width + 2 * 190, height: band + 14)
+        case .expanded: return CGSize(width: max(width + 220, 380), height: 200 + (height - 28))
+        }
+    }
+
+    /// Usable width on each side of the camera.
+    func wing(for density: Density) -> CGFloat { (size(for: density).width - width) / 2 }
+}
+
+final class MetricsBox: ObservableObject {
+    @Published var metrics = NotchMetrics.none
+}
+
 /// Borderless panel docked top-center of the screen, over the notch.
 final class NotchPanel: NSPanel {
     private let model: NotchModel
+    let metrics = MetricsBox()
     private var bag = Set<AnyCancellable>()
 
     init(model: NotchModel) {
@@ -19,7 +56,7 @@ final class NotchPanel: NSPanel {
         isOpaque = false
         hasShadow = false
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        contentView = NSHostingView(rootView: NotchView(model: model))
+        contentView = NSHostingView(rootView: NotchView(model: model, box: metrics))
         model.$density.receive(on: RunLoop.main).sink { [weak self] d in self?.dock(d) }.store(in: &bag)
         dock(model.density)
         NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
@@ -31,23 +68,13 @@ final class NotchPanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
 
-    static func size(for density: Density, notchWidth: CGFloat) -> CGSize {
-        switch density {
-        case .collapsed: return CGSize(width: notchWidth + 80, height: 34)
-        case .compact: return CGSize(width: notchWidth + 160, height: 56)
-        case .expanded: return CGSize(width: max(notchWidth + 200, 380), height: 200)
-        }
-    }
-
     func dock(_ density: Density) {
         guard let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.main else { return }
-        let left = screen.auxiliaryTopLeftArea?.width ?? 0
-        let right = screen.auxiliaryTopRightArea?.width ?? 0
-        let notch = (left > 0 && right > 0) ? screen.frame.width - left - right : 160
-        let hasNotch = screen.safeAreaInsets.top > 0
+        let m = NotchMetrics.detect(screen)
+        if metrics.metrics != m { metrics.metrics = m }
         // No notch: a collapsed panel would sit over the menu bar, so let clicks through.
-        ignoresMouseEvents = (density == .collapsed && !hasNotch)
-        let size = Self.size(for: density, notchWidth: notch)
+        ignoresMouseEvents = (density == .collapsed && !m.hasNotch)
+        let size = m.size(for: density)
         let f = screen.frame
         setFrame(CGRect(x: f.midX - size.width / 2, y: f.maxY - size.height,
                         width: size.width, height: size.height), display: true)
