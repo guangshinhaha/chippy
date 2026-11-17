@@ -133,6 +133,7 @@ struct ApprovalCard: View {
                 .lineLimit(4).truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.4)).lineLimit(1).truncationMode(.head)
+            TourCaption(sessionId: req.sessionId, step: .approval)
             HStack(spacing: 8) {
                 ChipButton(title: "Allow", hint: "\(ShortcutKeys.prefix)Y", kind: .primary) { decide(.allow) }
                 ChipButton(title: "Deny", hint: "\(ShortcutKeys.prefix)N", kind: .destructive) { decide(.deny) }
@@ -232,6 +233,7 @@ struct QuestionCard: View {
                 .onTapGesture { pick(i) }
             }
             ChipButton(title: "Answer in terminal", kind: .quiet) { if !sent { sent = true; handBack() } }
+            TourCaption(sessionId: req.sessionId, step: .question)
         }
         .onReceive(ShortcutBus.events) { e in
             // Keys take the same path as a tap, for this card only.
@@ -289,6 +291,7 @@ struct DoneCard: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
+            TourCaption(sessionId: item.sessionId, step: .done)
             HStack {
                 Text(item.files == 0 ? "No file edits" : "\(item.files) file\(item.files == 1 ? "" : "s") · +\(item.added) −\(item.removed)")
                     .font(.caption2).foregroundStyle(.white.opacity(0.6))
