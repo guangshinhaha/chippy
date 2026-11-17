@@ -3,7 +3,7 @@ import Darwin
 import Foundation
 
 // chippy-hook relay                       forward a Claude Code hook event to Chippy.app (fail-open)
-// chippy-hook install [--settings P] [--yes]   add hooks to ~/.claude/settings.json (backup + diff + confirm)
+// chippy-hook install [--settings P] [--yes] [--timeout SECS]   add hooks to ~/.claude/settings.json (backup + diff + confirm)
 
 func debug(_ s: String) {
     if ProcessInfo.processInfo.environment["CHIPPY_HOOK_DEBUG"] != nil {
@@ -11,7 +11,9 @@ func debug(_ s: String) {
     }
 }
 
-func relay() -> Never {
+func relay(_ args: [String]) -> Never {
+    var timeout = SettingsInstaller.defaultApprovalTimeout
+    if let i = args.firstIndex(of: "--timeout"), i + 1 < args.count, let t = Int(args[i + 1]) { timeout = t }
     let start = DispatchTime.now()
     func ms() -> String { String(format: "%.1fms", Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1e6) }
     let input = FileHandle.standardInput.readDataToEndOfFile()
@@ -24,7 +26,20 @@ func relay() -> Never {
         debug("Chippy.app not running, exit in \(ms())"); exit(0) // fail-open: agent never blocked
     }
     writeLine(fd: fd, line)
-    debug("relayed in \(ms())")
+    let dict = obj as? [String: Any]
+    let wantsAnswer = dict?["hook_event_name"] as? String == "PermissionRequest"
+        && dict?["tool_name"] as? String != "AskUserQuestion"
+    guard wantsAnswer else { debug("relayed in \(ms())"); close(fd); exit(0) }
+
+    // Wait for the notch to answer; on timeout or hang-up print nothing so the terminal prompt shows as normal.
+    var tv = timeval(tv_sec: timeout, tv_usec: 0)
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+    guard let reply = readLine(fd: fd), let decision = try? JSONSerialization.jsonObject(with: reply) else {
+        debug("no answer after \(ms()), falling back to terminal"); close(fd); exit(0)
+    }
+    let out: [String: Any] = ["hookSpecificOutput": ["hookEventName": "PermissionRequest", "decision": decision]]
+    FileHandle.standardOutput.write((try? JSONSerialization.data(withJSONObject: out)) ?? Data())
+    debug("answered from notch in \(ms())")
     close(fd)
     exit(0)
 }
@@ -32,9 +47,11 @@ func relay() -> Never {
 func install(_ args: [String]) -> Never {
     var settingsPath = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/settings.json").path
     var yes = false
+    var timeout = SettingsInstaller.defaultApprovalTimeout
     var i = 0
     while i < args.count {
         if args[i] == "--yes" { yes = true }
+        else if args[i] == "--timeout", i + 1 < args.count, let t = Int(args[i + 1]) { timeout = t; i += 1 }
         else if args[i] == "--settings", i + 1 < args.count { settingsPath = args[i + 1]; i += 1 }
         i += 1
     }
@@ -47,7 +64,7 @@ func install(_ args: [String]) -> Never {
 
     let me = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().path
     let newData: Data
-    do { newData = try SettingsInstaller.render(SettingsInstaller.merged(old, binary: me)) }
+    do { newData = try SettingsInstaller.render(SettingsInstaller.merged(old, binary: me, approvalTimeout: timeout)) }
     catch { print("error: \(error)"); exit(1) }
     if newData == oldData { print("Already installed, nothing to change."); exit(0) }
 
@@ -79,9 +96,9 @@ func install(_ args: [String]) -> Never {
 
 let args = Array(CommandLine.arguments.dropFirst())
 switch args.first {
-case "relay": relay()
+case "relay": relay(Array(args.dropFirst()))
 case "install": install(Array(args.dropFirst()))
 default:
-    print("usage: chippy-hook relay | install [--settings PATH] [--yes]")
+    print("usage: chippy-hook relay | install [--settings PATH] [--yes] [--timeout SECS]")
     exit(args.isEmpty ? 0 : 2)
 }

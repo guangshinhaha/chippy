@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panel: NotchPanel?
     private var statusItem: NSStatusItem?
     private var server: SocketServer?
+    private var sweeper: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         panel = NotchPanel(model: model)
@@ -16,12 +17,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startServer() {
         let server = SocketServer { [weak self] line, conn in
-            // Fire-and-forget events: parse, update the UI, close. (Approvals reply later, see #5.)
-            if let payload = HookPayload(json: line) {
+            guard let payload = HookPayload(json: line) else { conn.respond(nil); return }
+            if payload.event == "PermissionRequest" {
+                // Connection stays open until the notch answers or the hook gives up.
+                DispatchQueue.main.async { self?.model.receiveApproval(payload, conn) }
+            } else {
                 DispatchQueue.main.async { self?.model.apply(payload) }
+                conn.respond(nil)
             }
-            conn.respond(nil)
         }
+        sweeper = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.model.sweep() }
         do { try server.start(); self.server = server }
         catch { NSLog("Chippy: socket start failed: \(error)") }
     }

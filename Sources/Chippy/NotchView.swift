@@ -63,7 +63,10 @@ struct NotchView: View {
                     StateIcon(state: model.state, size: 28)
                     Text(model.state.title).font(.headline).foregroundStyle(.white)
                 }
-                if model.sessions.isEmpty {
+                if let req = model.pending.first {
+                    ApprovalCard(req: req, more: model.pending.count - 1) { model.resolve(req.id, $0) }
+                }
+                if model.sessions.isEmpty && model.pending.isEmpty {
                     Text("No agent sessions.").font(.caption).foregroundStyle(.white.opacity(0.6))
                 }
                 ForEach(model.sessions) { row in
@@ -75,6 +78,26 @@ struct NotchView: View {
                 Spacer()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+struct ApprovalCard: View {
+    let req: PendingRequest
+    let more: Int
+    let decide: (Decision) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("\(req.project) needs you").font(.caption2).foregroundStyle(.white.opacity(0.6))
+            Text(req.ask).font(.system(.caption, design: .monospaced)).foregroundStyle(.white).lineLimit(3)
+            HStack {
+                Button("Allow") { decide(.allow) }.tint(.green)
+                Button("Deny") { decide(.deny) }.tint(.red)
+                Button("Always") { decide(.always) }
+                if more > 0 { Text("+\(more) more").font(.caption2).foregroundStyle(.white.opacity(0.6)) }
+            }
+            .buttonStyle(.borderedProminent).controlSize(.small)
         }
     }
 }
