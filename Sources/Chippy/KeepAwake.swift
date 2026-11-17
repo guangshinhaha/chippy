@@ -18,7 +18,12 @@ final class KeepAwake {
     private var sub: AnyCancellable?
     private var timer: Timer?
     private var lowBattery = false
-    private var lidOn = false
+    private lazy var disabler = SleepDisabler(marker: Self.marker) { on, done in
+        DispatchQueue.global(qos: .userInitiated).async {
+            let ok = Self.runPmset(on)
+            DispatchQueue.main.async { done(ok) }
+        }
+    }
 
     private let toggleItem = NSMenuItem(), lidItem = NSMenuItem(), removeItem = NSMenuItem(), statusItem = NSMenuItem()
 
@@ -33,9 +38,8 @@ final class KeepAwake {
 
     /// Call once at launch. Clears any disablesleep a crashed run left behind, then starts watching.
     func start() {
-        if AwakePolicy.shouldClearOnLaunch(markerExists: FileManager.default.fileExists(atPath: Self.marker.path)) {
-            _ = setDisableSleep(false)
-        }
+        disabler.onIdle = { [weak self] in self?.evaluate() }
+        if AwakePolicy.shouldClearOnLaunch(markerExists: disabler.markerExists) { disabler.set(false) }
         sub = model.$state.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.evaluate() }
         timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             DispatchQueue.main.async { self?.evaluate() }
@@ -47,7 +51,7 @@ final class KeepAwake {
     func stop() {
         timer?.invalidate(); sub = nil
         releaseAssertion()
-        if lidOn || FileManager.default.fileExists(atPath: Self.marker.path) { _ = setDisableSleep(false) }
+        disabler.clearBlocking { Self.runPmset($0) }
     }
 
     // MARK: menu
@@ -68,9 +72,10 @@ final class KeepAwake {
         lidItem.state = lidMode ? .on : .off
         removeItem.isHidden = !Self.setupInstalled
         let hold = assertion != 0
-        if !enabled { statusItem.title = "Awake: off" }
+        if disabler.isStuck { statusItem.title = "Awake: could not release, run Remove lid-closed setup" }
+        else if !enabled { statusItem.title = "Awake: off" }
         else if lowBattery { statusItem.title = "Lid-closed mode paused: battery under \(AwakePolicy.lowBatteryPercent)%" }
-        else if lidOn { statusItem.title = "Awake: agents working (lid closed OK)" }
+        else if disabler.isOn { statusItem.title = "Awake: agents working (lid closed OK)" }
         else if hold { statusItem.title = "Awake: agents working" }
         else { statusItem.title = "Awake: idle (Mac can sleep)" }
     }
@@ -91,7 +96,7 @@ final class KeepAwake {
     }
 
     @objc private func removeSetup() {
-        _ = setDisableSleep(false)
+        disabler.clearBlocking { Self.runPmset($0) }
         if runAdmin(SudoersRule.removeScript) { defaults.set(false, forKey: kLid) }
         evaluate()
     }
@@ -115,10 +120,8 @@ final class KeepAwake {
         let (pct, onAC) = Self.battery()
         let want = AwakePolicy.lidDecision(hold: hold, lidModeEnabled: lidMode, percent: pct, onAC: onAC)
         lowBattery = want == .lowBattery
-        if want == .on, !lidOn { lidOn = setDisableSleep(true) }
-        else if want != .on, lidOn || FileManager.default.fileExists(atPath: Self.marker.path) {
-            if setDisableSleep(false) { lidOn = false }
-        }
+        // One pmset call at a time; a request made while one is in flight is dropped and redone from onIdle.
+        if want == .on { disabler.set(true) } else { disabler.set(false) }
         refreshMenu()
     }
 
@@ -136,22 +139,13 @@ final class KeepAwake {
         IOPMAssertionRelease(assertion); assertion = 0
     }
 
-    /// Marker first when turning ON (so a crash mid-way is still recovered); removed only after a confirmed OFF.
-    private func setDisableSleep(_ on: Bool) -> Bool {
-        let fm = FileManager.default
-        if on {
-            try? fm.createDirectory(at: Self.marker.deletingLastPathComponent(), withIntermediateDirectories: true)
-            fm.createFile(atPath: Self.marker.path, contents: Data())
-        }
+    /// Runs `sudo -n pmset -a disablesleep 1|0`. Blocking: call off the main thread (or at terminate).
+    private static func runPmset(_ on: Bool) -> Bool {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
-        p.arguments = ["-n", Self.pmset, "-a", "disablesleep", on ? "1" : "0"]
+        p.arguments = ["-n", pmset, "-a", "disablesleep", on ? "1" : "0"]
         p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
-        var ok = false
-        do { try p.run(); p.waitUntilExit(); ok = p.terminationStatus == 0 } catch {}
-        if !on, ok { try? fm.removeItem(at: Self.marker) }
-        if on, !ok { try? fm.removeItem(at: Self.marker) }
-        return ok
+        do { try p.run(); p.waitUntilExit(); return p.terminationStatus == 0 } catch { return false }
     }
 
     private static func battery() -> (Int?, Bool) {
