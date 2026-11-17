@@ -24,8 +24,8 @@ public struct HookPayload {
     public var project: String {
         if cwd.isEmpty { return "unknown" }
         if let r = cwd.range(of: "/.claude/worktrees/") {
-            let repo = URL(fileURLWithPath: String(cwd[..<r.lowerBound])).lastPathComponent
-            if !repo.isEmpty { return repo }
+            let prefix = String(cwd[..<r.lowerBound])
+            if !prefix.isEmpty { let repo = URL(fileURLWithPath: prefix).lastPathComponent; if !repo.isEmpty { return repo } }
         }
         return URL(fileURLWithPath: cwd).lastPathComponent
     }
