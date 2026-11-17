@@ -17,7 +17,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var pendingWatch: AnyCancellable?
     private var stepWatch: AnyCancellable?
     private var questionStep = 0
-    private var menuKey: (Date?, Int, Date)?
+    private var menuKey: (Date?, Int, Date, Int)?
+    private var menuGen = 0
     private lazy var tour = TourRunner(model: model)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -157,15 +158,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
         let stamp = (mtime: attrs?[.modificationDate] as? Date, size: (attrs?[.size] as? Int) ?? 0)
         let midnight = Calendar.current.startOfDay(for: Date())
-        let key = (stamp.mtime, stamp.size, midnight)
+        let key = (stamp.mtime, stamp.size, midnight, Int(Date().timeIntervalSince1970 / 300)) // 5-min bucket: the week window slides
+        menuGen += 1; let gen = menuGen
         if let last = menuKey, last == key { return }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let dated = WaitSummary.dated(EventLog.read(url))
             let today = WaitSummary(dated: dated, since: midnight).menuLine(label: "Waited on you today")
             let week = WaitSummary(dated: dated, since: Date().addingTimeInterval(-7 * 86_400)).menuLine(label: "This week", showAsks: true)
             DispatchQueue.main.async {
-                self?.todayItem.title = today; self?.weekItem.title = week
-                self?.menuKey = key
+                guard let self, gen == self.menuGen else { return } // a newer open superseded this read
+                self.todayItem.title = today; self.weekItem.title = week
+                self.menuKey = key
             }
         }
     }
