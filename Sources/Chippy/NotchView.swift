@@ -20,6 +20,8 @@ struct NotchView: View {
             NotchShape().fill(.black)
             content.padding(.bottom, 8)
         }
+        .contentShape(Rectangle())
+        .onTapGesture { model.toggleOpen() }
     }
 
     /// Content beside the camera: icon in the left wing, text in the right wing, nothing under the cutout.

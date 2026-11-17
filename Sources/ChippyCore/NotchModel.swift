@@ -28,6 +28,8 @@ public final class NotchModel: ObservableObject {
     /// When true (debug menu), live sessions don't drive state/density.
     @Published public var debugLock = false
     @Published public private(set) var pending: [PendingRequest] = []
+    /// The user clicked the notch open to look at sessions; closed again by another click.
+    @Published public private(set) var pinnedOpen = false
     private var store = SessionStore()
     private var connections: [String: Connection] = [:]
     private let always: AlwaysStore
@@ -46,8 +48,14 @@ public final class NotchModel: ObservableObject {
         if !pending.isEmpty { state = .needsYou; density = .expanded }
         else {
             state = store.derivedState
-            density = sessions.isEmpty ? .collapsed : .compact
+            density = pinnedOpen ? .expanded : (sessions.isEmpty ? .collapsed : .compact)
         }
+    }
+
+    /// Click on the notch: open the session list, or close it. A waiting approval keeps it open regardless.
+    public func toggleOpen() {
+        pinnedOpen.toggle()
+        refresh()
     }
 
     /// A PermissionRequest hook is waiting on `conn`. Main thread only.

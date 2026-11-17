@@ -11,4 +11,12 @@ final class NotchModelTests: XCTestCase {
         let m = NotchModel()
         for s in ChippyState.allCases { m.state = s; XCTAssertEqual(m.state, s) }
     }
+
+    func testClickOpensSessionListAndSecondClickClosesIt() {
+        let m = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("chippy-test-\(UUID()).jsonl")))
+        m.apply(HookPayload(json: Data(#"{"session_id":"a","hook_event_name":"SessionStart","cwd":"/x/p"}"#.utf8))!)
+        XCTAssertEqual(m.density, Density.compact)
+        m.toggleOpen(); XCTAssertEqual(m.density, Density.expanded)
+        m.toggleOpen(); XCTAssertEqual(m.density, Density.compact)
+    }
 }
