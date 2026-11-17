@@ -18,17 +18,21 @@ final class TourRunner {
 
     func runOnFirstLaunch() {
         guard !UserDefaults.standard.bool(forKey: Tour.defaultsKey) else { return }
-        UserDefaults.standard.set(true, forKey: Tour.defaultsKey)
-        // Give the socket server a moment to come up.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.start() }
+        // Give the socket server a moment to come up. Mark the tour seen only once a step really launched.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            if self?.start() == true { UserDefaults.standard.set(true, forKey: Tour.defaultsKey) }
+        }
     }
 
-    func start() {
-        guard !running, let exe = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("chippy-hook") else { return }
+    /// True when the first step was launched.
+    @discardableResult
+    func start() -> Bool {
+        guard !running, let exe = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("chippy-hook") else { return false }
         running = true
         model.debugLock = false
         Self.hooksConnected = Tour.hooksConnected(settingsText: try? String(contentsOf: Self.settingsURL, encoding: .utf8))
         run(Tour.steps[...], exe: exe)
+        return running
     }
 
     private func run(_ rest: ArraySlice<Tour.Step>, exe: URL) {

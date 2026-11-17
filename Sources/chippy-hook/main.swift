@@ -23,6 +23,10 @@ func relay(_ args: [String]) -> Never {
     guard var obj = try? JSONSerialization.jsonObject(with: input) else {
         debug("unparseable payload, exit \(ms())"); exit(0)
     }
+    // Connect first: with Chippy closed the relay must cost nothing (no AppKit / LaunchServices lookup).
+    guard let fd = SocketClient.connect() else {
+        debug("Chippy.app not running, exit in \(ms())"); exit(0) // fail-open: agent never blocked
+    }
     // Tell Chippy which app/tty hosts this session, for "Open terminal". Only on the events that make a chip.
     if var d = obj as? [String: Any], ["SessionStart", "UserPromptSubmit", "Stop"].contains(d["hook_event_name"] as? String ?? ""),
        let h = HostLookup.find() {
@@ -33,9 +37,6 @@ func relay(_ args: [String]) -> Never {
     }
     guard let line = try? JSONSerialization.data(withJSONObject: obj) else {
         debug("unparseable payload, exit \(ms())"); exit(0)
-    }
-    guard let fd = SocketClient.connect() else {
-        debug("Chippy.app not running, exit in \(ms())"); exit(0) // fail-open: agent never blocked
     }
     var snd = timeval(tv_sec: 1, tv_usec: 0) // a frozen app must not block the agent on a big payload
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &snd, socklen_t(MemoryLayout<timeval>.size))

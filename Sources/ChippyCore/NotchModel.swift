@@ -126,7 +126,7 @@ public final class NotchModel: ObservableObject {
             refresh()
             return
         }
-        if decision == .always { always.insert(req) }
+        if decision == .always, !req.sessionId.hasPrefix("demo-") { always.insert(req) } // the tour demo must show again next run
         conn.respond(decision.reply)
         record(req, channel: .notch, decision: "\(decision)", now: now)
         refresh()

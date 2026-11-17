@@ -81,7 +81,7 @@ final class EventLogTests: XCTestCase {
         XCTAssertEqual(line(200_000), "L: 3m 20s · 50% from notch")
         XCTAssertEqual(line(41 * 60_000, asks: true), "L: 41m · 50% from notch (2 asks)")
         XCTAssertEqual(line(3_900_000), "L: 1h 5m · 50% from notch")
-        XCTAssertEqual(WaitSummary([]).menuLine(label: "L"), "No approvals yet")
+        XCTAssertEqual(WaitSummary([]).menuLine(label: "L"), "L: none yet")
     }
 
     func testDemoRequestsAreNotLogged() {

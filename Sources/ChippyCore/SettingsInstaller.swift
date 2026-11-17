@@ -17,6 +17,13 @@ public enum SettingsInstaller {
     /// Claude Code kills the hook at this many seconds; ours must fire first, for whichever wait is longer.
     public static func hookTimeout(approvalTimeout: Int, questionTimeout: Int) -> Int { max(approvalTimeout, questionTimeout) + 10 }
 
+    /// The integer after `flag` in a hook command line, if present.
+    static func flagValue(_ flag: String, in command: String) -> Int? {
+        let parts = command.split(separator: " ").map(String.init)
+        guard let i = parts.firstIndex(of: flag), i + 1 < parts.count else { return nil }
+        return Int(parts[i + 1])
+    }
+
     public static func merged(_ settings: [String: Any], binary: String, events: [String] = hookEvents,
                               approvalTimeout: Int = defaultApprovalTimeout,
                               questionTimeout: Int = defaultQuestionTimeout) -> [String: Any] {
@@ -35,7 +42,12 @@ public enum SettingsInstaller {
                         guard let list = entry["hooks"] as? [Any] else { return entry }
                         entry["hooks"] = list.map { h -> Any in
                             guard var hook = h as? [String: Any], (hook["command"] as? String)?.contains("chippy-hook") == true else { return h }
-                            hook["command"] = cmd; hook["timeout"] = timeout
+                            // Keep the user's own --timeout / --question-timeout; defaults only fill missing flags.
+                            let old = hook["command"] as? String ?? ""
+                            let a = flagValue("--timeout", in: old) ?? approvalTimeout
+                            let q = flagValue("--question-timeout", in: old) ?? questionTimeout
+                            hook["command"] = command(for: binary, approvalTimeout: a, questionTimeout: q)
+                            hook["timeout"] = hookTimeout(approvalTimeout: a, questionTimeout: q)
                             return hook
                         }
                         return entry
