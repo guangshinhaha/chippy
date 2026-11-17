@@ -47,6 +47,7 @@ public final class NotchModel: ObservableObject {
         guard !debugLock else { return }
         if !pending.isEmpty { state = .needsYou; density = .expanded }
         else {
+            if sessions.isEmpty { pinnedOpen = false } // nothing to look at: don't stay open on an empty list
             state = store.derivedState
             density = pinnedOpen ? .expanded : (sessions.isEmpty ? .collapsed : .compact)
         }
@@ -54,6 +55,7 @@ public final class NotchModel: ObservableObject {
 
     /// Click on the notch: open the session list, or close it. A waiting approval keeps it open regardless.
     public func toggleOpen() {
+        guard pending.isEmpty else { return } // an approval holds it open; don't flip the pin unseen
         pinnedOpen.toggle()
         refresh()
     }

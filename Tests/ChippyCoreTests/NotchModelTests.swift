@@ -19,4 +19,11 @@ final class NotchModelTests: XCTestCase {
         m.toggleOpen(); XCTAssertEqual(m.density, Density.expanded)
         m.toggleOpen(); XCTAssertEqual(m.density, Density.compact)
     }
+
+    func testClickWithNoSessionsStaysCollapsed() {
+        let m = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("chippy-test-\(UUID()).jsonl")))
+        m.toggleOpen()
+        XCTAssertEqual(m.density, Density.collapsed)
+        XCTAssertFalse(m.pinnedOpen)
+    }
 }
