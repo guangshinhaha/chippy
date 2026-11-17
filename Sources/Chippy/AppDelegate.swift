@@ -37,25 +37,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.title = "🐿"
         let menu = NSMenu()
-        let live = NSMenuItem(title: "Live (follow sessions)", action: #selector(goLive), keyEquivalent: "")
-        live.target = self
-        menu.addItem(live)
-        let peek = NSMenuItem(title: "Show / hide sessions", action: #selector(peekSessions), keyEquivalent: "")
+        let peek = NSMenuItem(title: "Show sessions", action: #selector(peekSessions), keyEquivalent: "")
         peek.target = self
         menu.addItem(peek)
-        menu.addItem(header("State (debug)"))
+        menu.addItem(.separator())
+
+        // Everything below is for testing the notch's look, not for real use.
+        let dev = NSMenu()
+        dev.addItem(header("Testing only: these fake the notch"))
+        let live = NSMenuItem(title: "Back to live (follow sessions)", action: #selector(goLive), keyEquivalent: "")
+        live.target = self
+        dev.addItem(live)
+        dev.addItem(.separator())
+        dev.addItem(header("Try a demo (fake session)"))
+        for (title, kind) in [("Needs your approval", "approval"), ("Two approvals waiting", "queue"), ("Thread finished", "done")] {
+            let mi = NSMenuItem(title: title, action: #selector(runDemo(_:)), keyEquivalent: "")
+            mi.representedObject = kind; mi.target = self
+            dev.addItem(mi)
+        }
+        dev.addItem(.separator())
+        dev.addItem(header("Force state"))
         for s in ChippyState.allCases {
             let mi = NSMenuItem(title: s.title, action: #selector(pickState(_:)), keyEquivalent: "")
             mi.representedObject = s.rawValue; mi.target = self
-            menu.addItem(mi)
+            dev.addItem(mi)
         }
-        menu.addItem(.separator())
-        menu.addItem(header("Density (debug)"))
+        dev.addItem(.separator())
+        dev.addItem(header("Force size"))
         for d in Density.allCases {
             let mi = NSMenuItem(title: d.title, action: #selector(pickDensity(_:)), keyEquivalent: "")
             mi.representedObject = d.rawValue; mi.target = self
-            menu.addItem(mi)
+            dev.addItem(mi)
         }
+        let devItem = NSMenuItem(title: "Developer (testing only)", action: nil, keyEquivalent: "")
+        devItem.submenu = dev
+        menu.addItem(devItem)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit Chippy", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         item.menu = menu
@@ -68,6 +84,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func pickState(_ sender: NSMenuItem) {
         if let raw = sender.representedObject as? String, let s = ChippyState(rawValue: raw) { model.debugLock = true; model.state = s }
+    }
+
+    @objc private func runDemo(_ sender: NSMenuItem) {
+        guard let kind = sender.representedObject as? String,
+              let exe = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("chippy-hook") else { return }
+        model.debugLock = false
+        let p = Process(); p.executableURL = exe; p.arguments = ["demo", kind]
+        try? p.run()
     }
 
     @objc private func peekSessions() { model.toggleOpen() }
