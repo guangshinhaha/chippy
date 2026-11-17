@@ -73,6 +73,9 @@ final class NotchPanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
 
+    /// Esc (when the notch has focus) folds an open detail.
+    override func cancelOperation(_ sender: Any?) { model.closeDetail() }
+
     func dock(_ density: Density) {
         guard let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.main else { return }
         let m = NotchMetrics.detect(screen)

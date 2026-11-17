@@ -9,12 +9,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var server: SocketServer?
     private var sweeper: Timer?
     private var outsideClick: Any?
+    private var escKey: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         panel = NotchPanel(model: model)
         buildMenu()
         startServer()
         // Clicks in any other app are "outside the notch": fold the detail back to its glance.
+        // Esc in any app folds the detail. Global key events need Accessibility permission; without it only clicks work.
+        escKey = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] e in
+            if e.keyCode == 53 { DispatchQueue.main.async { self?.model.closeDetail() } }
+        }
         outsideClick = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             DispatchQueue.main.async { self?.model.closeDetail() }
         }
@@ -45,6 +50,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let peek = NSMenuItem(title: "Show sessions", action: #selector(peekSessions), keyEquivalent: "")
         peek.target = self
         menu.addItem(peek)
+        let glance = NSMenuItem(title: "Show reply text beside the camera", action: #selector(toggleGlance(_:)), keyEquivalent: "")
+        glance.target = self; glance.state = model.showReplyInGlance ? .on : .off
+        menu.addItem(glance)
         menu.addItem(.separator())
 
         // Everything below is for testing the notch's look, not for real use.
@@ -97,6 +105,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.debugLock = false
         let p = Process(); p.executableURL = exe; p.arguments = ["demo", kind]
         try? p.run()
+    }
+
+    @objc private func toggleGlance(_ sender: NSMenuItem) {
+        model.showReplyInGlance.toggle()
+        sender.state = model.showReplyInGlance ? .on : .off
     }
 
     @objc private func peekSessions() { model.toggleOpen() }

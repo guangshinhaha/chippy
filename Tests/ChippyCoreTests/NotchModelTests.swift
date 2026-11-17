@@ -147,4 +147,13 @@ final class NotchModelTests: XCTestCase {
         m.closeDetail()
         XCTAssertEqual(m.pending.count, 1); XCTAssertEqual(m.density, Density.expanded)   // approval stays
     }
+
+    func testGlanceIsNeutralUnlessOptedIn() {
+        let m = model()
+        m.apply(HookPayload(json: Data(#"{"session_id":"a","hook_event_name":"Stop","cwd":"/w/api","last_assistant_message":"Student Tan Ah Kow scored 40. Send report?"}"#.utf8))!)
+        let d = m.doneItems[0]
+        XCTAssertEqual(d.glance(showReply: false), "api · needs you")
+        XCTAssertFalse(d.glance(showReply: false).contains("Tan"))
+        XCTAssertTrue(d.glance(showReply: true).contains("Student Tan"))
+    }
 }
