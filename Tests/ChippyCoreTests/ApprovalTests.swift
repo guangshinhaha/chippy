@@ -97,4 +97,38 @@ final class ApprovalTests: XCTestCase {
         m.sweep()
         XCTAssertTrue(m.pending.isEmpty); XCTAssertEqual(m.state, .idle)
     }
+
+    func testAlwaysOnAnEditDoesNotCoverOtherContentInTheSameFile() {
+        func edit(_ new: String) -> HookPayload {
+            HookPayload(json: try! JSONSerialization.data(withJSONObject: [
+                "session_id": "s", "cwd": "/w/api", "hook_event_name": "PermissionRequest", "tool_name": "Edit",
+                "tool_input": ["file_path": "/w/api/a.swift", "old_string": "x", "new_string": new]]))!
+        }
+        let m = model()
+        let (c1, _) = pair(); m.receiveApproval(edit("safe"), c1); m.resolve(m.pending[0].id, .always)
+        let (c2, f2) = pair(); m.receiveApproval(edit("safe"), c2)   // identical content: auto
+        XCTAssertEqual(reply(f2)?["behavior"] as? String, "allow")
+        let (c3, _) = pair(); m.receiveApproval(edit("rm -rf / # different content"), c3)
+        XCTAssertEqual(m.pending.count, 1)                            // different content: still asks
+    }
+
+    func testAlwaysFileHoldsNoRawCommandText() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("always-\(UUID()).json")
+        let m = NotchModel(always: AlwaysStore(url: url))
+        let (c, _) = pair(); m.receiveApproval(payload(cmd: "curl -H token=SECRET123 x"), c)
+        m.resolve(m.pending[0].id, .always)
+        let text = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertFalse(text.contains("SECRET123")); XCTAssertFalse(text.contains("curl"))
+    }
+
+    func testClickAfterHookGaveUpIsNotAnsweredOrRemembered() {
+        let m = model(); let (c, f) = pair()
+        m.receiveApproval(payload(), c)
+        let id = m.pending[0].id
+        close(f)                                   // hook timed out; sweep hasn't run yet
+        m.resolve(id, .always)                     // late click
+        XCTAssertTrue(m.pending.isEmpty)
+        let (c2, _) = pair(); m.receiveApproval(payload(), c2)
+        XCTAssertEqual(m.pending.count, 1)         // Always was NOT stored
+    }
 }
