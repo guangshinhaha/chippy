@@ -19,9 +19,19 @@ public struct HookPayload {
         toolInput = o["tool_input"] as? [String: Any] ?? [:]
     }
 
+    /// Repo name for the session. A Claude worktree (`<repo>/.claude/worktrees/agent-xyz`) is labelled by its repo,
+    /// not by the throwaway folder name.
     public var project: String {
-        cwd.isEmpty ? "unknown" : URL(fileURLWithPath: cwd).lastPathComponent
+        if cwd.isEmpty { return "unknown" }
+        if let r = cwd.range(of: "/.claude/worktrees/") {
+            let prefix = String(cwd[..<r.lowerBound])
+            if !prefix.isEmpty { let repo = URL(fileURLWithPath: prefix).lastPathComponent; if !repo.isEmpty { return repo } }
+        }
+        return URL(fileURLWithPath: cwd).lastPathComponent
     }
+
+    /// An automated agent running in its own worktree: nobody is waiting on its "finished".
+    public var isAgentWorktree: Bool { cwd.contains("/.claude/worktrees/agent-") }
 
     public var filePath: String? { toolInput["file_path"] as? String }
 }

@@ -112,7 +112,7 @@ public final class NotchModel: ObservableObject {
     public func apply(_ payload: HookPayload, now: Date = Date()) {
         store.apply(payload)
         sessions = store.rows
-        if payload.event == "Stop" { toastUntil = now.addingTimeInterval(Self.toastSeconds); toastSession = payload.sessionId } // finished: say so briefly
+        if payload.event == "Stop", !payload.isAgentWorktree { toastUntil = now.addingTimeInterval(Self.toastSeconds); toastSession = payload.sessionId } // finished: say so briefly
         // Only the session that finished can dismiss its own toast; another thread's activity must not.
         if (payload.event == "SessionEnd" || payload.event == "UserPromptSubmit"), payload.sessionId == toastSession { toastUntil = nil }
         refresh(now: now)
