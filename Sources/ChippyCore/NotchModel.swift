@@ -31,11 +31,14 @@ public final class NotchModel: ObservableObject {
     private var store = SessionStore()
     private var connections: [String: Connection] = [:]
     private let always: AlwaysStore
+    private let log: EventLog
 
-    public init(state: ChippyState = .idle, density: Density = .collapsed, always: AlwaysStore = AlwaysStore()) {
+    public init(state: ChippyState = .idle, density: Density = .collapsed,
+                always: AlwaysStore = AlwaysStore(), log: EventLog = EventLog()) {
         self.state = state
         self.density = density
         self.always = always
+        self.log = log
     }
 
     private func refresh() {
@@ -52,26 +55,34 @@ public final class NotchModel: ObservableObject {
     public func receiveApproval(_ payload: HookPayload, _ conn: Connection) {
         guard payload.toolName != "AskUserQuestion" else { conn.respond(nil); return }
         let req = PendingRequest(payload: payload)
-        if always.contains(req) { conn.respond(Decision.allow.reply); return }
+        if always.contains(req) {
+            conn.respond(Decision.allow.reply)
+            log.append(req, channel: .notch, decision: "auto_always", now: req.createdAt)
+            return
+        }
         pending.append(req)
         connections[req.id] = conn
         refresh()
     }
 
     /// Resolve exactly the request with this id. Stale or unknown ids are ignored.
-    public func resolve(_ id: String, _ decision: Decision) {
+    public func resolve(_ id: String, _ decision: Decision, now: Date = Date()) {
         guard let i = pending.firstIndex(where: { $0.id == id }), let conn = connections.removeValue(forKey: id) else { return }
         let req = pending.remove(at: i)
         if decision == .always { always.insert(req) }
         conn.respond(decision.reply)
+        log.append(req, channel: .notch, decision: "\(decision)", now: now)
         refresh()
     }
 
     /// Drop requests whose hook went away (timeout fallback, or answered in the terminal).
-    public func sweep() {
+    public func sweep(now: Date = Date()) {
         let gone = pending.filter { connections[$0.id]?.peerGone ?? true }
         guard !gone.isEmpty else { return }
-        for r in gone { connections.removeValue(forKey: r.id)?.respond(nil) }
+        for r in gone {
+            connections.removeValue(forKey: r.id)?.respond(nil)
+            log.append(r, channel: .terminal, decision: "none", now: now)
+        }
         pending.removeAll { r in gone.contains { $0.id == r.id } }
         refresh()
     }

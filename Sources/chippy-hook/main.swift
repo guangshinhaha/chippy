@@ -98,7 +98,13 @@ let args = Array(CommandLine.arguments.dropFirst())
 switch args.first {
 case "relay": relay(Array(args.dropFirst()))
 case "install": install(Array(args.dropFirst()))
+case "stats":
+    let events = EventLog.read(ChippyPaths.supportDir.appendingPathComponent("events.jsonl"))
+    let w = WaitSummary(events)
+    print("approvals: \(w.total)  from notch: \(w.fromNotch)  from terminal: \(w.fromTerminal)  notch share: \(Int(w.notchShare * 100))%")
+    print("idle wait: total \(w.totalWaitMs)ms  median \(w.medianWaitMs)ms")
+    exit(0)
 default:
-    print("usage: chippy-hook relay | install [--settings PATH] [--yes] [--timeout SECS]")
+    print("usage: chippy-hook relay | install [--settings PATH] [--yes] [--timeout SECS] | stats")
     exit(args.isEmpty ? 0 : 2)
 }
