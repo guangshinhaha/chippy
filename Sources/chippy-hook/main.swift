@@ -13,7 +13,7 @@ func debug(_ s: String) {
 
 func relay(_ args: [String]) -> Never {
     var timeout = SettingsInstaller.defaultApprovalTimeout
-    if let i = args.firstIndex(of: "--timeout"), i + 1 < args.count, let t = Int(args[i + 1]) { timeout = t }
+    if let i = args.firstIndex(of: "--timeout"), i + 1 < args.count, let t = Int(args[i + 1]) { timeout = min(max(t, 1), 120) }
     let start = DispatchTime.now()
     func ms() -> String { String(format: "%.1fms", Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1e6) }
     let input = FileHandle.standardInput.readDataToEndOfFile()
@@ -25,6 +25,8 @@ func relay(_ args: [String]) -> Never {
     guard let fd = SocketClient.connect() else {
         debug("Chippy.app not running, exit in \(ms())"); exit(0) // fail-open: agent never blocked
     }
+    var snd = timeval(tv_sec: 1, tv_usec: 0) // a frozen app must not block the agent on a big payload
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &snd, socklen_t(MemoryLayout<timeval>.size))
     writeLine(fd: fd, line)
     let dict = obj as? [String: Any]
     let wantsAnswer = dict?["hook_event_name"] as? String == "PermissionRequest"
@@ -51,7 +53,7 @@ func install(_ args: [String]) -> Never {
     var i = 0
     while i < args.count {
         if args[i] == "--yes" { yes = true }
-        else if args[i] == "--timeout", i + 1 < args.count, let t = Int(args[i + 1]) { timeout = t; i += 1 }
+        else if args[i] == "--timeout", i + 1 < args.count, let t = Int(args[i + 1]) { timeout = min(max(t, 1), 120); i += 1 }
         else if args[i] == "--settings", i + 1 < args.count { settingsPath = args[i + 1]; i += 1 }
         i += 1
     }
@@ -62,7 +64,8 @@ func install(_ args: [String]) -> Never {
     else if let o = try? JSONSerialization.jsonObject(with: oldData) as? [String: Any] { old = o }
     else { print("error: \(settingsPath) is not valid JSON, not touching it"); exit(1) }
 
-    let me = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().path
+    // argv[0] can be a bare name found via PATH; the bundle path is always absolute.
+    let me = URL(fileURLWithPath: Bundle.main.executablePath ?? CommandLine.arguments[0]).resolvingSymlinksInPath().path
     let newData: Data
     do { newData = try SettingsInstaller.render(SettingsInstaller.merged(old, binary: me, approvalTimeout: timeout)) }
     catch { print("error: \(error)"); exit(1) }
@@ -79,6 +82,10 @@ func install(_ args: [String]) -> Never {
     if !yes {
         print("\nWrite these changes? [y/N] ", terminator: "")
         guard let a = readLine(), a.lowercased() == "y" else { print("Aborted. Nothing written."); exit(1) }
+    }
+    // The file may have changed while the user read the diff: don't clobber edits made meanwhile.
+    if ((try? Data(contentsOf: url)) ?? Data()) != oldData {
+        print("error: \(settingsPath) changed while waiting, aborting. Run install again."); exit(1)
     }
     if FileManager.default.fileExists(atPath: settingsPath) {
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")

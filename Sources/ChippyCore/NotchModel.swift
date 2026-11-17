@@ -62,6 +62,11 @@ public final class NotchModel: ObservableObject {
     public func resolve(_ id: String, _ decision: Decision) {
         guard let i = pending.firstIndex(where: { $0.id == id }), let conn = connections.removeValue(forKey: id) else { return }
         let req = pending.remove(at: i)
+        if conn.peerGone { // the hook already gave up (timeout) or the terminal answered: this click is stale
+            conn.respond(nil)
+            refresh()
+            return
+        }
         if decision == .always { always.insert(req) }
         conn.respond(decision.reply)
         refresh()
