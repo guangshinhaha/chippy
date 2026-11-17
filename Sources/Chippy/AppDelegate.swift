@@ -1,5 +1,6 @@
 import AppKit
 import ChippyCore
+import Combine
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -10,11 +11,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var sweeper: Timer?
     private var outsideClick: Any?
     private var escKey: Any?
+    private let hotKeys = HotKeys()
+    private var shortcutCard: (id: String, shownAt: Date)?
+    private var pendingWatch: AnyCancellable?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         panel = NotchPanel(model: model)
         buildMenu()
         startServer()
+        startShortcuts()
         // Clicks in any other app are "outside the notch": fold the detail back to its glance.
         // Esc in any app folds the detail. Global key events need Accessibility permission; without it only clicks work.
         escKey = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] e in
@@ -39,6 +44,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sweeper = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.model.sweep() }
         do { try server.start(); self.server = server }
         catch { NSLog("Chippy: socket start failed: \(error)") }
+    }
+
+    // MARK: keyboard shortcuts (#36). Keys exist only while a card is on screen.
+    private func startShortcuts() {
+        hotKeys.onAction = { [weak self] in self?.handleShortcut($0) }
+        pendingWatch = model.$pending.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.syncShortcuts() }
+    }
+
+    private func syncShortcuts() {
+        guard let req = model.pending.first else { shortcutCard = nil; hotKeys.unregister(); return }
+        if shortcutCard?.id == req.id { return } // same card: keep keys and its shownAt
+        shortcutCard = (req.id, Date())
+        if let qs = req.questions {
+            hotKeys.register(ShortcutKeys.question(optionCount: qs.map { $0.options.count }.max() ?? 0))
+        } else {
+            hotKeys.register(ShortcutKeys.approval)
+        }
+    }
+
+    private func handleShortcut(_ action: ShortcutAction) {
+        // Only the card on screen, only once it has been visible long enough.
+        guard let req = model.pending.first, let card = shortcutCard, card.id == req.id,
+              ShortcutGate.allows(shownAt: card.shownAt) else { return }
+        switch action {
+        case .allow where req.questions == nil: model.resolve(req.id, .allow)
+        case .deny where req.questions == nil: model.resolve(req.id, .deny)
+        case .always where req.questions == nil: model.resolve(req.id, .always)
+        case .option where req.questions != nil: ShortcutBus.events.send(ShortcutEvent(requestId: req.id, action: action))
+        default: break
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) { server?.stop() }
