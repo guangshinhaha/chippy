@@ -13,32 +13,48 @@ struct StateIcon: View {
 
 struct NotchView: View {
     @ObservedObject var model: NotchModel
+    @ObservedObject var box: MetricsBox
 
     var body: some View {
         ZStack(alignment: .top) {
             NotchShape().fill(.black)
-            content.padding(.horizontal, 16).padding(.bottom, 8)
+            content.padding(.bottom, 8)
         }
     }
 
+    /// Content beside the camera: icon in the left wing, text in the right wing, nothing under the cutout.
     @ViewBuilder
     var content: some View {
+        let m = box.metrics
         switch model.density {
         case .collapsed:
-            HStack { StateIcon(state: model.state); Spacer() }
-        case .compact:
-            HStack(spacing: 8) {
-                StateIcon(state: model.state)
-                Spacer()
-                Text(model.sessions.first?.detail ?? model.state.title)
-                    .font(.caption.bold()).foregroundStyle(.white).lineLimit(1)
-                if model.sessions.count > 1 {
-                    Text("+\(model.sessions.count - 1)").font(.caption2).foregroundStyle(.white.opacity(0.6))
-                }
+            HStack(spacing: 0) {
+                StateIcon(state: model.state).padding(.leading, 10)
+                Spacer(minLength: 0)
             }
+            .frame(height: m.band, alignment: .center)
+        case .compact:
+            let wing = m.wing(for: .compact)
+            HStack(spacing: 0) {
+                HStack { StateIcon(state: model.state); Spacer(minLength: 0) }
+                    .padding(.leading, 10).frame(width: wing)
+                Color.clear.frame(width: m.width)
+                HStack(spacing: 6) {
+                    Text(model.sessions.first?.detail ?? model.state.title)
+                        .font(.caption.bold()).foregroundStyle(.white)
+                        .lineLimit(1).truncationMode(.tail)
+                    if model.sessions.count > 1 {
+                        Text("+\(model.sessions.count - 1)").font(.caption2).foregroundStyle(.white.opacity(0.6))
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 10).frame(width: wing)
+            }
+            .frame(height: m.band, alignment: .center)
+            .frame(maxHeight: .infinity, alignment: .top)
         case .expanded:
             VStack(alignment: .leading, spacing: 8) {
-                Spacer().frame(height: 28)
+                Spacer().frame(height: box.metrics.height + 2)
                 HStack(spacing: 10) {
                     StateIcon(state: model.state, size: 28)
                     Text(model.state.title).font(.headline).foregroundStyle(.white)
@@ -58,6 +74,7 @@ struct NotchView: View {
                 Spacer()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
         }
     }
 }

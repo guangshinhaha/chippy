@@ -5,6 +5,8 @@ import SwiftUI
 /// `Chippy --render-gallery out.png` renders every state x density to a PNG, headless.
 /// Used as evidence for the state/density acceptance checks.
 enum Gallery {
+    @MainActor private static func box(_ m: NotchMetrics) -> MetricsBox { let b = MetricsBox(); b.metrics = m; return b }
+
     @MainActor
     static func render(to path: String) {
         let view = VStack(alignment: .leading, spacing: 12) {
@@ -18,11 +20,12 @@ enum Gallery {
                 }
             }
             ForEach(Density.allCases, id: \.self) { d in
+                let m = NotchMetrics.sample14
                 HStack(alignment: .top, spacing: 12) {
                     ForEach(ChippyState.allCases, id: \.self) { s in
                         VStack(spacing: 4) {
-                            NotchView(model: NotchModel(state: s, density: d))
-                                .frame(width: 300, height: NotchPanel.size(for: d, notchWidth: 160).height)
+                            NotchView(model: NotchModel(state: s, density: d), box: box(m))
+                                .frame(width: m.size(for: d).width, height: m.size(for: d).height)
                             Text("\(s.title) / \(d.title)").font(.caption2).foregroundStyle(.secondary)
                         }
                     }
@@ -31,7 +34,34 @@ enum Gallery {
         }
         .padding(16)
         .background(Color(white: 0.25))
-        let r = ImageRenderer(content: view)
+        let devices: [(String, NotchMetrics)] = [("14\" notch", NotchMetrics(width: 185, height: 32)),
+                                                 ("16\" notch", NotchMetrics(width: 200, height: 38)),
+                                                 ("no notch", .none)]
+        let long = #"{"session_id":"s","hook_event_name":"PreToolUse","cwd":"/x/chippy","tool_name":"Bash","tool_input":{"command":"sleep 15; cat /tmp/chippy-trial.out | head -5; ls -la /tmp"}}"#
+        let variants = VStack(alignment: .leading, spacing: 10) {
+            ForEach(devices, id: \.0) { name, m in
+                HStack(alignment: .top, spacing: 12) {
+                    ForEach([Density.collapsed, .compact], id: \.self) { d in
+                        let model = NotchModel(state: .working, density: d)
+                        let _ = { model.apply(HookPayload(json: Data(long.utf8))!); model.density = d }()
+                        VStack(alignment: .leading, spacing: 4) {
+                            ZStack(alignment: .top) {
+                                NotchView(model: model, box: box(m))
+                                    .frame(width: m.size(for: d).width, height: m.size(for: d).height)
+                                if m.hasNotch { // the camera, drawn over the content to prove nothing hides under it
+                                    RoundedRectangle(cornerRadius: 6).fill(Color.red.opacity(0.55))
+                                        .frame(width: m.width, height: m.height)
+                                }
+                            }
+                            .frame(width: m.size(for: .compact).width, alignment: .top)
+                            Text("\(name) / \(d.title)").font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        }.padding(16).background(Color(white: 0.25))
+        let all = VStack(spacing: 0) { view; variants }
+        let r = ImageRenderer(content: all)
         r.scale = 2
         guard let img = r.nsImage, let tiff = img.tiffRepresentation,
               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else {
