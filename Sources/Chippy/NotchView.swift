@@ -234,7 +234,7 @@ struct QuestionCard: View {
                 .contentShape(Rectangle())
                 .onTapGesture { pick(i) }
             }
-            ChipButton(title: "Answer in terminal", kind: .quiet, action: handBack)
+            ChipButton(title: "Answer in terminal", kind: .quiet) { if !sent { sent = true; handBack() } }
         }
         .onReceive(ShortcutBus.events) { e in
             // Keys take the same path as a tap, for this card only.

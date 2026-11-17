@@ -152,8 +152,9 @@ public final class NotchModel: ObservableObject {
         guard let i = pending.firstIndex(where: { $0.id == id }), let conn = connections.removeValue(forKey: id) else { return }
         let req = pending.remove(at: i)
         questionInputs.removeValue(forKey: id)
+        let stale = conn.peerGone // the hook already gave up or the terminal answered: nothing was handed back
         conn.respond(nil)
-        record(req, channel: .terminal, decision: "handed_back", now: now)
+        record(req, channel: .terminal, decision: stale ? "none" : "handed_back", now: now)
         refresh()
     }
 
