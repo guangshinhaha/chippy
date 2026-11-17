@@ -87,7 +87,7 @@ struct NotchView: View {
                 }
                 if let req = model.pending.first {
                     if req.questions != nil {
-                        QuestionCard(req: req) { model.answer(req.id, $0) }.id(req.id)
+                        QuestionCard(req: req, send: { model.answer(req.id, $0) }, handBack: { model.handBack(req.id) }).id(req.id)
                     } else {
                         ApprovalCard(req: req) { model.resolve(req.id, $0) }
                     }
@@ -203,6 +203,7 @@ struct ChipStyle: ButtonStyle {
 struct QuestionCard: View {
     let req: PendingRequest
     let send: ([String: String]) -> Void
+    let handBack: () -> Void
     @State private var step = 0
     @State private var answers: [String: String] = [:]
     @State private var sent = false
@@ -230,7 +231,7 @@ struct QuestionCard: View {
                 .contentShape(Rectangle())
                 .onTapGesture { pick(i) }
             }
-            Text("Or answer in the terminal").font(.caption2).foregroundStyle(.white.opacity(0.4))
+            ChipButton(title: "Answer in terminal", kind: .quiet) { if !sent { sent = true; handBack() } }
         }
         .onReceive(ShortcutBus.events) { e in
             // Keys take the same path as a tap, for this card only.

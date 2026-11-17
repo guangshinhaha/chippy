@@ -43,7 +43,7 @@ final class SettingsPatchTests: XCTestCase {
 
     func testSinglePermissionTimeoutIsLargerThanOurs() throws {
         let out = try check("{\n  \"a\": 1\n}\n")
-        XCTAssertTrue(out.contains("\"timeout\": 30"))
+        XCTAssertTrue(out.contains("\"timeout\": 130"))
     }
 
     func testIdempotent() throws {

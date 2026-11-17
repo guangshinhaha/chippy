@@ -6,22 +6,46 @@ public enum SettingsInstaller {
     public static let hookEvents = ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "SessionEnd", "PermissionRequest"]
     public static let defaultApprovalTimeout = 20
 
-    public static func command(for binary: String, approvalTimeout: Int? = nil) -> String {
+    /// Claude's questions (AskUserQuestion) get longer than approvals: a person has to read the options.
+    public static let defaultQuestionTimeout = 120
+
+    public static func command(for binary: String, approvalTimeout: Int? = nil, questionTimeout: Int? = nil) -> String {
         "\"\(binary)\" relay" + (approvalTimeout.map { " --timeout \($0)" } ?? "")
+            + (questionTimeout.map { " --question-timeout \($0)" } ?? "")
     }
 
+    /// Claude Code kills the hook at this many seconds; ours must fire first, for whichever wait is longer.
+    public static func hookTimeout(approvalTimeout: Int, questionTimeout: Int) -> Int { max(approvalTimeout, questionTimeout) + 10 }
+
     public static func merged(_ settings: [String: Any], binary: String, events: [String] = hookEvents,
-                              approvalTimeout: Int = defaultApprovalTimeout) -> [String: Any] {
+                              approvalTimeout: Int = defaultApprovalTimeout,
+                              questionTimeout: Int = defaultQuestionTimeout) -> [String: Any] {
         var out = settings
         var hooks = out["hooks"] as? [String: Any] ?? [:]
         for ev in events {
             var entries = hooks[ev] as? [[String: Any]] ?? []
-            if hasChippyHook(entries) { continue }
-            var hook: [String: Any] = ["type": "command", "command": command(for: binary)]
-            if ev == "PermissionRequest" {
-                hook["command"] = command(for: binary, approvalTimeout: approvalTimeout)
-                hook["timeout"] = approvalTimeout + 10 // let our own timeout fire first
+            let permission = ev == "PermissionRequest"
+            let cmd = command(for: binary, approvalTimeout: permission ? approvalTimeout : nil, questionTimeout: permission ? questionTimeout : nil)
+            let timeout = hookTimeout(approvalTimeout: approvalTimeout, questionTimeout: questionTimeout)
+            if hasChippyHook(entries) {
+                // Upgrade in place: only chippy's own hook objects on PermissionRequest; everything else is left alone.
+                if permission {
+                    entries = entries.map { entry in
+                        var entry = entry
+                        guard let list = entry["hooks"] as? [Any] else { return entry }
+                        entry["hooks"] = list.map { h -> Any in
+                            guard var hook = h as? [String: Any], (hook["command"] as? String)?.contains("chippy-hook") == true else { return h }
+                            hook["command"] = cmd; hook["timeout"] = timeout
+                            return hook
+                        }
+                        return entry
+                    }
+                    hooks[ev] = entries
+                }
+                continue
             }
+            var hook: [String: Any] = ["type": "command", "command": cmd]
+            if permission { hook["timeout"] = timeout } // let our own timeout fire first
             entries.append(["matcher": "*", "hooks": [hook]])
             hooks[ev] = entries
         }

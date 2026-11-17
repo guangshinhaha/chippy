@@ -3,7 +3,7 @@ import Darwin
 import Foundation
 
 // chippy-hook relay                       forward a Claude Code hook event to Chippy.app (fail-open)
-// chippy-hook install [--settings P] [--yes] [--timeout SECS]   add hooks to ~/.claude/settings.json (backup + diff + confirm)
+// chippy-hook install [--settings P] [--yes] [--timeout SECS] [--question-timeout SECS]   add hooks to ~/.claude/settings.json (backup + diff + confirm)
 
 func debug(_ s: String) {
     if ProcessInfo.processInfo.environment["CHIPPY_HOOK_DEBUG"] != nil {
@@ -14,6 +14,8 @@ func debug(_ s: String) {
 func relay(_ args: [String]) -> Never {
     var timeout = SettingsInstaller.defaultApprovalTimeout
     if let i = args.firstIndex(of: "--timeout"), i + 1 < args.count, let t = Int(args[i + 1]) { timeout = min(max(t, 1), 120) }
+    var questionTimeout = SettingsInstaller.defaultQuestionTimeout
+    if let i = args.firstIndex(of: "--question-timeout"), i + 1 < args.count, let t = Int(args[i + 1]) { questionTimeout = min(max(t, 1), 300) }
     let start = DispatchTime.now()
     func ms() -> String { String(format: "%.1fms", Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1e6) }
     let input = FileHandle.standardInput.readDataToEndOfFile()
@@ -33,7 +35,9 @@ func relay(_ args: [String]) -> Never {
     guard wantsAnswer else { debug("relayed in \(ms())"); close(fd); exit(0) }
 
     // Wait for the notch to answer; on timeout or hang-up print nothing so the terminal prompt shows as normal.
-    var tv = timeval(tv_sec: timeout, tv_usec: 0)
+    // A question needs reading time; an approval is a quick Allow/Deny.
+    let wait = dict?["tool_name"] as? String == "AskUserQuestion" ? questionTimeout : timeout
+    var tv = timeval(tv_sec: wait, tv_usec: 0)
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
     guard let reply = readLine(fd: fd), let decision = try? JSONSerialization.jsonObject(with: reply) else {
         debug("no answer after \(ms()), falling back to terminal"); close(fd); exit(0)
@@ -49,10 +53,12 @@ func install(_ args: [String]) -> Never {
     var settingsPath = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/settings.json").path
     var yes = false
     var timeout = SettingsInstaller.defaultApprovalTimeout
+    var questionTimeout = SettingsInstaller.defaultQuestionTimeout
     var i = 0
     while i < args.count {
         if args[i] == "--yes" { yes = true }
         else if args[i] == "--timeout", i + 1 < args.count, let t = Int(args[i + 1]) { timeout = min(max(t, 1), 120); i += 1 }
+        else if args[i] == "--question-timeout", i + 1 < args.count, let t = Int(args[i + 1]) { questionTimeout = min(max(t, 1), 300); i += 1 }
         else if args[i] == "--settings", i + 1 < args.count { settingsPath = args[i + 1]; i += 1 }
         i += 1
     }
@@ -74,12 +80,12 @@ func install(_ args: [String]) -> Never {
     // argv[0] can be a bare name found via PATH; the bundle path is always absolute.
     let me = URL(fileURLWithPath: Bundle.main.executablePath ?? CommandLine.arguments[0]).resolvingSymlinksInPath().path
     let newData: Data
-    let want = SettingsInstaller.merged(old, binary: me, approvalTimeout: timeout)
+    let want = SettingsInstaller.merged(old, binary: me, approvalTimeout: timeout, questionTimeout: questionTimeout)
     if NSDictionary(dictionary: want).isEqual(to: old) { print("Already installed, nothing to change."); exit(0) }
     // Prefer a text patch that leaves the rest of the file untouched; fall back to a full re-render
     // only if the patch can't be applied or doesn't parse to exactly the merged settings.
     if !oldData.isEmpty, let text = String(data: oldData, encoding: .utf8),
-       let patched = SettingsInstaller.patched(text, binary: me, approvalTimeout: timeout),
+       let patched = SettingsInstaller.patched(text, binary: me, approvalTimeout: timeout, questionTimeout: questionTimeout),
        let obj = (try? JSONSerialization.jsonObject(with: Data(patched.utf8))) as? [String: Any],
        NSDictionary(dictionary: want).isEqual(to: obj) {
         newData = Data(patched.utf8)
@@ -114,7 +120,7 @@ func install(_ args: [String]) -> Never {
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
     }
     do { try newData.write(to: url, options: .atomic) } catch { print("error: \(error)"); exit(1) }
-    print("Installed. Hook command: \(SettingsInstaller.command(for: me))")
+    print("Installed. Hook command: \(SettingsInstaller.command(for: me, approvalTimeout: timeout, questionTimeout: questionTimeout))")
     exit(0)
 }
 
@@ -187,6 +193,6 @@ case "stats":
     print(WaitSummary(events, since: Date().addingTimeInterval(-7 * 86_400)).menuLine(label: "This week", showAsks: true))
     exit(0)
 default:
-    print("usage: chippy-hook relay | install [--settings PATH] [--yes] [--timeout SECS] | stats")
+    print("usage: chippy-hook relay | install [--settings PATH] [--yes] [--timeout SECS] [--question-timeout SECS] | stats")
     exit(args.isEmpty ? 0 : 2)
 }
