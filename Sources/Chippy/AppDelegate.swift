@@ -11,7 +11,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         panel = NotchPanel(model: model)
-        panel?.orderFrontRegardless()
         buildMenu()
         startServer()
     }
@@ -41,6 +40,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let live = NSMenuItem(title: "Live (follow sessions)", action: #selector(goLive), keyEquivalent: "")
         live.target = self
         menu.addItem(live)
+        let peek = NSMenuItem(title: "Show / hide sessions", action: #selector(peekSessions), keyEquivalent: "")
+        peek.target = self
+        menu.addItem(peek)
         menu.addItem(header("State (debug)"))
         for s in ChippyState.allCases {
             let mi = NSMenuItem(title: s.title, action: #selector(pickState(_:)), keyEquivalent: "")
@@ -68,7 +70,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let raw = sender.representedObject as? String, let s = ChippyState(rawValue: raw) { model.debugLock = true; model.state = s }
     }
 
-    @objc private func goLive() { model.debugLock = false; model.state = .idle; model.density = .collapsed }
+    @objc private func peekSessions() { model.toggleOpen() }
+
+    @objc private func goLive() { model.debugLock = false }
 
     @objc private func pickDensity(_ sender: NSMenuItem) {
         if let raw = sender.representedObject as? String, let d = Density(rawValue: raw) { model.debugLock = true; model.density = d }

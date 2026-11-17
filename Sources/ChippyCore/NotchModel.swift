@@ -26,10 +26,14 @@ public final class NotchModel: ObservableObject {
     @Published public var density: Density
     @Published public private(set) var sessions: [SessionRow] = []
     /// When true (debug menu), live sessions don't drive state/density.
-    @Published public var debugLock = false
+    @Published public var debugLock = false { didSet { refresh() } }
     @Published public private(set) var pending: [PendingRequest] = []
     /// The user clicked the notch open to look at sessions; closed again by another click.
     @Published public private(set) var pinnedOpen = false
+    /// The notch only appears when something needs the user: an approval, a just-finished toast, or a menu-bar peek.
+    @Published public private(set) var visible = false
+    private var toastUntil: Date?
+    public static let toastSeconds: TimeInterval = 6
     private var store = SessionStore()
     private var connections: [String: Connection] = [:]
     private let always: AlwaysStore
@@ -43,21 +47,21 @@ public final class NotchModel: ObservableObject {
         self.log = log
     }
 
-    private func refresh() {
-        guard !debugLock else { return }
-        if !pending.isEmpty { state = .needsYou; density = .expanded }
-        else {
-            if sessions.isEmpty { pinnedOpen = false } // nothing to look at: don't stay open on an empty list
-            state = store.derivedState
-            density = pinnedOpen ? .expanded : (sessions.isEmpty ? .collapsed : .compact)
-        }
+    private func refresh(now: Date = Date()) {
+        if let t = toastUntil, now >= t { toastUntil = nil }
+        guard !debugLock else { visible = true; return }
+        if sessions.isEmpty { pinnedOpen = false } // nothing to look at: don't stay open on an empty list
+        state = pending.isEmpty ? store.derivedState : .needsYou
+        if !pending.isEmpty || pinnedOpen { density = .expanded; visible = true }
+        else if toastUntil != nil { density = .compact; visible = true }
+        else { density = .collapsed; visible = false }
     }
 
     /// Click on the notch: open the session list, or close it. A waiting approval keeps it open regardless.
-    public func toggleOpen() {
+    public func toggleOpen(now: Date = Date()) {
         guard pending.isEmpty else { return } // an approval holds it open; don't flip the pin unseen
         pinnedOpen.toggle()
-        refresh()
+        refresh(now: now)
     }
 
     /// A PermissionRequest hook is waiting on `conn`. Main thread only.
@@ -94,19 +98,21 @@ public final class NotchModel: ObservableObject {
     /// Drop requests whose hook went away (timeout fallback, or answered in the terminal).
     public func sweep(now: Date = Date()) {
         let gone = pending.filter { connections[$0.id]?.peerGone ?? true }
-        guard !gone.isEmpty else { return }
+        guard !gone.isEmpty else { if toastUntil != nil { refresh(now: now) }; return }
         for r in gone {
             connections.removeValue(forKey: r.id)?.respond(nil)
             log.append(r, channel: .terminal, decision: "none", now: now)
         }
         pending.removeAll { r in gone.contains { $0.id == r.id } }
-        refresh()
+        refresh(now: now)
     }
 
     /// Apply a live hook event. Main thread only.
-    public func apply(_ payload: HookPayload) {
+    public func apply(_ payload: HookPayload, now: Date = Date()) {
         store.apply(payload)
         sessions = store.rows
-        refresh()
+        if payload.event == "Stop" { toastUntil = now.addingTimeInterval(Self.toastSeconds) } // finished: say so briefly
+        if payload.event == "SessionEnd" || payload.event == "UserPromptSubmit" { toastUntil = nil }
+        refresh(now: now)
     }
 }
