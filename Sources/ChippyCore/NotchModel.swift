@@ -34,6 +34,8 @@ public final class NotchModel: ObservableObject {
     @Published public private(set) var doneItems: [DoneItem] = []
     /// The done chip was clicked: show what the finished threads did.
     @Published public private(set) var doneOpen = false
+    /// The done detail is open: the panel grows so the whole reply can be read.
+    @Published public private(set) var tall = false
     /// The notch only appears when something needs the user: an approval, a finished thread, or a menu-bar peek.
     @Published public private(set) var visible = false
     public static let doneSeconds: TimeInterval = 600
@@ -57,6 +59,7 @@ public final class NotchModel: ObservableObject {
         if doneItems.isEmpty { doneOpen = false }
         let live = store.derivedState
         state = !pending.isEmpty ? .needsYou : (live == .working ? .working : (doneItems.isEmpty ? live : .done))
+        tall = pending.isEmpty && !pinnedOpen && doneOpen
         if !pending.isEmpty || pinnedOpen || doneOpen { density = .expanded; visible = true }
         else if !doneItems.isEmpty { density = .compact; visible = true }
         else { density = .collapsed; visible = false }
@@ -158,7 +161,7 @@ public final class NotchModel: ObservableObject {
             if let r = sessions.first(where: { $0.id == payload.sessionId }) {
                 doneItems.removeAll { $0.sessionId == r.id }
                 doneItems.append(DoneItem(sessionId: r.id, project: r.project, branch: r.branch,
-                                          files: r.filesEdited.count, added: r.added, removed: r.removed, reply: r.lastReply, at: now))
+                                          files: r.filesEdited.count, added: r.added, removed: r.removed, reply: r.lastReply, prompt: r.lastPrompt, at: now))
             }
         case "UserPromptSubmit", "SessionEnd", "PreToolUse", "PostToolUse":
             // Only the thread itself moving on (new prompt, tool use after a Stop, or ending) clears its chip; another thread's activity must not.
@@ -178,6 +181,7 @@ public struct DoneItem: Identifiable, Equatable {
     public let added: Int
     public let removed: Int
     public let reply: String?
+    public let prompt: String?
     public let at: Date
 
     /// Claude ended on a question: the thread is waiting for you, not just done.

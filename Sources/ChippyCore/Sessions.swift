@@ -59,7 +59,7 @@ public struct SessionStore {
         case "Stop":
             rows[i].status = .done; rows[i].detail = "Finished"
             rows[i].branch = p.branch ?? rows[i].branch
-            rows[i].lastReply = p.lastMessage.map { String($0.prefix(1500)) }
+            rows[i].lastReply = p.lastMessage.map { String($0.prefix(6000)) }
         default: break
         }
     }

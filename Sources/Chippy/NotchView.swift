@@ -89,7 +89,7 @@ struct NotchView: View {
                         }
                     }
                 } else {
-                    ForEach(model.doneItems.reversed().prefix(3)) { d in DoneCard(item: d) { model.dismissDone(d.sessionId) } }
+                    ForEach(model.doneItems.reversed().prefix(model.tall ? 1 : 3)) { d in DoneCard(item: d, full: model.tall) { model.dismissDone(d.sessionId) } }
                 }
                 Spacer()
             }
@@ -180,15 +180,32 @@ struct QuestionCard: View {
 
 struct DoneCard: View {
     let item: DoneItem
+    var full = false
     let dismiss: () -> Void
+
+    private var replyText: AttributedString {
+        let r = item.reply ?? ""
+        return (try? AttributedString(markdown: r, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(r)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(item.identity + (item.asksYou ? " · waiting for your reply" : " · finished"))
                 .font(.caption.bold()).foregroundStyle(item.asksYou ? Color.orange : .white)
+            if full, let p = item.prompt, !p.isEmpty {
+                Text("You asked: \(p)").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
+            }
             if let r = item.reply, !r.isEmpty {
-                Text(r).font(.caption).foregroundStyle(.white.opacity(0.9)).lineLimit(6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                if full {
+                    ScrollView {
+                        Text(replyText).font(.caption).foregroundStyle(.white.opacity(0.92)).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 290)
+                } else {
+                    Text(r).font(.caption).foregroundStyle(.white.opacity(0.9)).lineLimit(6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
             HStack {
                 Text(item.files == 0 ? "No file edits" : "\(item.files) file\(item.files == 1 ? "" : "s") · +\(item.added) −\(item.removed)")

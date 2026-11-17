@@ -132,7 +132,7 @@ func demo(_ args: [String]) -> Never {
     case "done":
         _ = send(ev("demo-a", "UserPromptSubmit", ["prompt": "Fix the login timeout bug"]))
         _ = send(ev("demo-a", "PostToolUse", ["tool_name": "Edit", "tool_input": ["file_path": "/demo/api-server/auth.ts", "old_string": "a", "new_string": "a\nb\nc"]]))
-        _ = send(ev("demo-a", "Stop", ["last_assistant_message": "Fixed the login timeout: the session cookie was expiring at 5 minutes instead of 30. I changed the TTL in auth.ts and added a test.\n\nShould I also bump the refresh-token lifetime?"]))
+        _ = send(ev("demo-a", "Stop", ["last_assistant_message": "Fixed the login timeout: the session cookie was expiring at 5 minutes instead of 30. I changed the TTL in auth.ts and added a test.\n\nWhat changed:\n- **auth.ts**: session TTL 5 min → 30 min\n- **auth.test.ts**: new test covering expiry at 29 and 31 minutes\n- **config.ts**: TTL now read from SESSION_TTL_MINUTES\n\nThings I did not touch: the refresh-token lifetime (currently 7 days), the remember-me cookie, and the admin console session, which uses a separate store.\n\nOne risk: users already logged in keep the old 5-minute expiry until they next sign in.\n\nShould I also bump the refresh-token lifetime, or leave it at 7 days?"]))
         print("Done chip is up and stays until you click Dismiss (or 10 min). Click it for detail.")
     case "question":
         _ = send(ev("demo-a", "UserPromptSubmit", ["prompt": "Set up the login page"]))
