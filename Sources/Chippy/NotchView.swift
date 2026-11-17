@@ -27,7 +27,7 @@ struct NotchView: View {
     /// Glance text: who finished (repo · branch), so several threads can be told apart.
     private var compactText: String {
         guard let d = model.doneItems.last else { return model.state.title }
-        return (d.asksYou ? "? " : "") + "\(d.project): \(d.headline)"
+        return d.glance(showReply: model.showReplyInGlance)
     }
 
     private var headerTitle: String {

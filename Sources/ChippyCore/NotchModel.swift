@@ -38,6 +38,10 @@ public final class NotchModel: ObservableObject {
     @Published public private(set) var tall = false
     /// The notch only appears when something needs the user: an approval, a finished thread, or a menu-bar peek.
     @Published public private(set) var visible = false
+    /// Off by default (PDPA): the glance shows only `repo · finished`; the reply stays behind the click.
+    @Published public var showReplyInGlance = UserDefaults.standard.bool(forKey: "showReplyInGlance") {
+        didSet { UserDefaults.standard.set(showReplyInGlance, forKey: "showReplyInGlance") }
+    }
     public static let doneSeconds: TimeInterval = 600
     private var store = SessionStore()
     private var connections: [String: Connection] = [:]
@@ -192,6 +196,12 @@ public struct DoneItem: Identifiable, Equatable {
         let line = reply?.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
             .first { !$0.isEmpty && !$0.allSatisfy { "#*-`>".contains($0) } } ?? ""
         return line.isEmpty ? "finished" : line.trimmingCharacters(in: CharacterSet(charactersIn: "#*>` "))
+    }
+
+    /// One line beside the camera. Neutral unless the user opted in to seeing the reply there.
+    public func glance(showReply: Bool) -> String {
+        if showReply { return (asksYou ? "? " : "") + "\(project): \(headline)" }
+        return "\(project) · \(asksYou ? "needs you" : "finished")"
     }
 
     /// "repo · branch", or just the repo.
