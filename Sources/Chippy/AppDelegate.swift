@@ -15,12 +15,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let hotKeys = HotKeys()
     private var shortcutCard: (id: String, shownAt: Date)?
     private var pendingWatch: AnyCancellable?
+    private lazy var tour = TourRunner(model: model)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         panel = NotchPanel(model: model)
         buildMenu()
         startServer()
         startShortcuts()
+        tour.runOnFirstLaunch()
         // Clicks in any other app are "outside the notch": fold the detail back to its glance.
         // Esc in any app folds the detail. Global key events need Accessibility permission; without it only clicks work.
         escKey = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] e in
@@ -92,6 +94,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let glance = NSMenuItem(title: "Show reply text beside the camera", action: #selector(toggleGlance(_:)), keyEquivalent: "")
         glance.target = self; glance.state = model.showReplyInGlance ? .on : .off
         menu.addItem(glance)
+        let tourItem = NSMenuItem(title: "Show me how it works", action: #selector(runTour), keyEquivalent: "")
+        tourItem.target = self
+        menu.addItem(tourItem)
         menu.addItem(.separator())
 
         // Everything below is for testing the notch's look, not for real use.
@@ -153,6 +158,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let p = Process(); p.executableURL = exe; p.arguments = ["demo", kind]
         try? p.run()
     }
+
+    @objc private func runTour() { tour.start() }
 
     @objc private func toggleGlance(_ sender: NSMenuItem) {
         model.showReplyInGlance.toggle()
