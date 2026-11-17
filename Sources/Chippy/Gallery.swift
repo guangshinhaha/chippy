@@ -8,6 +8,15 @@ enum Gallery {
     @MainActor
     static func render(to path: String) {
         let view = VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) { // all 4 v1 states, side by side
+                ForEach(ChippyState.allCases, id: \.self) { s in
+                    VStack {
+                        ChipmunkView(state: s).frame(width: 300, height: 200)
+                        Text(s.title).font(.caption).foregroundStyle(.white)
+                    }
+                    .background(Color(white: 0.12))
+                }
+            }
             ForEach(Density.allCases, id: \.self) { d in
                 HStack(alignment: .top, spacing: 12) {
                     ForEach(ChippyState.allCases, id: \.self) { s in
