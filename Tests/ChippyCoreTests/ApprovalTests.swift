@@ -86,11 +86,51 @@ final class ApprovalTests: XCTestCase {
         XCTAssertEqual(reply(f2)?["behavior"] as? String, "allow")
     }
 
-    func testAskUserQuestionIsLeftAlone() {
+    func question(multi: Bool = false) -> HookPayload {
+        HookPayload(json: try! JSONSerialization.data(withJSONObject: [
+            "session_id": "s", "cwd": "/w/api", "hook_event_name": "PermissionRequest", "tool_name": "AskUserQuestion",
+            "tool_input": ["questions": [["question": "Which?", "header": "H", "multiSelect": multi,
+                                          "options": [["label": "A", "description": "a"], ["label": "B", "description": "b"]]]]]]))!
+    }
+
+    func testMultiSelectQuestionIsLeftToTheTerminal() {
         let m = model(); let (c, f) = pair()
-        m.receiveApproval(payload(tool: "AskUserQuestion"), c)
+        m.receiveApproval(question(multi: true), c)
         XCTAssertTrue(m.pending.isEmpty)
         XCTAssertNil(reply(f))                            // closed, no decision written
+    }
+
+    func testSingleSelectQuestionIsAnsweredFromTheNotch() throws {
+        let m = model(); let (c, f) = pair()
+        m.receiveApproval(question(), c)
+        XCTAssertEqual(m.pending.first?.questions?.first?.options.map(\.label), ["A", "B"])
+        m.resolve(m.pending[0].id, .allow)                // Allow/Deny must not answer a question
+        XCTAssertEqual(m.pending.count, 1)
+        m.answer(m.pending[0].id, ["Which?": "B"])
+        let r = try XCTUnwrap(reply(f))
+        XCTAssertEqual(r["behavior"] as? String, "allow")
+        let input = try XCTUnwrap(r["updatedInput"] as? [String: Any])
+        XCTAssertEqual((input["answers"] as? [String: String])?["Which?"], "B")
+        XCTAssertNotNil(input["questions"])               // original questions preserved
+        XCTAssertTrue(m.pending.isEmpty)
+    }
+
+    func testIncompleteOrUnknownAnswerIsNotSent() {
+        let m = model(); let (c, f) = pair()
+        m.receiveApproval(question(), c)
+        m.answer(m.pending[0].id, ["Which?": "not an option"])
+        XCTAssertNil(reply(f))                            // left to the terminal, nothing written
+        XCTAssertTrue(m.pending.isEmpty)
+    }
+
+    func testDuplicateQuestionTextStaysInTheTerminal() {
+        let q: [String: Any] = ["question": "Which?", "header": "H", "multiSelect": false, "options": [["label": "A", "description": ""]]]
+        let p = HookPayload(json: try! JSONSerialization.data(withJSONObject: [
+            "session_id": "s", "cwd": "/w", "hook_event_name": "PermissionRequest", "tool_name": "AskUserQuestion",
+            "tool_input": ["questions": [q, q]]]))!
+        let m = model(); let (c, _) = pair()
+        m.receiveApproval(p, c)
+        XCTAssertTrue(m.pending.isEmpty)
     }
 
     func testSweepDropsRequestWhenHookGivesUp() {

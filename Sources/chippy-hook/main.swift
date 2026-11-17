@@ -30,7 +30,6 @@ func relay(_ args: [String]) -> Never {
     writeLine(fd: fd, line)
     let dict = obj as? [String: Any]
     let wantsAnswer = dict?["hook_event_name"] as? String == "PermissionRequest"
-        && dict?["tool_name"] as? String != "AskUserQuestion"
     guard wantsAnswer else { debug("relayed in \(ms())"); close(fd); exit(0) }
 
     // Wait for the notch to answer; on timeout or hang-up print nothing so the terminal prompt shows as normal.
@@ -111,7 +110,7 @@ func install(_ args: [String]) -> Never {
     exit(0)
 }
 
-/// `chippy-hook demo approval|queue|done`: sends synthetic events so you can see the notch react. Sessions are fake (demo-a/demo-b) and are ended after approvals; the done demo leaves its row until you dismiss.
+/// `chippy-hook demo approval|queue|question|done`: sends synthetic events so you can see the notch react. Sessions are fake (demo-a/demo-b) and are ended after approvals; the done demo leaves its row until you dismiss.
 func demo(_ args: [String]) -> Never {
     let kind = args.first ?? "approval"
     func send(_ o: [String: Any], wait: Bool = false) -> String? {
@@ -135,6 +134,15 @@ func demo(_ args: [String]) -> Never {
         _ = send(ev("demo-a", "PostToolUse", ["tool_name": "Edit", "tool_input": ["file_path": "/demo/api-server/auth.ts", "old_string": "a", "new_string": "a\nb\nc"]]))
         _ = send(ev("demo-a", "Stop"))
         print("Done chip is up and stays until you click Dismiss (or 10 min). Click it for detail.")
+    case "question":
+        _ = send(ev("demo-a", "UserPromptSubmit", ["prompt": "Set up the login page"]))
+        let input: [String: Any] = ["questions": [["question": "Which auth method should the login page use?", "header": "Auth", "multiSelect": false,
+            "options": [["label": "Email + password", "description": "Classic form, simplest to ship"],
+                        ["label": "Magic link", "description": "No passwords to store"],
+                        ["label": "SSO", "description": "Use the school's identity provider"]]]]]
+        print("Pick an option on the notch (60s)…")
+        print(send(ev("demo-a", "PermissionRequest", ["tool_name": "AskUserQuestion", "tool_input": input]), wait: true) ?? "")
+        _ = send(ev("demo-a", "SessionEnd"))
     case "approval", "queue":
         _ = send(ev("demo-a", "UserPromptSubmit", ["prompt": "Clean up the build output and reinstall dependencies"]))
         let group = DispatchGroup()
@@ -153,7 +161,7 @@ func demo(_ args: [String]) -> Never {
         group.wait()
         for sid in Set(reqs.map { $0.0 }) { _ = send(ev(sid, "SessionEnd")) }
     default:
-        print("usage: chippy-hook demo approval|queue|done"); exit(2)
+        print("usage: chippy-hook demo approval|queue|question|done"); exit(2)
     }
     exit(0)
 }
