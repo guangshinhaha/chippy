@@ -8,11 +8,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var server: SocketServer?
     private var sweeper: Timer?
+    private var outsideClick: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         panel = NotchPanel(model: model)
         buildMenu()
         startServer()
+        // Clicks in any other app are "outside the notch": fold the detail back to its glance.
+        outsideClick = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            DispatchQueue.main.async { self?.model.closeDetail() }
+        }
     }
 
     private func startServer() {

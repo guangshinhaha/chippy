@@ -70,6 +70,13 @@ public final class NotchModel: ObservableObject {
         refresh()
     }
 
+    /// Click outside the notch: fold an open detail or peek back to its glance. A waiting approval stays.
+    public func closeDetail() {
+        guard pending.isEmpty, doneOpen || pinnedOpen else { return }
+        doneOpen = false; pinnedOpen = false
+        refresh()
+    }
+
     /// Acknowledge one finished thread, or all of them.
     public func dismissDone(_ sessionId: String? = nil) {
         if let sessionId { doneItems.removeAll { $0.sessionId == sessionId } } else { doneItems.removeAll() }
