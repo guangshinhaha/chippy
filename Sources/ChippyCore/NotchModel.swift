@@ -71,6 +71,7 @@ public final class NotchModel: ObservableObject {
         let req = pending.remove(at: i)
         if conn.peerGone { // the hook already gave up (timeout) or the terminal answered: this click is stale
             conn.respond(nil)
+            log.append(req, channel: .terminal, decision: "none", now: now)
             refresh()
             return
         }

@@ -114,7 +114,7 @@ final class ApprovalTests: XCTestCase {
 
     func testAlwaysFileHoldsNoRawCommandText() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("always-\(UUID()).json")
-        let m = NotchModel(always: AlwaysStore(url: url))
+        let m = NotchModel(always: AlwaysStore(url: url), log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("ev-\(UUID()).jsonl")))
         let (c, _) = pair(); m.receiveApproval(payload(cmd: "curl -H token=SECRET123 x"), c)
         m.resolve(m.pending[0].id, .always)
         let text = try String(contentsOf: url, encoding: .utf8)
