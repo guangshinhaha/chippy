@@ -67,9 +67,19 @@ func install(_ args: [String]) -> Never {
     // argv[0] can be a bare name found via PATH; the bundle path is always absolute.
     let me = URL(fileURLWithPath: Bundle.main.executablePath ?? CommandLine.arguments[0]).resolvingSymlinksInPath().path
     let newData: Data
-    do { newData = try SettingsInstaller.render(SettingsInstaller.merged(old, binary: me, approvalTimeout: timeout)) }
-    catch { print("error: \(error)"); exit(1) }
-    if newData == oldData { print("Already installed, nothing to change."); exit(0) }
+    let want = SettingsInstaller.merged(old, binary: me, approvalTimeout: timeout)
+    if NSDictionary(dictionary: want).isEqual(to: old) { print("Already installed, nothing to change."); exit(0) }
+    // Prefer a text patch that leaves the rest of the file untouched; fall back to a full re-render
+    // only if the patch can't be applied or doesn't parse to exactly the merged settings.
+    if !oldData.isEmpty, let text = String(data: oldData, encoding: .utf8),
+       let patched = SettingsInstaller.patched(text, binary: me, approvalTimeout: timeout),
+       let obj = (try? JSONSerialization.jsonObject(with: Data(patched.utf8))) as? [String: Any],
+       NSDictionary(dictionary: want).isEqual(to: obj) {
+        newData = Data(patched.utf8)
+    } else {
+        do { newData = try SettingsInstaller.render(want) }
+        catch { print("error: \(error)"); exit(1) }
+    }
 
     let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("chippy-settings-new.json")
     try? newData.write(to: tmp)
