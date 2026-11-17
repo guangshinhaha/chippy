@@ -22,6 +22,18 @@ struct NotchView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture { model.toggleOpen() }
+        .animation(motion, value: model.density)
+        .animation(motion, value: model.pending.count)
+        .animation(motion, value: model.tall)
+    }
+
+    private func report(_ h: CGFloat) {
+        DispatchQueue.main.async { if h > 0, abs(box.contentHeight - h) > 0.5 { box.contentHeight = h } }
+    }
+
+    /// Short ease-out, interruptible; off when the user asked for reduced motion.
+    private var motion: Animation? {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : .easeOut(duration: 0.18)
     }
 
     /// Glance text: who finished (repo · branch), so several threads can be told apart.
@@ -71,7 +83,7 @@ struct NotchView: View {
                 Spacer().frame(height: box.metrics.height + 2)
                 HStack(spacing: 10) {
                     StateIcon(state: model.state, size: 28)
-                    Text(headerTitle).font(.headline).foregroundStyle(.white)
+                    Text(headerTitle).font(.headline.monospacedDigit()).foregroundStyle(.white)
                 }
                 if let req = model.pending.first {
                     if req.questions != nil {
@@ -91,12 +103,17 @@ struct NotchView: View {
                 } else {
                     ForEach(model.doneItems.reversed().prefix(model.tall ? 1 : 3)) { d in DoneCard(item: d, full: model.tall) { model.dismissDone(d.sessionId) } }
                 }
-                Spacer()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
+            .background(GeometryReader { g in Color.clear.onAppear { report(g.size.height) }.onChange(of: g.size.height) { report($0) } })
         }
     }
+}
+
+struct ContentHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
 struct ApprovalCard: View {
@@ -117,27 +134,62 @@ struct ApprovalCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.4)).lineLimit(1).truncationMode(.head)
             HStack(spacing: 8) {
-                ChipButton(title: "Allow", fill: .green) { decide(.allow) }
-                ChipButton(title: "Deny", fill: .red) { decide(.deny) }
-                ChipButton(title: "Always", fill: Color(white: 0.35)) { decide(.always) }
+                ChipButton(title: "Allow", kind: .primary) { decide(.allow) }
+                ChipButton(title: "Deny", kind: .destructive) { decide(.deny) }
+                Spacer(minLength: 0)
+                ChipButton(title: "Always allow this", kind: .quiet) { decide(.always) }
             }
             .padding(.top, 2)
         }
     }
 }
 
-/// Drawn by hand so it looks the same whether or not the panel is the key window.
+/// Drawn by hand (system bordered buttons vanish in a non-key panel). Press scales to 0.96, hover lifts, 28pt tall
+/// with a larger hit area than it draws.
 struct ChipButton: View {
+    enum Kind { case primary, destructive, neutral, quiet }
     let title: String
-    let fill: Color
+    let kind: Kind
     let action: () -> Void
+    @State private var hover = false
 
     var body: some View {
-        Text(title).font(.caption.bold()).foregroundStyle(.white)
-            .padding(.horizontal, 12).padding(.vertical, 5)
+        Button(action: action) { Text(title) }
+            .buttonStyle(ChipStyle(kind: kind, hover: hover))
+            .onHover { hover = $0 }
+    }
+}
+
+struct ChipStyle: ButtonStyle {
+    let kind: ChipButton.Kind
+    let hover: Bool
+
+    private var fill: Color {
+        switch kind {
+        case .primary: return Color.green.opacity(hover ? 0.95 : 0.8)
+        case .destructive: return Color.red.opacity(hover ? 0.32 : 0.2)
+        case .neutral: return Color.white.opacity(hover ? 0.22 : 0.14)
+        case .quiet: return Color.white.opacity(hover ? 0.1 : 0)
+        }
+    }
+    private var text: Color {
+        switch kind {
+        case .primary: return .black
+        case .destructive: return Color(red: 1, green: 0.55, blue: 0.5)
+        case .neutral: return .white
+        case .quiet: return .white.opacity(0.6)
+        }
+    }
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.caption.weight(kind == .quiet ? .regular : .semibold)).foregroundStyle(text)
+            .padding(.horizontal, 12).frame(minHeight: 28)
             .background(Capsule().fill(fill))
-            .contentShape(Capsule())
-            .onTapGesture(perform: action)
+            .padding(4).contentShape(Rectangle()).padding(-4)
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .animation(.easeOut(duration: 0.12), value: hover)
     }
 }
 
@@ -188,6 +240,11 @@ struct DoneCard: View {
         return (try? AttributedString(markdown: r, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(r)
     }
 
+    private var replyBody: some View {
+        Text(replyText).font(.caption).foregroundStyle(.white.opacity(0.92)).textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(item.identity + (item.asksYou ? " · waiting for your reply" : " · finished"))
@@ -197,9 +254,10 @@ struct DoneCard: View {
             }
             if let r = item.reply, !r.isEmpty {
                 if full {
-                    ScrollView {
-                        Text(replyText).font(.caption).foregroundStyle(.white.opacity(0.92)).textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                    // Short reply: just the text (the card hugs it). Long reply: scrolls inside a capped area.
+                    ViewThatFits(in: .vertical) {
+                        replyBody
+                        ScrollView { replyBody }
                     }
                     .frame(maxHeight: 290)
                 } else {
@@ -211,7 +269,7 @@ struct DoneCard: View {
                 Text(item.files == 0 ? "No file edits" : "\(item.files) file\(item.files == 1 ? "" : "s") · +\(item.added) −\(item.removed)")
                     .font(.caption2).foregroundStyle(.white.opacity(0.6))
                 Spacer()
-                ChipButton(title: "Dismiss", fill: Color(white: 0.35), action: dismiss)
+                ChipButton(title: "Dismiss", kind: .neutral, action: dismiss)
             }
         }
     }
