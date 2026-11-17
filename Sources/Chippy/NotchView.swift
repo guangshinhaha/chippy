@@ -24,10 +24,16 @@ struct NotchView: View {
         .onTapGesture { model.toggleOpen() }
     }
 
-    /// Toast text: which project just finished, so several threads can be told apart.
+    /// Glance text: who finished (repo · branch), so several threads can be told apart.
     private var compactText: String {
-        guard let latest = model.sessions.max(by: { $0.updatedAt < $1.updatedAt }) else { return model.state.title }
-        return "\(latest.project) · \(model.state == .done ? "finished" : latest.detail)"
+        guard let d = model.doneItems.last else { return model.state.title }
+        return "\(d.identity) · finished"
+    }
+
+    private var headerTitle: String {
+        if model.pending.isEmpty { return model.state.title }
+        let n = model.pending.count
+        return n > 1 ? "Needs you · 1 of \(n)" : "Needs you"
     }
 
     /// Content beside the camera: icon in the left wing, text in the right wing, nothing under the cutout.
@@ -51,8 +57,8 @@ struct NotchView: View {
                     Text(compactText)
                         .font(.caption.bold()).foregroundStyle(.white)
                         .lineLimit(1).truncationMode(.tail)
-                    if model.sessions.count > 1 {
-                        Text("+\(model.sessions.count - 1)").font(.caption2).foregroundStyle(.white.opacity(0.6))
+                    if model.doneItems.count > 1 {
+                        Text("+\(model.doneItems.count - 1)").font(.caption2).foregroundStyle(.white.opacity(0.6))
                     }
                     Spacer(minLength: 0)
                 }
@@ -65,21 +71,21 @@ struct NotchView: View {
                 Spacer().frame(height: box.metrics.height + 2)
                 HStack(spacing: 10) {
                     StateIcon(state: model.state, size: 28)
-                    Text(model.pending.isEmpty ? model.state.title : "\(model.state.title) · 1 of \(model.pending.count)")
-                        .font(.headline).foregroundStyle(.white)
+                    Text(headerTitle).font(.headline).foregroundStyle(.white)
                 }
                 if let req = model.pending.first {
-                    ApprovalCard(req: req, more: model.pending.count - 1) { model.resolve(req.id, $0) }
-                }
-                if model.sessions.isEmpty && model.pending.isEmpty {
-                    Text("No agent sessions.").font(.caption).foregroundStyle(.white.opacity(0.6))
-                }
-                // The list is a peek the user asked for; an approval shows only the approval.
-                ForEach(model.pending.isEmpty ? model.sessions : []) { row in
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("\(row.project) · \(row.headline)").font(.caption.bold()).foregroundStyle(.white)
-                        Text(row.detail).font(.caption2).foregroundStyle(.white.opacity(0.6))
+                    ApprovalCard(req: req) { model.resolve(req.id, $0) }
+                } else if model.pinnedOpen {
+                    ForEach(model.doneItems.reversed().prefix(3)) { d in DoneCard(item: d) { model.dismissDone(d.sessionId) } }
+                    if model.sessions.isEmpty { Text("No agent sessions.").font(.caption).foregroundStyle(.white.opacity(0.6)) }
+                    ForEach(model.sessions) { row in
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("\(row.project) · \(row.headline)").font(.caption.bold()).foregroundStyle(.white)
+                            Text(row.detail).font(.caption2).foregroundStyle(.white.opacity(0.6))
+                        }
                     }
+                } else {
+                    ForEach(model.doneItems.reversed().prefix(3)) { d in DoneCard(item: d) { model.dismissDone(d.sessionId) } }
                 }
                 Spacer()
             }
@@ -91,20 +97,59 @@ struct NotchView: View {
 
 struct ApprovalCard: View {
     let req: PendingRequest
-    let more: Int
     let decide: (Decision) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("\(req.project) needs you").font(.caption2).foregroundStyle(.white.opacity(0.6))
-            Text(req.ask).font(.system(.caption, design: .monospaced)).foregroundStyle(.white).lineLimit(3)
-            HStack {
-                Button("Allow") { decide(.allow) }.tint(.green)
-                Button("Deny") { decide(.deny) }.tint(.red)
-                Button("Always") { decide(.always) }
-                if more > 0 { Text("+\(more) more").font(.caption2).foregroundStyle(.white.opacity(0.6)) }
+            Text(req.branch.map { "\(req.project) · \($0)" } ?? req.project)
+                .font(.caption.bold()).foregroundStyle(.white.opacity(0.85))
+            if let p = req.lastPrompt, !p.isEmpty {
+                Text("“\(p)”").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
             }
-            .buttonStyle(.borderedProminent).controlSize(.small)
+            Text("\(req.toolName) wants to run").font(.caption2).foregroundStyle(.white.opacity(0.6))
+            Text(req.detail.isEmpty ? req.toolName : req.detail)
+                .font(.system(.caption, design: .monospaced)).foregroundStyle(.white)
+                .lineLimit(4).truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.4)).lineLimit(1).truncationMode(.head)
+            HStack(spacing: 8) {
+                ChipButton(title: "Allow", fill: .green) { decide(.allow) }
+                ChipButton(title: "Deny", fill: .red) { decide(.deny) }
+                ChipButton(title: "Always", fill: Color(white: 0.35)) { decide(.always) }
+            }
+            .padding(.top, 2)
+        }
+    }
+}
+
+/// Drawn by hand so it looks the same whether or not the panel is the key window.
+struct ChipButton: View {
+    let title: String
+    let fill: Color
+    let action: () -> Void
+
+    var body: some View {
+        Text(title).font(.caption.bold()).foregroundStyle(.white)
+            .padding(.horizontal, 12).padding(.vertical, 5)
+            .background(Capsule().fill(fill))
+            .contentShape(Capsule())
+            .onTapGesture(perform: action)
+    }
+}
+
+struct DoneCard: View {
+    let item: DoneItem
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.identity).font(.caption.bold()).foregroundStyle(.white)
+                Text(item.files == 0 ? "Finished · no file edits" : "Finished · \(item.files) file\(item.files == 1 ? "" : "s") · +\(item.added) −\(item.removed)")
+                    .font(.caption2).foregroundStyle(.white.opacity(0.6))
+            }
+            Spacer()
+            ChipButton(title: "Dismiss", fill: Color(white: 0.35), action: dismiss)
         }
     }
 }

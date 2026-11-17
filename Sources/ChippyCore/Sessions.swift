@@ -5,6 +5,9 @@ public enum SessionStatus: String { case idle, working, done }
 public struct SessionRow: Identifiable, Equatable {
     public let id: String
     public var project: String
+    public var cwd = ""
+    public var branch: String?
+    public var lastPrompt: String?
     public var status: SessionStatus = .idle
     public var detail: String = "Session started"
     public var filesEdited: Set<String> = []
@@ -32,7 +35,7 @@ public struct SessionStore {
     public mutating func apply(_ p: HookPayload, now: Date = Date()) {
         if p.event == "SessionEnd" { rows.removeAll { $0.id == p.sessionId }; return }
         let i = rows.firstIndex { $0.id == p.sessionId } ?? {
-            rows.append(SessionRow(id: p.sessionId, project: p.project, updatedAt: now))
+            rows.append(SessionRow(id: p.sessionId, project: p.project, cwd: p.cwd, branch: p.branch, updatedAt: now))
             return rows.count - 1
         }()
         rows[i].updatedAt = now
@@ -41,6 +44,7 @@ public struct SessionStore {
             rows[i].status = .idle; rows[i].detail = "Session started"
         case "UserPromptSubmit":
             rows[i].status = .working; rows[i].detail = "Thinking"
+            rows[i].lastPrompt = p.prompt.map { String($0.prefix(140)) }
         case "PreToolUse", "PostToolUse":
             rows[i].status = .working
             if let tool = p.toolName { rows[i].detail = describe(tool, p) }
@@ -53,6 +57,7 @@ public struct SessionStore {
             }
         case "Stop":
             rows[i].status = .done; rows[i].detail = "Finished"
+            rows[i].branch = p.branch ?? rows[i].branch
         default: break
         }
     }
