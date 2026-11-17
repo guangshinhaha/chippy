@@ -296,6 +296,9 @@ struct DoneCard: View {
                 Text(item.files == 0 ? "No file edits" : "\(item.files) file\(item.files == 1 ? "" : "s") · +\(item.added) −\(item.removed)")
                     .font(.caption2).foregroundStyle(.white.opacity(0.6))
                 Spacer()
+                if TerminalJump.available(item.host) {
+                    ChipButton(title: "Open terminal", kind: .neutral) { TerminalJump.open(item.host) }
+                }
                 ChipButton(title: "Dismiss", kind: .neutral, action: dismiss)
             }
         }

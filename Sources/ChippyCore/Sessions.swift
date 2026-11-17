@@ -14,6 +14,7 @@ public struct SessionRow: Identifiable, Equatable {
     public var filesEdited: Set<String> = []
     public var added = 0
     public var removed = 0
+    public var host: HostInfo?
     public var updatedAt: Date
 
     /// One-line live status, e.g. "Claude Code · editing 3 files".
@@ -40,6 +41,7 @@ public struct SessionStore {
             return rows.count - 1
         }()
         rows[i].updatedAt = now
+        if let h = p.host { rows[i].host = h }   // latest non-nil wins
         switch p.event {
         case "SessionStart":
             rows[i].status = .idle; rows[i].detail = "Session started"

@@ -20,8 +20,18 @@ func relay(_ args: [String]) -> Never {
     func ms() -> String { String(format: "%.1fms", Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1e6) }
     let input = FileHandle.standardInput.readDataToEndOfFile()
     // Re-serialise compactly so the payload is exactly one line.
-    guard let obj = try? JSONSerialization.jsonObject(with: input),
-          let line = try? JSONSerialization.data(withJSONObject: obj) else {
+    guard var obj = try? JSONSerialization.jsonObject(with: input) else {
+        debug("unparseable payload, exit \(ms())"); exit(0)
+    }
+    // Tell Chippy which app/tty hosts this session, for "Open terminal". Only on the events that make a chip.
+    if var d = obj as? [String: Any], ["SessionStart", "UserPromptSubmit", "Stop"].contains(d["hook_event_name"] as? String ?? ""),
+       let h = HostLookup.find() {
+        if h.pid > 0 { d["chippy_host_pid"] = Int(h.pid) }
+        if let b = h.bundle { d["chippy_host_bundle"] = b }
+        if let t = h.tty { d["chippy_tty"] = t }
+        obj = d
+    }
+    guard let line = try? JSONSerialization.data(withJSONObject: obj) else {
         debug("unparseable payload, exit \(ms())"); exit(0)
     }
     guard let fd = SocketClient.connect() else {
