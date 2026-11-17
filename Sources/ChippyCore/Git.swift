@@ -19,7 +19,8 @@ public enum GitInfo {
                 guard let head = try? String(contentsOf: gitDir.appendingPathComponent("HEAD"), encoding: .utf8) else { return nil }
                 let h = head.trimmingCharacters(in: .whitespacesAndNewlines)
                 if h.hasPrefix("ref: refs/heads/") { return String(h.dropFirst("ref: refs/heads/".count)) }
-                return h.isEmpty ? nil : String(h.prefix(7)) // detached
+                if h.hasPrefix("ref:") { return h.split(separator: "/").last.map(String.init) }
+                return h.count >= 7 && h.allSatisfy(\.isHexDigit) ? String(h.prefix(7)) : nil // detached
             }
             let up = dir.deletingLastPathComponent()
             if up.path == dir.path { return nil }

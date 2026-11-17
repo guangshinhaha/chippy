@@ -54,7 +54,8 @@ public final class NotchModel: ObservableObject {
         guard !debugLock else { visible = true; return }
         if sessions.isEmpty { pinnedOpen = false }
         if doneItems.isEmpty { doneOpen = false }
-        state = !pending.isEmpty ? .needsYou : (doneItems.isEmpty ? store.derivedState : .done)
+        let live = store.derivedState
+        state = !pending.isEmpty ? .needsYou : (live == .working ? .working : (doneItems.isEmpty ? live : .done))
         if !pending.isEmpty || pinnedOpen || doneOpen { density = .expanded; visible = true }
         else if !doneItems.isEmpty { density = .compact; visible = true }
         else { density = .collapsed; visible = false }
@@ -132,8 +133,8 @@ public final class NotchModel: ObservableObject {
                 doneItems.append(DoneItem(sessionId: r.id, project: r.project, branch: r.branch,
                                           files: r.filesEdited.count, added: r.added, removed: r.removed, at: now))
             }
-        case "UserPromptSubmit", "SessionEnd":
-            // Only the thread itself moving on clears its chip; another thread's activity must not.
+        case "UserPromptSubmit", "SessionEnd", "PreToolUse", "PostToolUse":
+            // Only the thread itself moving on (new prompt, tool use after a Stop, or ending) clears its chip; another thread's activity must not.
             doneItems.removeAll { $0.sessionId == payload.sessionId }
         default: break
         }

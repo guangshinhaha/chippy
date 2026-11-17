@@ -30,13 +30,13 @@ struct NotchView: View {
         return "\(d.identity) · finished"
     }
 
-    /// Content beside the camera: icon in the left wing, text in the right wing, nothing under the cutout.
     private var headerTitle: String {
         if model.pending.isEmpty { return model.state.title }
         let n = model.pending.count
         return n > 1 ? "Needs you · 1 of \(n)" : "Needs you"
     }
 
+    /// Content beside the camera: icon in the left wing, text in the right wing, nothing under the cutout.
     @ViewBuilder
     var content: some View {
         let m = box.metrics
@@ -76,6 +76,7 @@ struct NotchView: View {
                 if let req = model.pending.first {
                     ApprovalCard(req: req) { model.resolve(req.id, $0) }
                 } else if model.pinnedOpen {
+                    ForEach(model.doneItems.reversed().prefix(3)) { d in DoneCard(item: d) { model.dismissDone(d.sessionId) } }
                     if model.sessions.isEmpty { Text("No agent sessions.").font(.caption).foregroundStyle(.white.opacity(0.6)) }
                     ForEach(model.sessions) { row in
                         VStack(alignment: .leading, spacing: 1) {
@@ -84,7 +85,7 @@ struct NotchView: View {
                         }
                     }
                 } else {
-                    ForEach(model.doneItems.reversed()) { d in DoneCard(item: d) { model.dismissDone(d.sessionId) } }
+                    ForEach(model.doneItems.reversed().prefix(3)) { d in DoneCard(item: d) { model.dismissDone(d.sessionId) } }
                 }
                 Spacer()
             }

@@ -111,7 +111,7 @@ func install(_ args: [String]) -> Never {
     exit(0)
 }
 
-/// `chippy-hook demo approval|queue|done`: sends synthetic events so you can see the notch react. Touches no real session.
+/// `chippy-hook demo approval|queue|done`: sends synthetic events so you can see the notch react. Sessions are fake (demo-a/demo-b) and are ended after approvals; the done demo leaves its row until you dismiss.
 func demo(_ args: [String]) -> Never {
     let kind = args.first ?? "approval"
     func send(_ o: [String: Any], wait: Bool = false) -> String? {
@@ -151,6 +151,7 @@ func demo(_ args: [String]) -> Never {
         }
         print("Waiting for your answer on the notch (60s)…")
         group.wait()
+        for sid in Set(reqs.map { $0.0 }) { _ = send(ev(sid, "SessionEnd")) }
     default:
         print("usage: chippy-hook demo approval|queue|done"); exit(2)
     }

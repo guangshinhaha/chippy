@@ -61,6 +61,15 @@ final class NotchModelTests: XCTestCase {
         XCTAssertFalse(m.visible)
     }
 
+    func testThreadResumingWithoutAPromptClearsItsChipAndShowsWorking() {
+        let m = model(); let t = Date()
+        m.apply(ev("Stop", "a"), now: t)
+        m.apply(ev("UserPromptSubmit", "b"), now: t)   // another thread starts: state must say working, chip stays
+        XCTAssertEqual(m.state, ChippyState.working); XCTAssertEqual(m.doneItems.count, 1)
+        m.apply(ev("PostToolUse", "a"), now: t)        // a resumes by itself
+        XCTAssertTrue(m.doneItems.isEmpty)
+    }
+
     func testNewPromptDismissesTheChip() {
         let m = model(); let t = Date()
         m.apply(ev("Stop"), now: t)
