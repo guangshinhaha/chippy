@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var menuKey: (Date?, Int, Date, Int)?
     private var menuGen = 0
     private lazy var tour = TourRunner(model: model)
+    private lazy var keepAwake = KeepAwake(model: model)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         panel = NotchPanel(model: model)
@@ -27,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         startServer()
         startShortcuts()
         tour.runOnFirstLaunch()
+        keepAwake.start()
         // Clicks in any other app are "outside the notch": fold the detail back to its glance.
         // Esc in any app folds the detail. Global key events need Accessibility permission; without it only clicks work.
         escKey = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] e in
@@ -95,7 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    func applicationWillTerminate(_ notification: Notification) { server?.stop() }
+    func applicationWillTerminate(_ notification: Notification) { server?.stop(); keepAwake.stop() }
 
     private func buildMenu() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -113,6 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let tourItem = NSMenuItem(title: "Show me how it works", action: #selector(runTour), keyEquivalent: "")
         tourItem.target = self
         menu.addItem(tourItem)
+        for i in keepAwake.menuItems() { menu.addItem(i) }
         menu.addItem(.separator())
 
         // Everything below is for testing the notch's look, not for real use.
