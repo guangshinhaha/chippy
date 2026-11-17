@@ -30,7 +30,7 @@ final class NotchPanel: NSPanel {
         switch density {
         case .collapsed: return CGSize(width: notchWidth + 80, height: 34)
         case .compact: return CGSize(width: notchWidth + 160, height: 56)
-        case .expanded: return CGSize(width: max(notchWidth + 200, 380), height: 180)
+        case .expanded: return CGSize(width: max(notchWidth + 200, 380), height: 200)
         }
     }
 
