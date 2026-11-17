@@ -50,6 +50,18 @@ final class AwakePolicyTests: XCTestCase {
         }
         for ok in ["shin", "guang.shin", "_svc", "a-b1"] { XCTAssertTrue(SudoersRule.isValidUser(ok), ok) }
     }
+    func testRejectsSudoersAliasNames() {
+        for b in ["ALL", "FOO_BAR", "NOPASSWD", "A", "X1"] {
+            XCTAssertFalse(SudoersRule.isValidUser(b), b)
+            XCTAssertNil(SudoersRule.line(user: b))
+        }
+        for ok in ["shin", "Shin", "aLL", "all", "fooBar"] { XCTAssertTrue(SudoersRule.isValidUser(ok), ok) }
+    }
+    func testInstallScriptRequiresExactVisudoOutput() {
+        let s = SudoersRule.installScript(user: "shin")!
+        XCTAssertTrue(s.contains("parsed OK"))
+        XCTAssertTrue(s.range(of: "parsed OK")!.lowerBound < s.range(of: "/bin/mv")!.lowerBound)
+    }
     func testLineOnlyAllowsPmsetDisablesleepZeroOne() {
         let l = SudoersRule.line(user: "shin")!
         XCTAssertEqual(l.components(separatedBy: "/usr/bin/pmset").count - 1, 2)

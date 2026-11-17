@@ -41,10 +41,17 @@ public enum SudoersRule {
     /// that could inject sudoers or shell syntax (spaces, commas, `#`, quotes, `%`, `!`, newlines).
     public static func isValidUser(_ u: String) -> Bool {
         guard !u.isEmpty, u.count <= 32, let f = u.unicodeScalars.first, f != "-", f != "." else { return false }
+        // sudoers reads ALL and ^[A-Z][A-Z0-9_]*$ as aliases (ALL grants everyone; undefined aliases match nobody).
+        if isAliasLike(u) { return false }
         return u.unicodeScalars.allSatisfy { s in
             guard s.value < 128 else { return false }
             return CharacterSet.alphanumerics.contains(s) || s == "_" || s == "-" || s == "."
         }
+    }
+
+    static func isAliasLike(_ u: String) -> Bool {
+        guard let f = u.unicodeScalars.first, f.value >= 65, f.value <= 90 else { return false }
+        return u.unicodeScalars.allSatisfy { ($0.value >= 65 && $0.value <= 90) || ($0.value >= 48 && $0.value <= 57) || $0 == "_" }
     }
 
     /// Exactly: `<user> ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 0, /usr/bin/pmset -a disablesleep 1`
@@ -66,7 +73,7 @@ public enum SudoersRule {
         return "set -e; t=$(/usr/bin/mktemp /tmp/chippy-sudoers.XXXXXX); "
             + "trap '/bin/rm -f \"$t\"' EXIT; "
             + "/usr/bin/printf '%s\\n' '\(l)' > \"$t\"; "
-            + "/usr/sbin/visudo -cf \"$t\"; "
+            + "o=$(/usr/sbin/visudo -cf \"$t\" 2>&1); [ \"$o\" = \"$t: parsed OK\" ] || { echo \"visudo: $o\" >&2; exit 1; }; "
             + "/usr/sbin/chown root:wheel \"$t\"; /bin/chmod 0440 \"$t\"; "
             + "/bin/mv \"$t\" \(path)"
     }
