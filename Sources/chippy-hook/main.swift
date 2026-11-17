@@ -35,6 +35,12 @@ func relay(_ args: [String]) -> Never {
         if let t = h.tty { d["chippy_tty"] = t }
         obj = d
     }
+    // A question card shows what Claude said just before asking. Local read of the transcript tail; any failure adds nothing.
+    if var d = obj as? [String: Any], d["hook_event_name"] as? String == "PermissionRequest", d["tool_name"] as? String == "AskUserQuestion",
+       let tp = d["transcript_path"] as? String, let lead = TranscriptTail.leadIn(path: tp) {
+        d["chippy_lead_in"] = lead
+        obj = d
+    }
     guard let line = try? JSONSerialization.data(withJSONObject: obj) else {
         debug("unparseable payload, exit \(ms())"); exit(0)
     }
@@ -161,12 +167,13 @@ func demo(_ args: [String]) -> Never {
         print("Done chip is up and stays until you click Dismiss (or 10 min). Click it for detail.")
     case "question":
         _ = send(ev("demo-a", "UserPromptSubmit", ["prompt": "Set up the login page"]))
+        let lead = "Before I wire up the login page I need to pick how people sign in. The school has an identity provider, but it is not set up for this app yet, and a plain password form would mean storing credentials, which I would rather avoid for staff and student accounts."
         let input: [String: Any] = ["questions": [["question": "Which auth method should the login page use?", "header": "Auth", "multiSelect": false,
             "options": [["label": "Email + password", "description": "Classic form, simplest to ship"],
                         ["label": "Magic link", "description": "No passwords to store"],
                         ["label": "SSO", "description": "Use the school's identity provider"]]]]]
         print("Pick an option on the notch (60s)…")
-        print(send(ev("demo-a", "PermissionRequest", ["tool_name": "AskUserQuestion", "tool_input": input]), wait: true) ?? "")
+        print(send(ev("demo-a", "PermissionRequest", ["tool_name": "AskUserQuestion", "tool_input": input, "chippy_lead_in": lead]), wait: true) ?? "")
         _ = send(ev("demo-a", "SessionEnd"))
     case "approval", "queue":
         _ = send(ev("demo-a", "UserPromptSubmit", ["prompt": "Clean up the build output and reinstall dependencies"]))

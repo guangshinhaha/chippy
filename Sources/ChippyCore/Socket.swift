@@ -70,6 +70,13 @@ public final class Connection {
     private let lock = NSLock()
     init(fd: Int32) { self.fd = fd }
 
+    /// A connection to nowhere, for the static gallery render (no relay on the other end).
+    public static func detached() -> Connection {
+        var fds: [Int32] = [-1, -1]
+        _ = socketpair(AF_UNIX, SOCK_STREAM, 0, &fds) // the peer end stays open (one short-lived render process), so a write never hits SIGPIPE
+        return Connection(fd: fds[0])
+    }
+
     public func respond(_ reply: Data?) {
         lock.lock(); defer { lock.unlock() }
         guard !closed else { return }

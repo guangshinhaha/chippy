@@ -49,6 +49,8 @@ public struct PendingRequest: Identifiable, Equatable {
     public let detail: String
     /// The thread's last prompt, for context. In memory only.
     public var lastPrompt: String?
+    /// Claude's words just before an AskUserQuestion, from the transcript. In memory only.
+    public let leadIn: String?
     /// Set for an answerable AskUserQuestion; the card shows options instead of Allow/Deny.
     public let questions: [AskQuestion]?
     /// SHA-256 of the full tool input, so "Always" on an Edit can't cover other content in the same file.
@@ -62,6 +64,7 @@ public struct PendingRequest: Identifiable, Equatable {
         toolName = p.toolName ?? "tool"
         ask = Self.oneLine(tool: p.toolName ?? "tool", input: p.toolInput)
         createdAt = now
+        leadIn = p.toolName == "AskUserQuestion" ? p.leadIn : nil
         branch = p.branch
         questions = p.toolName == "AskUserQuestion" ? AskQuestion.parse(p.toolInput) : nil
         detail = String(Self.rawDetail(p.toolInput).prefix(800))

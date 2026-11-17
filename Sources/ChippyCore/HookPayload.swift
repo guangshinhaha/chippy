@@ -13,6 +13,10 @@ public struct HookPayload {
     public let lastMessage: String?
     /// Host app + tty added by the relay (SessionStart/UserPromptSubmit/Stop). In memory only.
     public let host: HostInfo?
+    /// What Claude said just before an AskUserQuestion, added by the relay. In memory only: never logged or sent anywhere.
+    public let leadIn: String?
+    /// Claude Code's transcript file (all events carry it). Read only by the relay; not stored.
+    public let transcriptPath: String?
     private let branchOverride: String?
 
     public init?(json: Data) {
@@ -29,6 +33,8 @@ public struct HookPayload {
         let hp = (o["chippy_host_pid"] as? NSNumber)?.int32Value
         let hb = o["chippy_host_bundle"] as? String, tty = o["chippy_tty"] as? String
         host = (hp != nil || hb != nil || tty != nil) ? HostInfo(pid: hp, bundle: hb, tty: tty) : nil
+        leadIn = (o["chippy_lead_in"] as? String).map { TranscriptTail.truncate($0, to: TranscriptTail.maxChars) }
+        transcriptPath = o["transcript_path"] as? String
         branchOverride = o["chippy_branch"] as? String // only the demo command sets this
     }
 
