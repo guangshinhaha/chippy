@@ -113,6 +113,7 @@ public final class NotchModel: ObservableObject {
         else if !folded, foldDue(now: clock()) { folded = true }
         // The visible card is sticky: rank only picks one when nothing is on screen (first show, after an answer, after a fold).
         if folded || pending.isEmpty { shownId = nil }
+        else if case .done? = focus { shownId = nil } // leaving for a done detail: back to the queue head afterwards
         else if case .pending(let id)? = focus { shownId = id } // a jump makes that card the remembered one, so answering it falls back to rank-first
         else if shownId.map({ id in !pendingIds.contains(id) }) ?? true { shownId = rankedPending.first?.id }
         if doneItems.isEmpty && terminalItems.isEmpty { doneOpen = false }
