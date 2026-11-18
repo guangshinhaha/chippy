@@ -146,6 +146,26 @@ enum Gallery {
         try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path) tall=\(model.tall)")
     }
 
+    /// #96: a finished card open while another session still works. The header must say Done, not Working.
+    @MainActor
+    static func renderMixedHeader(to path: String) {
+        let log = tempLog()
+        defer { try? FileManager.default.removeItem(at: log) }
+        let model = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: log))
+        func p(_ sid: String, _ ev: String, _ extra: String = "") -> HookPayload { HookPayload(json: Data(#"{"session_id":"\#(sid)","hook_event_name":"\#(ev)","cwd":"/demo/api-server","chippy_branch":"main"\#(extra)}"#.utf8))! }
+        model.apply(p("a", "UserPromptSubmit", #","prompt":"Fix the login timeout""#))
+        model.apply(p("a", "Stop", #","last_assistant_message":"Fixed: the session TTL is now 30 minutes.""#))
+        model.apply(p("b", "UserPromptSubmit", #","prompt":"Write the migration""#))
+        model.toggleOpen()
+        let m = NotchMetrics.sample14
+        let sz = m.size(for: .expanded, tall: model.tall)
+        let r = ImageRenderer(content: NotchView(model: model, box: box(m)).frame(width: sz.width, height: sz.height).background(Color(white: 0.25)))
+        r.scale = 2
+        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
+              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
+        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path) state=\(model.state) header=\(model.headerTitle)")
+    }
+
     private static func tempLog() -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("chippy-gallery-\(UUID().uuidString).jsonl")
     }
