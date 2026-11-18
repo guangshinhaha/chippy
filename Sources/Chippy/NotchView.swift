@@ -999,17 +999,17 @@ struct AwayDigestView: View {
             Text(age).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.55))
         }
         .padding(.horizontal, 10).frame(minHeight: 32)
+        .accessibilityElement(children: .ignore) // one element, one label (age included once), the hint on it
+        .accessibilityLabel("\(name), \(status(r)) \(age) ago")
+        .accessibilityHint(r.target != nil ? "Opens it" : "")
         return HStack(spacing: 4) {
             if let t = r.target {
                 Button { model.activate(t) } label: { content.contentShape(Rectangle()) }.buttonStyle(.plain)
-                    .accessibilityHint("Opens it")
             } else {
                 content
                 if TerminalJump.available(r.host) { OpenTerminalButton(host: r.host) }
             }
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(name), \(status(r)) \(age) ago")
     }
 }
 

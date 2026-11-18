@@ -7,6 +7,7 @@ public struct AwayTracker: Equatable {
     public static let defaultThreshold: TimeInterval = 300
     public let threshold: TimeInterval
     private var awaySince: Date?
+    private var lastPoll: Date?
 
     public init(threshold: TimeInterval = AwayTracker.defaultThreshold) { self.threshold = threshold }
 
@@ -16,8 +17,12 @@ public struct AwayTracker: Equatable {
     /// and only when that period lasted at least `threshold` (a short lock is not "away"). Otherwise nil.
     public mutating func observe(now: Date, locked: Bool, idle: TimeInterval) -> Date? {
         let idle = max(0, idle)
+        // Sleep: nobody polled for longer than the threshold, so the machine was asleep. Away from the previous poll.
+        if let last = lastPoll, awaySince == nil, now.timeIntervalSince(last) > threshold { awaySince = last }
+        lastPoll = now
         if locked || idle >= threshold {
-            let start = locked ? now : now.addingTimeInterval(-idle)
+            // Back-dated by the idle time even when first seen locked, so a finish during the idle lead-in counts.
+            let start = now.addingTimeInterval(-idle)
             awaySince = min(awaySince ?? start, start)
             return nil
         }
@@ -52,6 +57,8 @@ public enum AwayDigest {
     public struct Result: Equatable {
         public let rows: [DigestRow]
         public let hidden: Int
+        /// Session ids of every finished chip the digest covers (not only the visible rows).
+        public let finishedIds: [String]
         public var isEmpty: Bool { rows.isEmpty }
         public var total: Int { rows.count + hidden }
     }
@@ -61,7 +68,7 @@ public enum AwayDigest {
                              resolved: (_ cwd: String) -> Bool = { _ in true }, cap: Int = maxRows) -> Result {
         var seen = Set<String>()
         var needs: [DigestRow] = [], finished: [DigestRow] = []
-        for t in terminal where t.at >= since && seen.insert(t.sessionId).inserted {
+        for t in terminal where seen.insert(t.sessionId).inserted {
             let l = label(t.cwd, t.project)
             needs.append(DigestRow(sessionId: t.sessionId, status: .needsYou, repo: l.repo, worktree: l.worktree, at: t.at, resolved: resolved(t.cwd),
                                    target: .terminal(t.sessionId), host: t.host, cwd: t.cwd, project: t.project))
@@ -78,6 +85,7 @@ public enum AwayDigest {
         }
         let newest = finished.enumerated().sorted { $0.element.at != $1.element.at ? $0.element.at > $1.element.at : $0.offset < $1.offset }.map(\.element)
         let ordered = needs.sorted { $0.at < $1.at } + newest
-        return Result(rows: Array(ordered.prefix(cap)), hidden: max(0, ordered.count - cap))
+        return Result(rows: Array(ordered.prefix(cap)), hidden: max(0, ordered.count - cap),
+                      finishedIds: done.filter { d in finished.contains { $0.sessionId == d.sessionId && $0.target != nil } }.map(\.sessionId))
     }
 }
