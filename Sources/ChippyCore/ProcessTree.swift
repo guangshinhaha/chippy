@@ -16,6 +16,13 @@ public struct HostInfo: Equatable {
 public enum ActivationOutcome {
     /// The jump worked when the target app is frontmost afterwards (already being frontmost counts).
     public static func isFrontmost(frontmostPid: Int32?, target: Int32) -> Bool { frontmostPid == target }
+
+    /// The jump landed when the app is frontmost AND we are looking at one of its windows. An app can be
+    /// frontmost while its only windows sit on another Space (or are minimised); that is not a landed jump.
+    /// An app with no windows at all cannot be judged by windows, so frontmost alone counts.
+    public static func landed(frontmost: Bool, windowCount: Int, onScreenCount: Int) -> Bool {
+        frontmost && (windowCount == 0 || onScreenCount > 0)
+    }
 }
 
 /// Pure ancestry walk, driven by lookup closures so it can be tested with a fake process table.

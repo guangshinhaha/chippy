@@ -22,6 +22,14 @@ final class OrcaHostResolutionTests: XCTestCase {
         let r = ProcessTree.walk(start: 5, parent: { parents[$0] }, isApp: { _ in false }, tty: { _ in "ttys001" })
         XCTAssertNil(r.hostPid); XCTAssertEqual(r.tty, "ttys001")
     }
+    func testLandedNeedsAVisibleWindow() {
+        XCTAssertTrue(ActivationOutcome.landed(frontmost: true, windowCount: 2, onScreenCount: 1))
+        XCTAssertFalse(ActivationOutcome.landed(frontmost: true, windowCount: 2, onScreenCount: 0))  // windows on another Space
+        XCTAssertFalse(ActivationOutcome.landed(frontmost: false, windowCount: 2, onScreenCount: 2))
+        XCTAssertTrue(ActivationOutcome.landed(frontmost: true, windowCount: 0, onScreenCount: 0))   // windowless app: frontmost only
+        XCTAssertFalse(ActivationOutcome.landed(frontmost: false, windowCount: 0, onScreenCount: 0))
+    }
+
     func testActivationOutcome() {
         XCTAssertTrue(ActivationOutcome.isFrontmost(frontmostPid: 7, target: 7))
         XCTAssertFalse(ActivationOutcome.isFrontmost(frontmostPid: 8, target: 7))

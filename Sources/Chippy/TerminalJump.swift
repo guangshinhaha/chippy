@@ -60,13 +60,30 @@ enum TerminalJump {
     /// Plain `activate` can be a no-op (app hidden, windows minimised, or focus not yielded to it), so:
     /// unhide, yield activation to the target (macOS 14+), activate, then check; if still not frontmost,
     /// ask LaunchServices to open it (activates and sends the reopen event that un-minimises a window).
+    /// "Landed" also needs one of the app's windows on the visible Space: macOS switches to the window's Space on
+    /// activation only when Desktop & Dock > "When switching to an application, switch to a Space with open
+    /// windows" is on. There is no supported API to switch Space ourselves; if it stays off-Space the jump reports failure.
     static func bringForward(pid: Int32, completion: @escaping (Bool) -> Void) {
         guard let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else { completion(false); return }
+        /// Windows of the app that count (normal layer, not tiny helpers), and how many are on the visible Space.
+        func windowCounts() -> (all: Int, onScreen: Int) {
+            let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
+            var all = 0, on = 0
+            for w in list where (w[kCGWindowOwnerPID as String] as? Int32) == pid && (w[kCGWindowLayer as String] as? Int) == 0 {
+                let b = w[kCGWindowBounds as String] as? [String: CGFloat] ?? [:]
+                guard (b["Width"] ?? 0) >= 100, (b["Height"] ?? 0) >= 50 else { continue }
+                all += 1
+                if (w[kCGWindowIsOnscreen as String] as? Bool) == true { on += 1 }
+            }
+            return (all, on)
+        }
         func isFront() -> Bool {
             let front = NSWorkspace.shared.frontmostApplication
             // Same app counts even if the frontmost pid differs (multi-process hosts).
-            return ActivationOutcome.isFrontmost(frontmostPid: front?.processIdentifier, target: pid)
+            let frontmost = ActivationOutcome.isFrontmost(frontmostPid: front?.processIdentifier, target: pid)
                 || (app.bundleIdentifier != nil && front?.bundleIdentifier == app.bundleIdentifier)
+            let c = windowCounts()
+            return ActivationOutcome.landed(frontmost: frontmost, windowCount: c.all, onScreenCount: c.onScreen)
         }
         if app.isHidden { app.unhide() }
         if #available(macOS 14.0, *) { NSApp.yieldActivation(to: app) }
