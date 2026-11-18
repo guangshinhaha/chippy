@@ -370,6 +370,8 @@ struct NotchView: View {
                     }
                 } else if let d = model.shownDone {
                     DoneCard(item: d, repo: model.repoLabel(cwd: d.cwd, project: d.project).text, mark: model.identity(cwd: d.cwd, project: d.project), full: true) { model.dismissDone(d.sessionId) }.reveal(0.12)
+                } else if model.restOpen, let digest = model.awayDigest {
+                    AwayDigestView(model: model, digest: digest).reveal(0.12) // #92: replaces the chips and Recent it already covers
                 } else if model.restOpen {
                     terminalCards
                     doneCards(limit: 3)
@@ -953,6 +955,58 @@ struct NotchShape: Shape {
                        control: CGPoint(x: rect.minX, y: rect.maxY))
         p.closeSubpath()
         return p
+    }
+}
+
+/// While you were away (#92): repo, status and age per session, no reply, prompt or question text (PDPA #30). A row with a live
+/// chip jumps to it; a Recent-only row offers Open. Dismiss moves the finished ones to Recent.
+struct AwayDigestView: View {
+    @ObservedObject var model: NotchModel
+    let digest: AwayDigest.Result
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 15)) { ctx in
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("WHILE YOU WERE AWAY (\(digest.total))").font(.caption2.weight(.bold)).foregroundStyle(.white.opacity(0.5)).tracking(0.6)
+                    Spacer(minLength: 0)
+                    ChipButton(title: "Dismiss", kind: .neutral) { model.dismissAwayDigest() }
+                        .accessibilityHint("Moves the finished threads to Recent")
+                }
+                ForEach(digest.rows) { row in rowView(row, now: ctx.date) }
+                if digest.hidden > 0 { Text("+\(digest.hidden) more").font(.caption2).foregroundStyle(.white.opacity(0.55)).padding(.leading, 10) }
+            }
+        }
+    }
+
+    private func status(_ r: DigestRow) -> String {
+        switch r.status { case .needsYou: return "asked in terminal"; case .asksYou: return "asks you"; case .finished: return "finished" }
+    }
+
+    private func rowView(_ r: DigestRow, now: Date) -> some View {
+        let age = WaitingList.age(since: r.at, now: now)
+        let name = r.worktree.map { "\(r.repo) / \($0)" } ?? r.repo
+        let content = HStack(spacing: 10) {
+            Image(systemName: r.status == .needsYou ? "exclamationmark.circle.fill" : "checkmark.circle")
+                .font(.caption).foregroundStyle(r.status == .needsYou ? Color.orange : .white.opacity(0.5)).frame(width: 18)
+            IdentityMark(identity: model.identity(row: r), size: 14)
+            Text(name).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle)
+            Text(status(r)).font(.caption2).foregroundStyle(.white.opacity(0.65)).lineLimit(1)
+            Spacer(minLength: 8)
+            Text(age).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.55))
+        }
+        .padding(.horizontal, 10).frame(minHeight: 32)
+        return HStack(spacing: 4) {
+            if let t = r.target {
+                Button { model.activate(t) } label: { content.contentShape(Rectangle()) }.buttonStyle(.plain)
+                    .accessibilityHint("Opens it")
+            } else {
+                content
+                if TerminalJump.available(r.host) { OpenTerminalButton(host: r.host) }
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(name), \(status(r)) \(age) ago")
     }
 }
 

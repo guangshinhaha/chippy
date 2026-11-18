@@ -50,3 +50,11 @@ Source: web research on Apple's Live Activities HIG and existing Claude Code not
 - Glyph: first Character of the uppercased repo name if it is an ASCII letter or digit, else `#`.
 - Shown on list rows, Recent rows, every card header, the compact glance and the needs-you badge (rank-first item, only when the badge has 34pt or more). VoiceOver rows say the spoken form ("pink circle G"); the badge says the repo and mark ("next from govapps, teal diamond") and only when the mark is visible.
 - Gallery: `Chippy --render-identity out.png`.
+
+## While you were away (#92)
+- Away = screen locked, or no keyboard/mouse input for 5 min (`AwayTracker`, injected clock). It reports once, when the user is back, and only if the away period lasted at least the threshold (a short lock is not away). Idle start is back-dated by the idle time.
+- Passive by design: a return only sets `awaySince` (the one thing kept). The digest is rebuilt live from state already in memory (terminal asks, finished chips, Recent) with `at >= awaySince`, one row per session, needs-you first then newest finished, cap 5 + "+N more". No new log, persistence or network (PDPA). Rows are repo, worktree, status, age and the identity mark only: no outcome or reply text (the issue's PDPA line; this is stricter than showing SummaryMarkdown lines).
+- It never pops, folds anything, or plays a sound, so it needs no extra SilencePolicy branch. It shows as the finished dot on the collapsed notch (VoiceOver: "While you were away: n updates") and opens in the rest panel by tapping the dot (it replaces the chips and Recent list it already covers). Pending approvals and questions are not rows: their card owns the panel; a question that fell back to the terminal is a needs-you row.
+- Seen = closing that panel (the dot clears, chips stay). Dismiss = the digest's finished chips move to Recent, terminal asks stay (use "Handled"). An undismissed digest merges with the next away period (earliest start wins).
+- Not covered: a "failed" status (Chippy has no failure state), a digest while an approval card is up.
+- Gallery: `Chippy --render-away out.png`.

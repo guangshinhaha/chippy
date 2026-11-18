@@ -30,6 +30,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel = NotchPanel(model: model)
         panel?.onMenu = { [weak self] at, centered in self?.popMenu(at: at, centered: centered) }
         model.onSound = { [weak self] kind, id, host, quiet in self?.sounds.handle(kind, sessionId: id, host: host, quiet: quiet) }
+        model.awaySignal = { // #92: lock and idle read live; nothing is stored beyond the away start time
+            let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+            return (SoundPlayer.screenIsLocked(), idle)
+        }
         model.silence = { [weak self] in self?.sounds.silenceState() ?? SilenceState() }
         model.onSessionEnd = { [weak self] id in self?.sounds.sessionEnded(id) }
         model.planCardEnabled = UserDefaults.standard.bool(forKey: Self.planCardKey) // experimental (#91), default off
