@@ -6,8 +6,16 @@ public struct NotchMetrics: Equatable {
     public var width: CGFloat   // 0 when the screen has no notch
     public var height: CGFloat  // camera housing height, or the menu-bar height when there is none
     public var hasNotch: Bool { width > 0 }
+    /// Free menu-bar space beside the camera (see `MenuBarGap`); unbounded until measured.
+    public var leftGap: CGFloat = .infinity
+    public var rightGap: CGFloat = .infinity
 
     public init(width: CGFloat, height: CGFloat) { self.width = width; self.height = height }
+
+    /// The pill is symmetric about the camera, so the narrower side sets both wings.
+    private var gap: CGFloat { hasNotch ? min(leftGap, rightGap) : .infinity }
+    /// False when the gap is too small for glance content; compact then shows the collapsed pill.
+    public var compactFits: Bool { gap >= MenuBarGap.minUsable }
 
     public static let none = NotchMetrics(width: 0, height: 24)
     public static let sample14 = NotchMetrics(width: 185, height: 32) // for the gallery
@@ -21,8 +29,10 @@ public struct NotchMetrics: Equatable {
     /// `contentHeight` is the measured height of the expanded card, so the shape hugs it instead of leaving dead space.
     public func size(for density: Density, tall: Bool = false, contentHeight: CGFloat = 0) -> CGSize {
         switch density {
-        case .collapsed: return CGSize(width: width + 2 * 48, height: band)
-        case .compact: return CGSize(width: width + 2 * 190, height: band + 14)
+        case .collapsed: return CGSize(width: width + 2 * min(48, max(gap, 26)), height: band)
+        case .compact:
+            guard compactFits else { return size(for: .collapsed) }
+            return CGSize(width: width + 2 * min(190, gap), height: band + 14)
         case .expanded: return CGSize(width: max(width + 220, tall ? 460 : 380), height: contentHeight > 0 ? min(max(contentHeight + 10, 120), Self.maxExpandedHeight) : (tall ? 470 : 300) + (height - 28))
         }
     }

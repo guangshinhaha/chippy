@@ -117,6 +117,8 @@ struct NotchView: View {
         switch model.density {
         case .collapsed:
             Color.clear.frame(height: m.band) // the icon is drawn once, by NotchView.icon
+        case .compact where !m.compactFits:
+            Color.clear.frame(height: m.band) // gap too small: the collapsed pill only
         case .compact:
             let wing = m.wing(for: .compact)
             HStack(spacing: 0) {

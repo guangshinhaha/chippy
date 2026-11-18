@@ -12,6 +12,35 @@ extension NotchMetrics {
     }
 }
 
+/// Frames of other apps' menu bar items on `screen`, from the window server (no permission needed for bounds).
+/// Menu extras are layer 25 windows; the frontmost app's menus show up as small layer 24 windows when exposed.
+/// Chippy's own windows and full-width bars are ignored. Called on a timer and on app/space change, never per frame.
+enum MenuBarProbe {
+    static func itemFrames(on screen: NSScreen) -> [CGRect] {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else { return [] }
+        let me = ProcessInfo.processInfo.processIdentifier
+        return list.compactMap { w in
+            guard let layer = w[kCGWindowLayer as String] as? Int, layer == 24 || layer == 25,
+                  let pid = w[kCGWindowOwnerPID as String] as? Int32, pid != me,
+                  let b = w[kCGWindowBounds as String] as? [String: CGFloat],
+                  let x = b["X"], let y = b["Y"], let wd = b["Width"], let ht = b["Height"] else { return nil }
+            let r = CGRect(x: x, y: y, width: wd, height: ht)
+            return wd < screen.frame.width / 2 && ht < 60 ? r : nil
+        }
+    }
+
+    /// Screen-space (CG, top-left origin) rects for the notch and the screen.
+    static func gaps(for m: NotchMetrics, screen: NSScreen) -> (CGFloat, CGFloat) {
+        guard m.hasNotch, let primary = NSScreen.screens.first else { return (.infinity, .infinity) }
+        let f = screen.frame
+        let top = primary.frame.maxY - f.maxY
+        let cgScreen = CGRect(x: f.minX, y: top, width: f.width, height: f.height)
+        let notch = CGRect(x: f.midX - m.width / 2, y: top, width: m.width, height: m.height)
+        let g = MenuBarGap.wings(items: itemFrames(on: screen), notch: notch, screen: cgScreen)
+        return (g.left, g.right)
+    }
+}
+
 final class MetricsBox: ObservableObject {
     @Published var metrics = NotchMetrics.none
     /// Natural height of the expanded content, reported by the view.
@@ -25,6 +54,8 @@ final class NotchPanel: NSPanel {
     private let model: NotchModel
     let metrics = MetricsBox()
     private var bag = Set<AnyCancellable>()
+    private var gaps: (CGFloat, CGFloat) = (.infinity, .infinity)
+    private var gapTimer: Timer?
 
     init(model: NotchModel) {
         self.model = model
@@ -49,11 +80,24 @@ final class NotchPanel: NSPanel {
             if v { self.dock(self.model.density); self.orderFrontRegardless() } else { self.orderOut(nil) }
         }.store(in: &bag)
         dock(model.density)
+        let nc = NSWorkspace.shared.notificationCenter
+        for n in [NSWorkspace.didActivateApplicationNotification, NSWorkspace.activeSpaceDidChangeNotification] {
+            nc.publisher(for: n).receive(on: RunLoop.main).sink { [weak self] _ in self?.remeasure() }.store(in: &bag)
+        }
+        remeasure()
+        gapTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { [weak self] _ in self?.remeasure() }
         NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
             .receive(on: RunLoop.main).sink { [weak self] _ in
                 guard let self else { return }
                 self.dock(self.model.density)
             }.store(in: &bag)
+    }
+
+    /// Re-read the menu bar gap; only a real change re-docks (and so re-springs the shape).
+    private func remeasure() {
+        guard model.visible, let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) else { return }
+        let g = MenuBarProbe.gaps(for: NotchMetrics.detect(screen), screen: screen)
+        if abs(g.0 - gaps.0) > 2 || abs(g.1 - gaps.1) > 2 || (g.0.isInfinite != gaps.0.isInfinite) { gaps = g; dock(model.density) }
     }
 
     override var canBecomeKey: Bool { true }
@@ -77,7 +121,7 @@ final class NotchPanel: NSPanel {
         if let l = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { [weak self] e in self?.syncMouse(); return e }) { monitors.append(l) }
     }
 
-    deinit { monitors.forEach { NSEvent.removeMonitor($0) } }
+    deinit { monitors.forEach { NSEvent.removeMonitor($0) }; gapTimer?.invalidate() }
 
     private func syncMouse() {
         let inside = hitRect.contains(NSEvent.mouseLocation)
@@ -109,7 +153,8 @@ final class NotchPanel: NSPanel {
     /// animates; it only runs again when the screen or the measured card height changes the hit area.
     func dock(_ density: Density) {
         guard let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.main else { return }
-        let m = NotchMetrics.detect(screen)
+        var m = NotchMetrics.detect(screen)
+        (m.leftGap, m.rightGap) = gaps
         if metrics.metrics != m { metrics.metrics = m }
         let box = m.maxSize
         let f = screen.frame
