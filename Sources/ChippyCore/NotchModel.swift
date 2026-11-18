@@ -46,6 +46,8 @@ public final class NotchModel: ObservableObject {
     private var store = SessionStore()
     private var connections: [String: Connection] = [:]
     private var questionInputs: [String: [String: Any]] = [:]
+    /// Sound hook (#67): fired for a new approval/question and a finished chip. The app decides whether to play.
+    public var onSound: ((SoundKind, _ sessionId: String, _ host: HostInfo?) -> Void)?
     private let always: AlwaysStore
     private let log: EventLog
 
@@ -107,6 +109,9 @@ public final class NotchModel: ObservableObject {
         pending.append(req)
         connections[req.id] = conn
         refresh()
+        if !Tour.isDemo(req.sessionId) {
+            onSound?(.needsYou, req.sessionId, payload.host ?? sessions.first { $0.id == req.sessionId }?.host)
+        }
     }
 
     /// Log a handled approval, except demo cards (`chippy-hook demo`, session ids `demo-*`), which would skew the measure.
@@ -183,6 +188,7 @@ public final class NotchModel: ObservableObject {
                 doneItems.removeAll { $0.sessionId == r.id }
                 doneItems.append(DoneItem(sessionId: r.id, project: r.project, branch: r.branch,
                                           files: r.filesEdited.count, added: r.added, removed: r.removed, reply: r.lastReply, prompt: r.lastPrompt, at: now, host: r.host))
+                if !Tour.isDemo(r.id) { onSound?(.done, r.id, r.host ?? payload.host) }
             }
         case "UserPromptSubmit", "SessionEnd", "PreToolUse", "PostToolUse":
             // Only the thread itself moving on (new prompt, tool use after a Stop, or ending) clears its chip; another thread's activity must not.
