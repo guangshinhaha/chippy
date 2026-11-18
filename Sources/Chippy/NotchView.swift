@@ -86,6 +86,8 @@ struct NotchView: View {
             .scaleEffect(open ? 1 : small / big, anchor: .topLeading)
             .offset(x: open ? 16 : 10, y: open ? m.height + 2 : (m.band - small) / 2)
             .frame(width: size.width, height: size.height, alignment: .topLeading)
+            .opacity(open || m.pillShowsIcon ? 1 : 0)
+            .animation(motion, value: m.pillShowsIcon) // the same spring as the shape; linear 0.01s under reduced motion
             .allowsHitTesting(false)
     }
 
@@ -117,6 +119,8 @@ struct NotchView: View {
         switch model.density {
         case .collapsed:
             Color.clear.frame(height: m.band) // the icon is drawn once, by NotchView.icon
+        case .compact where !m.compactFits:
+            Color.clear.frame(height: m.band) // gap too small: the collapsed pill only
         case .compact:
             let wing = m.wing(for: .compact)
             HStack(spacing: 0) {
