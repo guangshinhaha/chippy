@@ -73,6 +73,8 @@ struct CountBadge: View {
     var needsYou = false
     var dotLabel = "Finished threads waiting, nothing needs you"
     var deadline: (start: Date, end: Date)? = nil
+    /// Whose request is next (the rank-first needs-you one), when a count alone would not say (#89).
+    var mark: SessionIdentity? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pulse = false
 
@@ -108,11 +110,15 @@ struct CountBadge: View {
         let left = deadline.map { NeedsMeFold.timeLeft(createdAt: $0.start, timeout: $0.end.timeIntervalSince($0.start), now: now) }
         let fraction = deadline.map { NeedsMeFold.fractionLeft(createdAt: $0.start, timeout: $0.end.timeIntervalSince($0.start), now: now) } ?? 1
         let label = needsYou
-            ? "\(text) waiting, needs you" + (left.map { ", times out to the terminal in \(Int($0.rounded(.up))) seconds" } ?? "")
+            ? "\(text) waiting, needs you" + (mark.map { ", next from \($0.spoken)" } ?? "") + (left.map { ", times out to the terminal in \(Int($0.rounded(.up))) seconds" } ?? "")
             : "\(text) finished waiting"
         let pulsing = needsYou && pulse && !reduceMotion
-        return Text(text).font(.system(size: 10, weight: .bold, design: .rounded).monospacedDigit()).foregroundStyle(needsYou ? .white : .black)
-            .lineLimit(1).minimumScaleFactor(0.6)
+        let showMark = mark != nil && maxWidth >= 34
+        return HStack(spacing: 3) {
+            if showMark, let mark { IdentityMark(identity: mark, size: 11) }
+            Text(text).font(.system(size: 10, weight: .bold, design: .rounded).monospacedDigit()).foregroundStyle(needsYou ? .white : .black)
+                .lineLimit(1).minimumScaleFactor(0.6)
+        }
             .padding(.horizontal, 4).frame(minWidth: 16, maxWidth: max(maxWidth, 16), minHeight: 16)
             .background(Capsule().fill(needsYou ? Color.orange : .white.opacity(0.92)))
             .overlay {
@@ -225,6 +231,14 @@ struct NotchView: View {
     }
 
     /// Glance text: who finished (repo · branch), so several threads can be told apart.
+    /// Whose chip the compact glance shows (same pick as `compactText`), for the identity mark.
+    private var compactMark: SessionIdentity? {
+        if model.state == .needsYou, let t = model.terminalItems.last, model.pending.isEmpty, t.at >= (model.doneItems.last?.at ?? .distantPast) {
+            return model.identity(cwd: t.cwd, project: t.project)
+        }
+        return model.doneItems.last.map { model.identity(cwd: $0.cwd, project: $0.project) }
+    }
+
     private var compactText: String {
         // Only when the icon says "needs you" too: live work (icon: working) wins over the chip text.
         if model.state == .needsYou, let t = model.terminalItems.last, model.pending.isEmpty, t.at >= (model.doneItems.last?.at ?? .distantPast) {
@@ -240,7 +254,7 @@ struct NotchView: View {
 
     /// Terminal chips as cards (at most `terminalCardCap`, then a "N more" row, so the panel's measured height stays within its cap beside done cards).
     @ViewBuilder private var terminalCards: some View {
-        ForEach(model.terminalItems.reversed().prefix(Self.terminalCardCap)) { t in TerminalCard(item: t, repo: model.repoLabel(cwd: t.cwd, project: t.project).text) { model.dismissTerminal(t.sessionId) }.reveal(0.12) }
+        ForEach(model.terminalItems.reversed().prefix(Self.terminalCardCap)) { t in TerminalCard(item: t, repo: model.repoLabel(cwd: t.cwd, project: t.project).text, mark: model.identity(cwd: t.cwd, project: t.project)) { model.dismissTerminal(t.sessionId) }.reveal(0.12) }
         let hidden = model.terminalItems.count - Self.terminalCardCap
         if hidden > 0 {
             Text("\(hidden) more asked in terminal").font(.caption2).foregroundStyle(.white.opacity(0.6)).reveal(0.12)
@@ -248,7 +262,7 @@ struct NotchView: View {
     }
 
     @ViewBuilder private func doneCards(limit: Int, full: Bool = false) -> some View {
-        ForEach(model.doneItems.reversed().prefix(limit)) { d in DoneCard(item: d, repo: model.repoLabel(cwd: d.cwd, project: d.project).text, full: full) { model.dismissDone(d.sessionId) }.reveal(0.12) }
+        ForEach(model.doneItems.reversed().prefix(limit)) { d in DoneCard(item: d, repo: model.repoLabel(cwd: d.cwd, project: d.project).text, mark: model.identity(cwd: d.cwd, project: d.project), full: full) { model.dismissDone(d.sessionId) }.reveal(0.12) }
     }
 
     /// Content beside the camera: icon in the left wing, text in the right wing, nothing under the cutout.
@@ -265,7 +279,7 @@ struct NotchView: View {
                     HStack(spacing: 0) {
                         Color.clear.frame(width: off)
                         CountBadge(text: badge, maxWidth: m.width - off - 8, onTap: { model.openBadge() },
-                                   needsYou: model.badgeNeedsYou, dotLabel: model.badgeDotLabel, deadline: model.foldedDeadline) // stays inside the tab
+                                   needsYou: model.badgeNeedsYou, dotLabel: model.badgeDotLabel, deadline: model.foldedDeadline, mark: model.badgeIdentity) // stays inside the tab
                         Spacer(minLength: 0)
                     }.frame(height: NotchMetrics.tabHeight)
                 }
@@ -276,7 +290,7 @@ struct NotchView: View {
                     Color.clear.frame(width: wing)
                     Color.clear.frame(width: m.width)
                     CountBadge(text: badge, maxWidth: wing - 8, onTap: { model.openBadge() },
-                                   needsYou: model.badgeNeedsYou, dotLabel: model.badgeDotLabel, deadline: model.foldedDeadline).frame(width: wing)
+                                   needsYou: model.badgeNeedsYou, dotLabel: model.badgeDotLabel, deadline: model.foldedDeadline, mark: model.badgeIdentity).frame(width: wing)
                 }
                 .frame(height: m.band, alignment: .center)
                 .frame(maxHeight: .infinity, alignment: .top)
@@ -289,6 +303,7 @@ struct NotchView: View {
                 Color.clear.frame(height: m.band)
                 HStack(spacing: 6) {
                     Color.clear.frame(width: NotchMetrics.glanceIcon + 12)
+                    if let m = compactMark { IdentityMark(identity: m, size: 12) }
                     Text(compactText).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.tail)
                     if model.doneItems.count + model.terminalItems.count > 1 {
                         Text("+\(model.doneItems.count + model.terminalItems.count - 1)").font(.caption2).foregroundStyle(.white.opacity(0.6))
@@ -307,6 +322,7 @@ struct NotchView: View {
                 Color.clear.frame(width: wing)
                 Color.clear.frame(width: m.width)
                 HStack(spacing: 6) {
+                    if let m = compactMark { IdentityMark(identity: m, size: 12) }
                     Text(compactText)
                         .font(.caption.bold()).foregroundStyle(.white)
                         .lineLimit(1).truncationMode(.tail)
@@ -348,23 +364,24 @@ struct NotchView: View {
                     WaitingListView(model: model).reveal(0.12)
                 } else if let req = model.shownPending {
                     if req.questions != nil {
-                        QuestionCard(req: req, repo: model.repoLabel(cwd: req.cwd, project: req.project).text, initial: model.partials[req.id] ?? PartialAnswers(),
+                        QuestionCard(req: req, repo: model.repoLabel(cwd: req.cwd, project: req.project).text, mark: model.identity(cwd: req.cwd, project: req.project), initial: model.partials[req.id] ?? PartialAnswers(),
                                      progress: { model.savePartial(req.id, step: $0, answers: $1, byUser: $2) },
                                      send: { model.answer(req.id, selections: $0) }, handBack: { model.handBack(req.id) }).id(req.id).reveal(0.12)
                     } else if let plan = req.plan {
-                        PlanCard(req: req, plan: plan, repo: model.repoLabel(cwd: req.cwd, project: req.project).text, startExpanded: model.expandedPlans.contains(req.id), expand: { model.setPlanExpanded(req.id, $0) }) { model.resolve(req.id, $0) }.id(req.id).reveal(0.12)
+                        PlanCard(req: req, plan: plan, repo: model.repoLabel(cwd: req.cwd, project: req.project).text, mark: model.identity(cwd: req.cwd, project: req.project), startExpanded: model.expandedPlans.contains(req.id), expand: { model.setPlanExpanded(req.id, $0) }) { model.resolve(req.id, $0) }.id(req.id).reveal(0.12)
                     } else {
-                        ApprovalCard(req: req, repo: model.repoLabel(cwd: req.cwd, project: req.project).text) { model.resolve(req.id, $0) }.reveal(0.12)
+                        ApprovalCard(req: req, repo: model.repoLabel(cwd: req.cwd, project: req.project).text, mark: model.identity(cwd: req.cwd, project: req.project)) { model.resolve(req.id, $0) }.reveal(0.12)
                     }
                 } else if let d = model.shownDone {
-                    DoneCard(item: d, repo: model.repoLabel(cwd: d.cwd, project: d.project).text, full: true) { model.dismissDone(d.sessionId) }.reveal(0.12)
+                    DoneCard(item: d, repo: model.repoLabel(cwd: d.cwd, project: d.project).text, mark: model.identity(cwd: d.cwd, project: d.project), full: true) { model.dismissDone(d.sessionId) }.reveal(0.12)
                 } else if model.restOpen {
                     terminalCards
                     doneCards(limit: 3)
                     // Recent first, and only when no chip is showing (the chips already say the same), so the card stays short.
                     if model.doneItems.isEmpty && model.terminalItems.isEmpty {
                         if model.recent.items.isEmpty { Text("Nothing finished recently.").font(.caption).foregroundStyle(.white.opacity(0.6)) }
-                        else { RecentListView(items: model.recent.items, label: { model.repoLabel(cwd: $0.cwd, project: $0.project).text }).reveal(0.12) }
+                        else { RecentListView(items: model.recent.items, label: { model.repoLabel(cwd: $0.cwd, project: $0.project).text },
+                                                          mark: { model.identity(cwd: $0.cwd, project: $0.project) }).reveal(0.12) }
                     }
                     if model.sessions.isEmpty && model.recent.items.isEmpty { Text("No agent sessions.").font(.caption).foregroundStyle(.white.opacity(0.6)) }
                     ForEach(model.sessions.prefix(Self.sessionRowCap)) { row in
@@ -397,12 +414,15 @@ struct ApprovalCard: View {
     let req: PendingRequest
     /// The resolved repo label, as the list rows show it; the project name until given.
     var repo: String? = nil
+    /// Stable per-repo identity (#89), shown before the repo name.
+    var mark: SessionIdentity? = nil
     let decide: (Decision) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(req.branch.map { "\(repo ?? req.project) · \($0)" } ?? (repo ?? req.project))
                 .font(.caption.bold()).foregroundStyle(.white.opacity(0.85))
+                .identityLead(mark)
             if let p = req.lastPrompt, !p.isEmpty {
                 Text("“\(p)”").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
             }
@@ -441,6 +461,8 @@ struct PlanCard: View {
     let plan: PlanProposal
     /// The resolved repo label, as the list rows show it; the project name until given.
     var repo: String? = nil
+    /// Stable per-repo identity (#89), shown before the repo name.
+    var mark: SessionIdentity? = nil
     let expand: (Bool) -> Void
     let decide: (Decision) -> Void
     @State private var expanded: Bool
@@ -448,8 +470,8 @@ struct PlanCard: View {
     /// Chrome around the rows (header, captions, buttons) is about 250pt; the rest of the panel is the rows' budget.
     static let maxBodyHeight: CGFloat = NotchMetrics.maxExpandedHeight - 250
 
-    init(req: PendingRequest, plan: PlanProposal, repo: String? = nil, startExpanded: Bool = false, expand: @escaping (Bool) -> Void, decide: @escaping (Decision) -> Void) {
-        self.req = req; self.plan = plan; self.repo = repo; self.expand = expand; self.decide = decide
+    init(req: PendingRequest, plan: PlanProposal, repo: String? = nil, mark: SessionIdentity? = nil, startExpanded: Bool = false, expand: @escaping (Bool) -> Void, decide: @escaping (Decision) -> Void) {
+        self.req = req; self.plan = plan; self.repo = repo; self.mark = mark; self.expand = expand; self.decide = decide
         _expanded = State(initialValue: startExpanded)
     }
 
@@ -458,6 +480,7 @@ struct PlanCard: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(req.branch.map { "\(repo ?? req.project) · \($0)" } ?? (repo ?? req.project))
                 .font(.caption.bold()).foregroundStyle(.white.opacity(0.85))
+                .identityLead(mark)
             if let p = req.lastPrompt, !p.isEmpty {
                 Text("“\(p)”").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
             }
@@ -581,6 +604,8 @@ struct QuestionCard: View {
     let req: PendingRequest
     /// The resolved repo label, as the list rows show it; the project name until given.
     var repo: String? = nil
+    /// Stable per-repo identity (#89), shown before the repo name.
+    var mark: SessionIdentity? = nil
     /// Progress kept by the model, so leaving this card (to the list) and coming back resumes it.
     let progress: (Int, [String: Set<String>], Bool) -> Void // the Bool: a real user change (false: re-seed or disappear)
     /// The card stays up only for `.refused`.
@@ -596,9 +621,9 @@ struct QuestionCard: View {
     @State private var bodyHeight: CGFloat = 0
     private static let maxBodyHeight: CGFloat = 330
 
-    init(req: PendingRequest, repo: String? = nil, initial: PartialAnswers = PartialAnswers(), progress: @escaping (Int, [String: Set<String>], Bool) -> Void = { _, _, _ in },
+    init(req: PendingRequest, repo: String? = nil, mark: SessionIdentity? = nil, initial: PartialAnswers = PartialAnswers(), progress: @escaping (Int, [String: Set<String>], Bool) -> Void = { _, _, _ in },
          send: @escaping ([String: Set<String>]) -> NotchModel.Answered, handBack: @escaping () -> Void) {
-        self.req = req; self.repo = repo; self.progress = progress; self.send = send; self.handBack = handBack
+        self.req = req; self.repo = repo; self.mark = mark; self.progress = progress; self.send = send; self.handBack = handBack
         _step = State(initialValue: min(initial.step, max((req.questions?.count ?? 1) - 1, 0)))
         _answers = State(initialValue: initial.answers)
     }
@@ -656,6 +681,7 @@ struct QuestionCard: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(req.branch.map { "\(repo ?? req.project) · \($0)" } ?? (repo ?? req.project))
                 .font(.caption.bold()).foregroundStyle(.white.opacity(0.85))
+                .identityLead(mark)
             if let p = req.lastPrompt, !p.isEmpty {
                 Text("You asked: \(p)").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
             }
@@ -721,6 +747,8 @@ struct DoneCard: View {
     let item: DoneItem
     /// The resolved repo label, as the list rows show it; the project name until given.
     var repo: String? = nil
+    /// Stable per-repo identity (#89), shown before the repo name.
+    var mark: SessionIdentity? = nil
     var full = false
     let dismiss: () -> Void
 
@@ -738,6 +766,7 @@ struct DoneCard: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(item.identityLine(repo: repo ?? item.project) + (item.asksYou ? " · waiting for your reply" : " · finished"))
                 .font(.caption.bold()).foregroundStyle(item.asksYou ? Color.orange : .white)
+                .identityLead(mark)
             if full, let p = item.prompt, !p.isEmpty {
                 Text("You asked: \(p)").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
             }
@@ -778,11 +807,13 @@ struct DoneCard: View {
 struct TerminalCard: View {
     let item: TerminalItem
     var repo: String? = nil
+    /// Stable per-repo identity (#89), shown before the repo name.
+    var mark: SessionIdentity? = nil
     let dismiss: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(item.glance(repo: repo ?? item.project)).font(.caption.bold()).foregroundStyle(.white.opacity(0.85))
+            Text(item.glance(repo: repo ?? item.project)).font(.caption.bold()).foregroundStyle(.white.opacity(0.85)).identityLead(mark)
             HStack {
                 Text("Claude is waiting for you there").font(.caption2).foregroundStyle(.white.opacity(0.6))
                 Spacer()
@@ -862,6 +893,7 @@ struct RecentListView: View {
     let items: [RecentItem]
     /// The one resolved repo label, as the list rows show it.
     var label: (RecentItem) -> String = { $0.project }
+    var mark: (RecentItem) -> SessionIdentity? = { _ in nil }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 15)) { ctx in // one timeline for the whole list
@@ -876,6 +908,7 @@ struct RecentListView: View {
         let repo = label(item)
         return HStack(spacing: 10) {
             Image(systemName: "checkmark.circle").font(.caption).foregroundStyle(.white.opacity(0.5)).frame(width: 18)
+            if let m = mark(item) { IdentityMark(identity: m, size: 14) }
             Text(repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle)
             Spacer(minLength: 8)
             Text(age).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.55))
@@ -908,7 +941,7 @@ struct WaitingListView: View {
     private func needsRows(_ layout: WaitingLayout) -> some View {
         VStack(spacing: 0) {
             ForEach(layout.needs) { item in
-                NeedsRow(item: item, selected: model.listSelection == item.target, host: model.terminalItems.first { .terminal($0.sessionId) == item.target }?.host,
+                NeedsRow(item: item, mark: model.identity(repo: item.repo), selected: model.listSelection == item.target, host: model.terminalItems.first { .terminal($0.sessionId) == item.target }?.host,
                          open: { model.activate(item.target) },
                          handled: { if case .terminal(let sid) = item.target { model.dismissTerminal(sid) } })
                     .frame(height: WaitingList.needsRowHeight).id(item.target)
@@ -934,7 +967,7 @@ struct WaitingListView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     section("FINISHED", count: layout.totalFinished, clearAll: { model.dismissDone(nil) })
                     ForEach(layout.finished) { item in
-                        FinishedRow(item: item, selected: model.listSelection == item.target,
+                        FinishedRow(item: item, mark: model.identity(repo: item.repo), selected: model.listSelection == item.target,
                                     open: { model.activate(item.target) }, dismiss: { if case .done(let sid) = item.target { model.dismissDone(sid) } })
                             .frame(height: WaitingList.finishedRowHeight)
                     }
@@ -952,12 +985,52 @@ struct WaitingListView: View {
     }
 }
 
+/// Per-repo identity (#89): a colour, a shape and the repo's letter, so colour is never the only cue. Decorative: the
+/// surrounding row or card carries the spoken name, so it is hidden from VoiceOver.
+struct IdentityMark: View {
+    let identity: SessionIdentity
+    var size: CGFloat = 14
+    private static let palette: [Color] = [
+        Color(red: 0.34, green: 0.70, blue: 0.95), Color(red: 0.30, green: 0.78, blue: 0.45), Color(red: 0.96, green: 0.85, blue: 0.30), Color(red: 0.95, green: 0.50, blue: 0.70),
+        Color(red: 0.66, green: 0.52, blue: 0.95), Color(red: 0.25, green: 0.78, blue: 0.76), Color(red: 0.72, green: 0.88, blue: 0.30), Color(red: 0.40, green: 0.50, blue: 0.95)]
+    private struct Tri: Shape {
+        func path(in r: CGRect) -> Path { var p = Path(); p.move(to: CGPoint(x: r.midX, y: r.minY)); p.addLine(to: CGPoint(x: r.maxX, y: r.maxY)); p.addLine(to: CGPoint(x: r.minX, y: r.maxY)); p.closeSubpath(); return p }
+    }
+    @ViewBuilder private var shape: some View {
+        let c = Self.palette[identity.colour % Self.palette.count]
+        switch identity.shape {
+        case .circle: Circle().fill(c)
+        case .square: RoundedRectangle(cornerRadius: size * 0.2).fill(c)
+        case .diamond: RoundedRectangle(cornerRadius: size * 0.12).fill(c).rotationEffect(.degrees(45)).scaleEffect(0.78)
+        case .triangle: Tri().fill(c)
+        }
+    }
+    var body: some View {
+        ZStack {
+            shape
+            Text(identity.glyph).font(.system(size: size * 0.58, weight: .heavy, design: .rounded)).foregroundStyle(.black.opacity(0.78))
+                .offset(y: identity.shape == .triangle ? size * 0.1 : 0)
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+}
+
+extension View {
+    /// The identity mark before a header line; nothing when there is none.
+    @ViewBuilder func identityLead(_ mark: SessionIdentity?) -> some View {
+        if let mark { HStack(alignment: .center, spacing: 6) { IdentityMark(identity: mark, size: 14); self } } else { self }
+    }
+}
+
 /// "repo" with the worktree as a small secondary tag (only linked worktrees have one).
 struct RepoTitle: View {
     let repo: String
     let worktree: String?
+    var mark: SessionIdentity? = nil
     var body: some View {
         HStack(spacing: 5) {
+            if let mark { IdentityMark(identity: mark, size: 14) }
             Text(repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle).layoutPriority(1)
             if let worktree {
                 Text(worktree).font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1).truncationMode(.middle)
@@ -975,6 +1048,7 @@ private func rowBackground(selected: Bool, hover: Bool) -> some View {
 /// A row you act on: verb-led label, one primary button (terminal rows add "Handled").
 struct NeedsRow: View {
     let item: WaitingItem
+    var mark: SessionIdentity? = nil
     let selected: Bool
     let host: HostInfo?
     let open: () -> Void
@@ -992,7 +1066,7 @@ struct NeedsRow: View {
     private var tint: Color { item.kind == .approval ? .orange : item.kind == .question ? .cyan : .purple }
 
     private var actionTitle: String { item.kind == .question ? "Answer" : "Review" }
-    private var subject: String { "\(item.repo)\(item.worktree.map { ", worktree \($0)" } ?? "")" }
+    private var subject: String { "\(mark.map { "\($0.spoken), " } ?? "")\(item.repo)\(item.worktree.map { ", worktree \($0)" } ?? "")" }
 
     /// One 15s timeline per row feeds both the visible age and the VoiceOver label, so they never disagree.
     var body: some View {
@@ -1003,7 +1077,7 @@ struct NeedsRow: View {
         HStack(spacing: 10) {
             Image(systemName: symbol).font(.caption).foregroundStyle(tint).frame(width: 18)
             VStack(alignment: .leading, spacing: 2) {
-                RepoTitle(repo: item.repo, worktree: item.worktree)
+                RepoTitle(repo: item.repo, worktree: item.worktree, mark: mark)
                 Text("\(item.label) · \(age)").font(.caption2).foregroundStyle(tint.opacity(0.95)).lineLimit(1).truncationMode(.tail)
             }
             .layoutPriority(1) // the names give way last-but-one; the buttons keep their size
@@ -1037,6 +1111,7 @@ struct NeedsRow: View {
 /// One line, FYI: repo, outcome, age. No buttons; the whole row opens, and an x shows on hover.
 struct FinishedRow: View {
     let item: WaitingItem
+    var mark: SessionIdentity? = nil
     let selected: Bool
     let open: () -> Void
     let dismiss: () -> Void
@@ -1049,7 +1124,7 @@ struct FinishedRow: View {
     private func row(age: String) -> some View {
         HStack(spacing: 10) {
             Image(systemName: "checkmark.circle").font(.caption).foregroundStyle(.white.opacity(0.45)).frame(width: 18)
-            RepoTitle(repo: item.repo, worktree: item.worktree)
+            RepoTitle(repo: item.repo, worktree: item.worktree, mark: mark)
             Text(item.asksYou ? "asks you" : "finished").font(.caption2).foregroundStyle(item.asksYou ? Color.orange : .white.opacity(0.5)).lineLimit(1).fixedSize()
             Spacer(minLength: 6)
             Text(age).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.5))
@@ -1067,7 +1142,7 @@ struct FinishedRow: View {
         .animation(.easeOut(duration: 0.12), value: hover)
         // One button for the row; Dismiss is its own action, not a nested element inside a button.
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(item.repo)\(item.worktree.map { ", worktree \($0)" } ?? ""), \(item.asksYou ? "asks you" : "finished"), \(age)")
+        .accessibilityLabel("\(mark.map { "\($0.spoken), " } ?? "")\(item.repo)\(item.worktree.map { ", worktree \($0)" } ?? ""), \(item.asksYou ? "asks you" : "finished"), \(age)")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction(.default, open)
         .accessibilityAction(named: "Dismiss", dismiss)

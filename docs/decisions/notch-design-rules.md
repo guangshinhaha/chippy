@@ -43,3 +43,9 @@ Source: web research on Apple's Live Activities HIG and existing Claude Code not
 - Badge counts needs-you only. Finished-only shows a dot, never a count.
 - Height cap 560: FINISHED shrinks first, then NEEDS YOU scrolls. Needs-you rows are never cut.
 - Labels are repo + worktree, read from git (pointer file to the common dir) off the main thread and cached; folder name is the fallback. Cards still show the project name.
+
+## Session identity (#89)
+- Identity is per resolved repo (`RepoLabel.repo`): a colour (8), a shape (4) and the repo's first letter, never colour alone. Worktrees of one repo share it; the worktree stays the sub-label tag.
+- `IdentityBook`: FNV-1a of the repo picks a preferred slot (stable across launches); a taken slot moves to the next free one, remembered for the life of the process. Beyond 32 repos slots are shared.
+- Shown on list rows, Recent rows, every card header, the compact glance and the needs-you badge (rank-first item, only when the badge has 34pt or more). VoiceOver rows and the badge say the spoken form ("pink circle G").
+- Gallery: `Chippy --render-identity out.png`.

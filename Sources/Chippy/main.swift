@@ -56,6 +56,11 @@ if let i = args.firstIndex(of: "--render-badge-dot"), i + 1 < args.count {
     exit(0)
 }
 
+if let i = args.firstIndex(of: "--render-identity"), i + 1 < args.count {
+    MainActor.assumeIsolated { Gallery.renderIdentity(to: args[i + 1]) }
+    exit(0)
+}
+
 if let i = args.firstIndex(of: "--render-mixed-header"), i + 1 < args.count {
     MainActor.assumeIsolated { Gallery.renderMixedHeader(to: args[i + 1]) }
     exit(0)

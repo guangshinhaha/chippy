@@ -87,6 +87,8 @@ public final class NotchModel: ObservableObject {
     private let log: EventLog
     /// Repo + worktree labels from git, resolved off the main thread and cached per cwd (#101).
     public let identities: RepoIdentityCache
+    /// Colour, shape and letter per resolved repo (#89). Worktrees of one repo share it; the worktree is only a sub-label.
+    public let marks = IdentityBook()
 
     public init(state: ChippyState = .idle, density: Density = .collapsed,
                 always: AlwaysStore = AlwaysStore(), log: EventLog = EventLog(),
@@ -128,6 +130,16 @@ public final class NotchModel: ObservableObject {
 
     /// The one repo label for a cwd, as list rows show it: cached git result, or the folder-name fallback while it loads.
     public func repoLabel(cwd: String, project: String) -> RepoLabel { identities.label(cwd: cwd, project: project) }
+
+    /// The identity for a cwd's resolved repo, consistent with the label every list and card shows.
+    public func identity(cwd: String, project: String) -> SessionIdentity { marks.identity(for: repoLabel(cwd: cwd, project: project)) }
+    public func identity(repo: String) -> SessionIdentity { marks.identity(repo: repo) }
+
+    /// Whose request the needs-you badge points at: the rank-first needs-you item (the one a badge tap opens).
+    public var badgeIdentity: SessionIdentity? {
+        guard badgeNeedsYou, let top = waitingItems.first(where: { $0.needsYou }) else { return nil }
+        return identity(repo: top.repo)
+    }
 
     private func refresh() {
         refreshing = true

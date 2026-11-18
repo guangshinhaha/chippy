@@ -561,6 +561,26 @@ enum Gallery {
         writePNG(r, to: path)
     }
 
+    /// `Chippy --render-identity out.png` (#89): rows for two worktrees of one repo (same mark, different worktree tag) beside
+    /// another repo, plus a sheet of every mark (colour x shape) to check legibility.
+    @MainActor
+    static func renderIdentity(to path: String) {
+        let rows = listCell(listModel(needs: 3, finished: 3, names: ["govapps", "fix-53", "fix-51", "factory", "verify-58b", "verify-59"], kinds: ["approval", "question", "terminal"]),
+                            "govapps/fix-53 and fix-51 share one mark; factory/verify-* share another")
+        let sheet = VStack(alignment: .leading, spacing: 6) {
+            Text("all \(SessionIdentity.slotCount) marks (rows: shape, columns: colour)").font(.caption2).foregroundStyle(.secondary)
+            ForEach(SessionIdentity.Shape.allCases, id: \.rawValue) { shape in
+                HStack(spacing: 8) {
+                    ForEach(0..<SessionIdentity.colourCount, id: \.self) { c in
+                        IdentityMark(identity: SessionIdentity(colour: c, shape: shape, glyph: "R"), size: 22)
+                    }
+                }
+            }
+        }
+        let all = HStack(alignment: .top, spacing: 20) { rows; sheet }.padding(16).background(Color(white: 0.25))
+        writePNG(ImageRenderer(content: all), to: path)
+    }
+
     /// `Chippy --render-badge-dot out.png` (#101): the collapsed notch with only finished items waiting (a dot).
     @MainActor
     static func renderBadgeDot(to path: String) {
