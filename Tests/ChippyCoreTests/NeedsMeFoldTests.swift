@@ -84,6 +84,19 @@ final class NeedsMeFoldTests: XCTestCase {
     }
     private func advance(_ m: NotchModel, _ s: TimeInterval) { clockNow += s; m.sweep(now: t0) }
 
+    func testBadgeOpensTopRankedItem() {
+        let m = model()
+        let q = #"{"session_id":"q","hook_event_name":"PermissionRequest","cwd":"/x/q","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"Q?","header":"A","multiSelect":false,"options":[{"label":"x","description":""}]}]}}"#
+        var p: [Int32] = [0, 0]; socketpair(AF_UNIX, SOCK_STREAM, 0, &p); fds.append(p)
+        m.receiveApproval(HookPayload(json: Data(q.utf8))!, Connection(fd: p[0]), now: t0)
+        let aid = ask(m)
+        advance(m, 16)
+        XCTAssertTrue(m.folded)
+        m.openBadge()
+        XCTAssertFalse(m.listOpen)
+        XCTAssertEqual(m.shownPending?.id, aid) // the approval, though the question came first
+    }
+
     func testApprovalOpensThenFoldsToBadgeAfterFifteenSeconds() {
         let m = model()
         let id = ask(m)

@@ -150,7 +150,7 @@ final class WaitingListTests: XCTestCase {
         question(m, "q"); approval(m, "a")
         let q = m.pending[0]
         m.savePartial(q.id, step: 1, answers: ["Q1?": ["x"]])
-        m.openList(); m.activate(m.waitingItems[1].target) // go look at the approval
+        m.openList(); m.activate(m.waitingItems[0].target) // go look at the approval
         XCTAssertEqual(m.shownPending?.sessionId, "a")
         m.openList(); m.activate(.pending(q.id))           // and back
         XCTAssertEqual(m.partials[q.id], PartialAnswers(step: 1, answers: ["Q1?": ["x"]]))
@@ -322,9 +322,9 @@ final class WaitingListTests: XCTestCase {
         XCTAssertEqual(order([req("new", at: 20), req("old", at: 10)]), ["old", "new"])
     }
     func testCloserToTimeoutWinsOverOlder() {
-        // old: 10 + 300 = 310; new: 20 + 60 = 80
+        // old: 10 + 60 = 70; new: 20 + 10 = 30
         let t: (PendingRequest) -> TimeInterval = { $0.waitSeconds ?? 0 }
-        XCTAssertEqual(order([req("old", at: 10, wait: 300), req("new", at: 20, wait: 60)], timeout: t), ["new", "old"])
+        XCTAssertEqual(order([req("old", at: 10, wait: 60), req("new", at: 20, wait: 10)], timeout: t), ["new", "old"])
     }
     func testTiesAreStable() {
         XCTAssertEqual(order([req("b", at: 5), req("a", at: 5), req("c", at: 5)]), ["b", "a", "c"])
@@ -333,14 +333,6 @@ final class WaitingListTests: XCTestCase {
         let t = [TerminalItem(sessionId: "t2", project: "later", at: Date(timeIntervalSince1970: 9), tool: "Bash"),
                  TerminalItem(sessionId: "t1", project: "earlier", at: Date(timeIntervalSince1970: 1), tool: "Bash")]
         XCTAssertEqual(order([req("q", q: true, at: 100)], terminal: t), ["q", "earlier", "later"])
-    }
-    func testBadgeOpensTopItemNotTheListHead() {
-        let m = model()
-        question(m, "q"); approval(m, "a")
-        XCTAssertEqual(m.waitingItems.first?.kind, .approval)
-        m.openBadge()
-        XCTAssertEqual(m.shownPending?.sessionId, "a")
-        XCTAssertFalse(m.listOpen)
     }
     func testBadgeWithOnlyFinishedChipsOpensList() {
         let m = model()
