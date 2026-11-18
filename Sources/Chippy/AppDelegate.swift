@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if e.keyCode == 53 { DispatchQueue.main.async { self?.model.closeDetail() } }
         }
         outsideClick = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            if self?.panel?.inMenuTracking == true { return } // dismissing our own menu is not an outside click
             DispatchQueue.main.async { self?.model.closeDetail() }
         }
     }
@@ -174,6 +175,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// It is the status item's own menu (same items and delegate), so both entry points always agree.
     private func popMenu(at p: NSPoint, centered: Bool) {
         guard let menu = mainMenu else { return }
+        panel?.inMenuTracking = true // popUp blocks until the menu closes; clicks that dismiss it must not fold the panel
+        defer { panel?.inMenuTracking = false }
         menu.popUp(positioning: nil, at: NSPoint(x: centered ? p.x - menu.size.width / 2 : p.x, y: p.y), in: nil)
     }
 

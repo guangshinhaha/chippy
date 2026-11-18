@@ -147,7 +147,7 @@ struct NotchView: View {
     }
 
     private var headerTitle: String {
-        if model.restOpen { return "Recent" }
+        if model.restOpen && model.doneItems.isEmpty && model.terminalItems.isEmpty { return "Recent" }
         if model.listOpen { return "Waiting · \(model.waitingItems.count)" }
         if model.shownPending == nil, model.shownDone != nil { return model.pending.isEmpty ? "Done" : "Finished" }
         if model.pending.isEmpty { return model.state.title }
@@ -272,7 +272,7 @@ struct NotchView: View {
                     }
                 } else if let d = model.shownDone {
                     DoneCard(item: d, full: true) { model.dismissDone(d.sessionId) }.reveal(0.12)
-                } else if model.pinnedOpen || model.restOpen {
+                } else if model.restOpen {
                     terminalCards
                     doneCards(limit: 3)
                     // Recent first, and only when no chip is showing (the chips already say the same), so the card stays short.
@@ -684,23 +684,25 @@ struct RecentListView: View {
     let items: [RecentItem]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(items) { item in
-                TimelineView(.periodic(from: .now, by: 15)) { ctx in
-                    let age = WaitingList.age(since: item.at, now: ctx.date)
-                    HStack(spacing: 10) {
-                        Image(systemName: "checkmark.circle").font(.caption).foregroundStyle(.white.opacity(0.5)).frame(width: 18)
-                        Text(item.project).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle)
-                        Spacer(minLength: 8)
-                        Text(age).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.55))
-                        if TerminalJump.available(item.host) { OpenTerminalButton(host: item.host) }
-                    }
-                    .padding(.horizontal, 10).frame(minHeight: 32)
-                    .accessibilityElement(children: .contain)
-                    .accessibilityLabel("\(item.project), finished \(age) ago")
-                }
+        TimelineView(.periodic(from: .now, by: 15)) { ctx in // one timeline for the whole list
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(items) { item in row(item, now: ctx.date) }
             }
         }
+    }
+
+    private func row(_ item: RecentItem, now: Date) -> some View {
+        let age = WaitingList.age(since: item.at, now: now)
+        return HStack(spacing: 10) {
+            Image(systemName: "checkmark.circle").font(.caption).foregroundStyle(.white.opacity(0.5)).frame(width: 18)
+            Text(item.project).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle)
+            Spacer(minLength: 8)
+            Text(age).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.55))
+            if TerminalJump.available(item.host) { OpenTerminalButton(host: item.host) }
+        }
+        .padding(.horizontal, 10).frame(minHeight: 32)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(item.project), finished \(age) ago")
     }
 }
 

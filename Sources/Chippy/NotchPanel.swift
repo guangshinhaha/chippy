@@ -87,6 +87,7 @@ final class NotchPanel: NSPanel {
 
     init(model: NotchModel) {
         self.model = model
+        shapeDensity = model.density; shapeResting = model.resting
         super.init(contentRect: .zero,
                    styleMask: [.borderless, .nonactivatingPanel],
                    backing: .buffered, defer: false)
@@ -101,27 +102,18 @@ final class NotchPanel: NSPanel {
         host.sizingOptions = [] // the window is fixed; SwiftUI must not resize it
         contentView = host
         startPointerTracking()
-        model.$density.receive(on: RunLoop.main).sink { [weak self] d in
-            guard let self else { return }
-            // A stable pending gap rides along with this (already animating) density change, never under an open card.
-            if let g = self.gate.densityChanged(expanded: d == .expanded, now: self.now) { self.gaps = g }
-            self.dock(d)
-            self.schedulePoll(after: 0.85)
-        }.store(in: &bag)
-        metrics.$contentHeight.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] _ in self?.dock(self?.model.density ?? .collapsed) }.store(in: &bag)
+        // Density and resting change together in one refresh: both land here, and the second call finds nothing new,
+        // so a transition docks (and starts or stops the gap timer) once.
+        Publishers.Merge(model.$density.dropFirst().map { _ in () }, model.$resting.dropFirst().map { _ in () })
+            .receive(on: RunLoop.main).sink { [weak self] in self?.shapeChanged() }.store(in: &bag)
+        metrics.$contentHeight.dropFirst().removeDuplicates().receive(on: RunLoop.main).sink { [weak self] _ in self?.dock(self?.model.density ?? .collapsed) }.store(in: &bag)
         // Opening the list is a click, so taking key focus (without activating the app) lets the arrow keys work at once.
         model.$listOpen.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] open in
             guard open, let self else { return }
             self.frontAtListOpen = NSWorkspace.shared.frontmostApplication?.processIdentifier
             self.makeKey() // only on the open transition
         }.store(in: &bag)
-        model.$tall.dropFirst().receive(on: RunLoop.main).sink { [weak self] _ in self?.dock(self?.model.density ?? .collapsed) }.store(in: &bag)
-        // Never hidden (#85). Resting costs nothing: no wings are drawn, so the gap is not measured and its timer is off.
-        model.$resting.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] resting in
-            guard let self else { return }
-            self.dock(self.model.density)
-            if resting { self.gapTimer?.invalidate(); self.gapTimer = nil } else { self.remeasure(); self.startGapTimer() }
-        }.store(in: &bag)
+        model.$tall.dropFirst().removeDuplicates().receive(on: RunLoop.main).sink { [weak self] _ in self?.dock(self?.model.density ?? .collapsed) }.store(in: &bag)
         dock(model.density)
         orderFrontRegardless()
         let nc = NSWorkspace.shared.notificationCenter
@@ -140,8 +132,27 @@ final class NotchPanel: NSPanel {
             }.store(in: &bag)
     }
 
+    private var shapeDensity: Density
+    private var shapeResting: Bool
+
+    /// Never hidden (#85). Resting costs nothing: no wings are drawn, so the gap is not measured and its timer is off.
+    private func shapeChanged() {
+        let d = model.density, r = model.resting
+        guard d != shapeDensity || r != shapeResting else { return }
+        if d != shapeDensity {
+            // A stable pending gap rides along with this (already animating) density change, never under an open card.
+            if let g = gate.densityChanged(expanded: d == .expanded, now: now) { gaps = g }
+            schedulePoll(after: 0.85)
+        }
+        if r != shapeResting {
+            if r { gapTimer?.invalidate(); gapTimer = nil } else { remeasure(); startGapTimer() }
+        }
+        shapeDensity = d; shapeResting = r
+        dock(d)
+    }
+
     private func startGapTimer() {
-        guard gapTimer == nil else { return }
+        gapTimer?.invalidate()
         gapTimer = Timer.scheduledTimer(withTimeInterval: 8, repeats: true) { [weak self] _ in self?.remeasure() } // events cover the rest
     }
 
@@ -193,6 +204,10 @@ final class NotchPanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
 
+    /// True while the shared menu is popped up from this panel: the menu steals key focus, which must not read as
+    /// "clicked elsewhere" (resignKey) or close the open panel under it. Set by the AppDelegate around `popUp`.
+    var inMenuTracking = false
+
     /// Right-click or ctrl-click on the collapsed island opens the shared menu under the notch. Only reached while the
     /// pointer is over the shape (elsewhere the window ignores mouse events). The expanded card keeps its own clicks.
     override func sendEvent(_ event: NSEvent) {
@@ -213,9 +228,9 @@ final class NotchPanel: NSPanel {
     private var frontAtListOpen: pid_t?
     override func resignKey() {
         super.resignKey()
-        guard model.listOpen else { return }
+        guard model.listOpen, !inMenuTracking else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-            guard let self, self.model.listOpen, !self.isKeyWindow else { return }
+            guard let self, self.model.listOpen, !self.inMenuTracking, !self.isKeyWindow else { return }
             let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
             if front != self.frontAtListOpen { self.model.closeList() }
         }

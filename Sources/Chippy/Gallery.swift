@@ -77,7 +77,7 @@ enum Gallery {
                         VStack(alignment: .leading, spacing: 4) {
                             ZStack(alignment: .top) {
                                 NotchView(model: model, box: box(m))
-                                    .frame(width: m.size(for: d).width, height: m.size(for: d).height)
+                                    .frame(width: m.size(for: d, resting: model.resting).width, height: m.size(for: d, resting: model.resting).height)
                                 if m.hasNotch { // the camera, drawn over the content to prove nothing hides under it
                                     RoundedRectangle(cornerRadius: 6).fill(Color.red.opacity(0.55))
                                         .frame(width: m.width, height: m.height)

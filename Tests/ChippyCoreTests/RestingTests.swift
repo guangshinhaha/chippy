@@ -15,7 +15,7 @@ final class RestingTests: XCTestCase {
     /// Finish a thread and dismiss its chip.
     private func finish(_ m: NotchModel, _ sid: String, cwd: String = "/x/p", at: Date) {
         m.apply(ev("Stop", sid, cwd: cwd), now: at)
-        m.dismissDone(sid)
+        m.dismissDone(sid, now: at)
     }
 
     // MARK: resting state
@@ -55,6 +55,37 @@ final class RestingTests: XCTestCase {
         XCTAssertFalse(m.sessions.isEmpty); XCTAssertTrue(m.resting)
         m.toggleOpen(now: t0)
         XCTAssertTrue(m.restOpen); XCTAssertEqual(m.recent.items.map(\.project), ["api"])
+    }
+
+    func testPassiveChipDoesNotCollapseTheOpenRestPanel() {
+        let m = model()
+        m.toggleOpen(now: t0)
+        m.apply(ev("Stop", "a", cwd: "/x/api"), now: t0) // a finished chip arrives under the user
+        XCTAssertTrue(m.restOpen); XCTAssertEqual(m.density, .expanded)
+        XCTAssertEqual(m.doneItems.count, 1)
+        m.dismissDone(now: t0)
+        XCTAssertTrue(m.restOpen) // still open until the user closes it
+        m.toggleOpen(now: t0)
+        XCTAssertFalse(m.restOpen); XCTAssertTrue(m.resting)
+    }
+
+    func testTerminalChipDoesNotCollapseTheOpenRestPanel() {
+        let m = model()
+        m.toggleOpen(now: t0)
+        let q = HookPayload(json: Data(#"{"session_id":"s","hook_event_name":"PermissionRequest","cwd":"/x/p","tool_name":"AskUserQuestion","tool_input":{"questions":[]}}"#.utf8))!
+        var fds: [Int32] = [0, 0]
+        socketpair(AF_UNIX, SOCK_STREAM, 0, &fds)
+        m.receiveApproval(q, Connection(fd: fds[0]), now: t0) // unsupported question falls back to the terminal chip
+        XCTAssertEqual(m.terminalItems.count, 1)
+        XCTAssertTrue(m.restOpen); XCTAssertEqual(m.density, .expanded)
+        close(fds[1])
+    }
+
+    func testClickWithAChipShowingOpensItsDetailNotTheRestPanel() {
+        let m = model()
+        m.apply(ev("Stop"), now: t0)
+        m.toggleOpen(now: t0)
+        XCTAssertTrue(m.doneOpen); XCTAssertFalse(m.restOpen)
     }
 
     func testOutsideClickClosesRestPanel() {
@@ -108,6 +139,29 @@ final class RestingTests: XCTestCase {
         m.sweep(now: t0.addingTimeInterval(NotchModel.doneSeconds + 1))
         XCTAssertTrue(m.doneItems.isEmpty)
         XCTAssertEqual(m.recent.items.map(\.project), ["api"])
+    }
+
+    func testChipLeavingByResumeLandsInRecent() {
+        let m = model()
+        m.apply(ev("Stop", "a", cwd: "/x/api"), now: t0)
+        m.apply(ev("UserPromptSubmit", "a", cwd: "/x/api"), now: t0.addingTimeInterval(30))
+        XCTAssertTrue(m.doneItems.isEmpty)
+        XCTAssertEqual(m.recent.items.map(\.project), ["api"])
+    }
+
+    func testChipLeavingBySessionEndLandsInRecent() {
+        let m = model()
+        m.apply(ev("Stop", "a", cwd: "/x/api"), now: t0)
+        m.apply(ev("SessionEnd", "a", cwd: "/x/api"), now: t0.addingTimeInterval(30))
+        XCTAssertEqual(m.recent.items.map(\.project), ["api"])
+    }
+
+    func testRecentUsesTheCallersClockNotTheWallClock() {
+        let m = model()
+        let past = Date(timeIntervalSince1970: 1_000_000) // long before the wall clock, but within the TTL of `now`
+        m.apply(ev("Stop", "a", cwd: "/x/api"), now: past)
+        m.dismissDone("a", now: past.addingTimeInterval(60))
+        XCTAssertEqual(m.recent.items.count, 1)
     }
 
     func testRecentIsCappedAtFive() {

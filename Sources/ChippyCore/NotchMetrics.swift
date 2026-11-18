@@ -46,7 +46,7 @@ public struct NotchMetrics: Equatable {
     public var band: CGFloat { max(height + 2, 30) }
 
     /// Width of the resting tab on a screen with no notch (nothing to hang from, so a small pill at top-centre).
-    public static let flatRestingWidth: CGFloat = 52
+    public static let flatRestingWidth: CGFloat = 36
 
     /// The resting indicator (#85): always a tab, never wings (wings would cover other apps' menus).
     /// Notch: the tab hanging under the camera. No notch: a small pill the height of the menu bar, centred.

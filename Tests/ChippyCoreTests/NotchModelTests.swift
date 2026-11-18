@@ -104,7 +104,7 @@ final class NotchModelTests: XCTestCase {
         let m = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("chippy-test-\(UUID()).jsonl")))
         m.toggleOpen()
         XCTAssertEqual(m.density, Density.expanded)
-        XCTAssertFalse(m.pinnedOpen); XCTAssertTrue(m.restOpen)
+        XCTAssertTrue(m.restOpen)
     }
 
     func testApprovalCardCarriesFullCommandBranchAndPrompt() {
