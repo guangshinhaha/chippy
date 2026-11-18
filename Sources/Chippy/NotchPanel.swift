@@ -265,7 +265,7 @@ final class NotchPanel: NSPanel {
         super.resignKey()
         if !inMenuTracking { // the gear popup stealing key is not a hand-off
             if firstResponder is NSText { makeFirstResponder(nil) } // keystrokes now go elsewhere: drop the field's focus (the draft stays)
-            model.clearReplyFocus()
+            if model.freeTextReplyEnabled || model.replyFocusOwner != nil { model.clearReplyFocus() } // flag off: no extra @Published writes
         }
         guard model.listOpen, !inMenuTracking else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in

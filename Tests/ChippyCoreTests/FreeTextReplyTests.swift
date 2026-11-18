@@ -238,4 +238,25 @@ final class FreeTextReplyTests: XCTestCase {
         m.clearReplyFocus()
         XCTAssertNotEqual(m.replyFocusReset, t)
     }
+
+    func testZWJAfterVariationSelectorSurvivesButTrailingJoinerDoesNot() {
+        for e in ["\u{1F3F3}\u{FE0F}\u{200D}\u{1F308}", "\u{2764}\u{FE0F}\u{200D}\u{1F525}", "\u{1F441}\u{FE0F}\u{200D}\u{1F5E8}\u{FE0F}"] {
+            XCTAssertEqual(NotchModel.validFreeText(e), e)
+        }
+        XCTAssertEqual(NotchModel.validFreeText("yes\u{200D}"), "yes")
+        XCTAssertEqual(NotchModel.validFreeText("yes\u{200D}\u{200C}"), "yes")
+        XCTAssertEqual(NotchModel.validFreeText("a\u{200D} b"), "a b")
+        XCTAssertEqual(NotchModel.validFreeText("\u{2764}\u{FE0F}"), "\u{2764}\u{FE0F}")
+        XCTAssertNil(NotchModel.validFreeText("\u{200D}"))
+    }
+
+    func testFlagOffDropsDrafts() {
+        let m = model(); let (c, _) = pair()
+        m.receiveApproval(qs([mq("Q")]), c)
+        let id = m.pending[0].id
+        m.setDraft(id, question: "Q", text: "hi")
+        XCTAssertEqual(m.draftTexts(id)["Q"], "hi")
+        m.freeTextReplyEnabled = false
+        XCTAssertTrue(m.draftTexts(id).isEmpty)
+    }
 }

@@ -783,6 +783,11 @@ struct QuestionCard: View {
         let qs = req.questions ?? []
         let q = qs[min(step, qs.count - 1)]
         VStack(alignment: .leading, spacing: 6) {
+            Color.clear.frame(height: 0).onChange(of: freeText) { on in // flag turned off mid-card: drop typed text so Return behaves as with no draft
+                guard !on else { return }
+                for k in texts.keys { draft(k, "") }
+                texts = [:]; hint = nil; fieldFocused = false
+            }
             Text(req.branch.map { "\(repo ?? req.project) · \($0)" } ?? (repo ?? req.project))
                 .font(.caption.bold()).foregroundStyle(.white.opacity(0.85))
                 .identityLead(mark)

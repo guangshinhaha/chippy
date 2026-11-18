@@ -451,7 +451,7 @@ public final class NotchModel: ObservableObject {
     }
 
     /// Experimental (#94): a text field on single-select question cards. Off by default; while off, `texts` is ignored.
-    @Published public var freeTextReplyEnabled = false { didSet { if !freeTextReplyEnabled, replyFocusOwner != nil { replyFocusOwner = nil } } }
+    @Published public var freeTextReplyEnabled = false { didSet { if !freeTextReplyEnabled { if replyFocusOwner != nil { replyFocusOwner = nil }; if !drafts.isEmpty { drafts = [:] } } } }
     /// Longest free-text reply sent from the notch; longer goes to the terminal.
     public static let freeTextLimit = 500
 
@@ -816,19 +816,24 @@ public final class NotchModel: ObservableObject {
         let typed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !freeTextTooLong(typed) else { return nil }
         var out = String.UnicodeScalarView()
-        var prevIsBase = false // last kept scalar is visible and not a joiner: only then may a joiner/selector follow
+        var prev = 0 // last kept scalar: 0 none/space, 1 base, 2 kept selector, 3 kept joiner (ZWJ/ZWNJ)
         var hasBase = false
+        func dropPendingJoiner() { if prev == 3 { out.removeLast() } } // a joiner stays only when a base follows it
         for u in typed.unicodeScalars {
-            if u.value == 0x09 || u.value == 0x0B || u.value == 0x0C { out.append(" "); prevIsBase = false; continue } // tab, VT, FF read as spaces
+            if u.value == 0x09 || u.value == 0x0B || u.value == 0x0C { dropPendingJoiner(); out.append(" "); prev = 0; continue } // tab, VT, FF read as spaces
             if [0x200C, 0x200D, 0xFE0E, 0xFE0F].contains(u.value) {
-                if prevIsBase { out.append(u); prevIsBase = false } // no base before it, or a run of them: dropped
+                let isJoiner = u.value == 0x200C || u.value == 0x200D
+                if prev == 1 || (prev == 2 && isJoiner) { out.append(u); prev = isJoiner ? 3 : 2 } // VS16+ZWJ emoji keep their joiner; no base, or a run of them: dropped
                 continue
             }
             if isStrippedInFreeText(u) { continue } // known limit: tag characters and VS1-13 are stripped even after a base
+            let isBase = !CharacterSet.whitespacesAndNewlines.contains(u)
+            if !isBase { dropPendingJoiner() }
             out.append(u)
-            prevIsBase = !CharacterSet.whitespacesAndNewlines.contains(u)
-            if prevIsBase { hasBase = true }
+            prev = isBase ? 1 : 0
+            if isBase { hasBase = true }
         }
+        dropPendingJoiner()
         let t = String(out).trimmingCharacters(in: .whitespacesAndNewlines)
         return (t.isEmpty || !hasBase) ? nil : t
     }
