@@ -29,8 +29,9 @@ public struct AskQuestion: Equatable {
             let options = opts.compactMap { o in (o["label"] as? String).map { Option(label: $0, description: o["description"] as? String ?? "") } }
             guard options.count == opts.count, Set(options.map(\.label)).count == options.count,
                   !options.contains(where: { $0.label.isEmpty }) else { return nil }
-            // A ", " inside a label would make the joined multi-select answer ambiguous: leave those to the terminal.
-            if q["multiSelect"] as? Bool == true, options.contains(where: { $0.label.contains(", ") }) { return nil }
+            // Multi-select answers are joined with ", ": a label with a comma, or a blank one, makes that ambiguous. Terminal instead.
+            if q["multiSelect"] as? Bool == true,
+               options.contains(where: { $0.label.contains(",") || $0.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) { return nil }
             out.append(AskQuestion(question: text, header: q["header"] as? String ?? "", options: options, multiSelect: q["multiSelect"] as? Bool == true))
         }
         guard Set(out.map(\.question)).count == out.count else { return nil } // answers are keyed by question text

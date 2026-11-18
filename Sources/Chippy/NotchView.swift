@@ -5,9 +5,10 @@ import SwiftUI
 struct StateIcon: View {
     let state: ChippyState
     var size: CGFloat = 18
+    var sleeping = false
 
     var body: some View {
-        ChipmunkView(state: state).frame(width: size * 1.4, height: size * 1.4)
+        ChipmunkView(state: state, sleeping: sleeping).frame(width: size * 1.4, height: size * 1.4)
     }
 }
 
@@ -97,7 +98,7 @@ struct NotchView: View {
         let big: CGFloat = 28 * 1.4
         let small = NotchMetrics.glanceIcon
         let open = model.density == .expanded
-        return ChipmunkView(state: model.state).frame(width: big, height: big)
+        return ChipmunkView(state: model.state, sleeping: model.asleep).frame(width: big, height: big)
             .scaleEffect(open ? 1 : small / big, anchor: .topLeading)
             .offset(x: iconX(open: open, small: small, size: size), y: open ? m.height + 2 : m.isTab ? m.band + (NotchMetrics.tabHeight - small) / 2 : (m.band - small) / 2)
             .frame(width: size.width, height: size.height, alignment: .topLeading)
@@ -345,12 +346,12 @@ private struct QuestionBodyHeight: PreferenceKey {
 
 struct QuestionCard: View {
     let req: PendingRequest
-    /// Returns false when the model refused the answer (card stays up).
-    let send: ([String: Set<String>]) -> Bool
+    /// The card stays up only for `.refused`.
+    let send: ([String: Set<String>]) -> NotchModel.Answered
     let handBack: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var step = 0
-    /// Chosen labels per question text; survives moving between questions.
+    /// Chosen labels per question text.
     @State private var answers: [String: Set<String>] = [:]
     @State private var lastToggle: (index: Int, at: Date)?
     @State private var sent = false
@@ -429,7 +430,7 @@ struct QuestionCard: View {
             ChipButton(title: "Answer in terminal", kind: .quiet) { if !sent { sent = true; handBack() } }
             TourCaption(sessionId: req.sessionId, step: .question)
         }
-        .onChange(of: step) { leadExpanded = false; ShortcutBus.steps.send((req.id, $0)) }
+        .onChange(of: step) { leadExpanded = false; lastToggle = nil; ShortcutBus.steps.send((req.id, $0)) }
         .onReceive(ShortcutBus.events) { e in
             // Keys take the same path as a tap, for this card only.
             guard e.requestId == req.id, case .option(let n) = e.action,
@@ -464,7 +465,7 @@ struct QuestionCard: View {
         guard !sent, !qs.isEmpty else { return }
         let q = qs[min(step, qs.count - 1)]
         guard !(answers[q.question] ?? []).isEmpty else { return } // multi-select needs at least one
-        if step + 1 < qs.count { step += 1 } else { sent = true; if !send(answers) { sent = false } }
+        if step + 1 < qs.count { step += 1 } else { sent = true; if send(answers) == .refused { sent = false } }
     }
 }
 

@@ -86,10 +86,10 @@ final class ApprovalTests: XCTestCase {
         XCTAssertEqual(reply(f2)?["behavior"] as? String, "allow")
     }
 
-    func question(multi: Bool = false) -> HookPayload {
+    func question() -> HookPayload {
         HookPayload(json: try! JSONSerialization.data(withJSONObject: [
             "session_id": "s", "cwd": "/w/api", "hook_event_name": "PermissionRequest", "tool_name": "AskUserQuestion",
-            "tool_input": ["questions": [["question": "Which?", "header": "H", "multiSelect": multi,
+            "tool_input": ["questions": [["question": "Which?", "header": "H", "multiSelect": false,
                                           "options": [["label": "A", "description": "a"], ["label": "B", "description": "b"]]]]]]))!
     }
 
@@ -168,15 +168,17 @@ final class ApprovalTests: XCTestCase {
     func testIncompleteOrUnknownAnswerIsNotSentAndKeepsTheCard() {
         let m = model(); let (c, f) = pair()
         m.receiveApproval(question(), c)
-        XCTAssertFalse(m.answer(m.pending[0].id, selections: ["Which?": ["not an option"]]))
+        XCTAssertEqual(m.answer(m.pending[0].id, selections: ["Which?": ["not an option"]]), .refused)
         XCTAssertNil(reply(f))                            // nothing written
         XCTAssertEqual(m.pending.count, 1)                // card stays up, no silent loss
-        XCTAssertTrue(m.answer(m.pending[0].id, selections: ["Which?": ["A"]])) // and can still be answered
+        XCTAssertEqual(m.answer(m.pending[0].id, selections: ["Which?": ["A"]]), .sent) // and can still be answered
         XCTAssertNotNil(reply(f))
     }
 
     func testMultiSelectLabelContainingCommaSpaceStaysInTheTerminal() {
         XCTAssertNil(AskQuestion.parse(["questions": [mq("Q", multi: true, ["Tests, lint", "B"])]]))
+        XCTAssertNil(AskQuestion.parse(["questions": [mq("Q", multi: true, ["Tests,lint", "B"])]]))
+        XCTAssertNil(AskQuestion.parse(["questions": [mq("Q", multi: true, [" ", "B"])]]))
         XCTAssertNotNil(AskQuestion.parse(["questions": [mq("Q", multi: false, ["Tests, lint", "B"])]])) // single-select is unambiguous
         let m = model(); let (c, f) = pair()
         m.receiveApproval(multiPayload([mq("Q", multi: true, ["Tests, lint", "B"])]), c)
@@ -200,6 +202,14 @@ final class ApprovalTests: XCTestCase {
         close(f)                                          // hook timed out / terminal answered
         m.sweep()
         XCTAssertTrue(m.pending.isEmpty); XCTAssertEqual(m.state, .idle)
+    }
+
+    func testAnswerAfterHookGaveUpReportsGone() {
+        let m = model(); let (c, f) = pair()
+        m.receiveApproval(question(), c)
+        close(f)
+        XCTAssertEqual(m.answer(m.pending[0].id, selections: ["Which?": ["A"]]), .gone)
+        XCTAssertTrue(m.pending.isEmpty)
     }
 
     func testAlwaysOnAnEditDoesNotCoverOtherContentInTheSameFile() {
