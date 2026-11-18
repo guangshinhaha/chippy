@@ -253,10 +253,12 @@ public final class NotchModel: ObservableObject {
         if on { expandedPlans.insert(id) } else { expandedPlans.remove(id) }
         if on { folds[id]?.pin() }
     }
-    /// May ⌃⌥Y approve this card? Any non-plan card yes; a plan only when nothing is folded away from the reader.
+    /// May ⌃⌥Y approve this card? Any non-plan card yes. A truncated plan never (expanded or not: part of it is not readable
+    /// here, so the user must click "Approve (partly shown)"). Otherwise a plan only when nothing is folded away from the reader.
     public func hotkeyMayApprove(_ req: PendingRequest) -> Bool {
         guard req.isPlanApproval else { return true }
         guard let plan = req.plan else { return false }
+        if plan.truncated { return false }
         return !plan.canExpand || expandedPlans.contains(req.id)
     }
 
@@ -447,6 +449,7 @@ public final class NotchModel: ObservableObject {
             guard planCardEnabled, req.plan != nil else {
                 conn.respond(nil)
                 noteTerminal(req, now: req.createdAt)
+                record(req, channel: .terminal, decision: "none", now: req.createdAt)
                 refresh()
                 return
             }

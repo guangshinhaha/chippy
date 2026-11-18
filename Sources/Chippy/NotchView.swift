@@ -449,8 +449,9 @@ struct PlanCard: View {
                     let tail = plan.truncated ? "plan continues in the terminal" : nil
                     Text(ApprovalIntent.marker([more, tail].compactMap { $0 }.joined(separator: " · "))).font(.caption2).foregroundStyle(.white.opacity(0.45))
                 }
-                if plan.hiddenRemoved > 0 {
-                    Text("\(plan.hiddenRemoved) hidden character\(plan.hiddenRemoved == 1 ? "" : "s") removed").font(.caption2).foregroundStyle(.orange.opacity(0.85))
+                let removed = plan.hiddenRemoved(expanded: expanded)
+                if removed > 0 {
+                    Text("\(removed) hidden character\(removed == 1 ? "" : "s") removed").font(.caption2).foregroundStyle(.orange.opacity(0.85))
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -467,7 +468,9 @@ struct PlanCard: View {
             Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.4)).lineLimit(1).truncationMode(.head)
             HStack(spacing: 8) {
                 ChipButton(title: plan.truncated ? "Approve (partly shown)" : "Approve", kind: .primary) { decide(.allow) }
-                    .help("Approve (\(ShortcutKeys.prefix)Y)")
+                    .help(plan.truncated ? "Approve the part shown (click only: the plan continues in the terminal)"
+                          : plan.canExpand && !expanded ? "Show more to approve with \(ShortcutKeys.prefix)Y"
+                          : "Approve (\(ShortcutKeys.prefix)Y)")
                 ChipButton(title: "Keep planning", kind: .destructive) { decide(.deny) }
                     .help("Keep planning (\(ShortcutKeys.prefix)N)")
                 Spacer(minLength: 0)

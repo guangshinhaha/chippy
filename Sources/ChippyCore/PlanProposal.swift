@@ -21,8 +21,14 @@ public struct PlanProposal: Equatable {
     public let lines: [String]
     /// Lines that are numbered or bulleted items, counted over the whole scanned plan (not only the displayed ones).
     public let stepCount: Int
-    /// Hidden or bidi scalars removed from the rows actually displayed; the card says so rather than hiding the fact.
-    public let hiddenRemoved: Int
+    /// Hidden or bidi scalars removed, per displayed row (the first `rowChars` characters of each body row) and for the title.
+    let titleHidden: Int
+    let rowHidden: [Int]
+
+    /// Hidden or bidi scalars removed from what the card shows (title plus the rows of this view); the card says so rather than hiding the fact.
+    public func hiddenRemoved(expanded: Bool) -> Int {
+        titleHidden + rowHidden.prefix(expanded ? Self.expandedLines : Self.collapsedLines).reduce(0, +)
+    }
 
     /// A row longer than this is clipped (the card shows two lines per row), and counts as truncated.
     public static let rowChars = 140
@@ -42,10 +48,11 @@ public struct PlanProposal: Equatable {
             .map { ($0, ApprovalIntent.clean(String($0))) }.filter { !$0.text.isEmpty }
         guard !rows.isEmpty else { return nil }
         let steps = rows.filter { isStep($0.text) }.count
-        var hidden = 0
-        func countHidden(_ r: Substring) {
-            hidden += r.unicodeScalars.filter { ApprovalIntent.isHidden($0) && $0 != "\t" }.count
+        func countHidden(_ r: Substring) -> Int { // only the part of the row that can be displayed
+            r.prefix(rowChars).unicodeScalars.filter { ApprovalIntent.isHidden($0) && $0 != "\t" }.count
         }
+        var titleHidden = 0
+        var rowHidden: [Int] = []
         var title: String?
         var budget = maxChars
         if let first = rows.first, case let hashes = first.text.prefix(while: { $0 == "#" }),
@@ -54,7 +61,7 @@ public struct PlanProposal: Equatable {
             if !t.isEmpty {
                 let clipped = String(t.prefix(min(rowChars, budget)))
                 if clipped.count < t.count { truncated = true }
-                title = clipped; budget -= clipped.count; countHidden(first.raw); rows.removeFirst()
+                title = clipped; budget -= clipped.count; titleHidden = countHidden(first.raw); rows.removeFirst()
             }
         }
         var body: [String] = []
@@ -62,17 +69,18 @@ public struct PlanProposal: Equatable {
             if budget <= 0 || body.count >= expandedLines { truncated = true; break }
             let clipped = String(r.text.prefix(min(rowChars, budget)))
             if clipped.count < r.text.count { truncated = true }
-            body.append(clipped); budget -= clipped.count; countHidden(r.raw)
+            body.append(clipped); budget -= clipped.count; rowHidden.append(countHidden(r.raw))
         }
-        return PlanProposal(truncated: truncated, fileName: name, title: title, lines: body, stepCount: steps, hiddenRemoved: hidden)
+        return PlanProposal(truncated: truncated, fileName: name, title: title, lines: body, stepCount: steps, titleHidden: titleHidden, rowHidden: rowHidden)
     }
 
     static func isStep(_ line: String) -> Bool {
         if line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("+ ") { return true }
-        let digits = line.prefix(while: { $0 >= "0" && $0 <= "9" })
-        guard !digits.isEmpty, digits.count <= 3 else { return false }
-        let rest = line.dropFirst(digits.count)
-        return rest.hasPrefix(". ") || rest.hasPrefix(") ")
+        let scalars = line.unicodeScalars // ASCII digits only: Character ordering would let "5\u{301}" through
+        let digits = scalars.prefix(while: { (0x30...0x39).contains($0.value) }).count
+        guard digits > 0, digits <= 3 else { return false }
+        let rest = String(String.UnicodeScalarView(scalars.dropFirst(digits)))
+        return rest.unicodeScalars.starts(with: ". ".unicodeScalars) || rest.unicodeScalars.starts(with: ") ".unicodeScalars)
     }
 
     /// The lines the card shows, and how many it leaves out of the stored lines.
@@ -81,5 +89,6 @@ public struct PlanProposal: Equatable {
         return (Array(lines.prefix(n)), max(lines.count - n, 0))
     }
 
-    public var canExpand: Bool { lines.count > Self.collapsedLines || truncated }
+    /// Only when there is something more to show: a short plan that is merely truncated has no no-op "Show more".
+    public var canExpand: Bool { lines.count > Self.collapsedLines }
 }

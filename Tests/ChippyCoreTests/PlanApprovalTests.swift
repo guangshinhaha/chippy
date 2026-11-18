@@ -17,9 +17,9 @@ final class PlanProposalStructureTests: XCTestCase {
     func testHashOnlyFirstLineIsNotATitle() { XCTAssertNil(make("###\nbody")?.title) }
     func testHiddenCharsStrippedPerLineAndCounted() {
         let p = make("# T\u{202E}itle\nrm\u{200B} -rf\u{E0041}")!
-        XCTAssertEqual(p.title, "Title"); XCTAssertEqual(p.lines, ["rm -rf"]); XCTAssertEqual(p.hiddenRemoved, 3)
+        XCTAssertEqual(p.title, "Title"); XCTAssertEqual(p.lines, ["rm -rf"]); XCTAssertEqual(p.hiddenRemoved(expanded: true), 3)
     }
-    func testNewlinesAreNotCountedAsHidden() { XCTAssertEqual(make("a\r\nb\tc\u{2028}d")?.hiddenRemoved, 0) }
+    func testNewlinesAreNotCountedAsHidden() { XCTAssertEqual(make("a\r\nb\tc\u{2028}d")?.hiddenRemoved(expanded: true), 0) }
     func testTruncationAlwaysDisclosed() {
         XCTAssertFalse(make("1. a\n2. b")!.truncated)
         XCTAssertTrue(make("x " + String(repeating: "y", count: 400))!.truncated)                 // row over the 2-line limit
@@ -35,9 +35,9 @@ final class PlanProposalStructureTests: XCTestCase {
         XCTAssertEqual(make("## Plan\nx")?.title, "Plan")
     }
     func testHiddenCountsOnlyDisplayedRowsAndNotSeparators() {
-        XCTAssertEqual(make("a\u{0B}b\u{0C}c\u{85}d")?.hiddenRemoved, 0)
+        XCTAssertEqual(make("a\u{0B}b\u{0C}c\u{85}d")?.hiddenRemoved(expanded: true), 0)
         let late = (1...20).map { "row \($0)" }.joined(separator: "\n") + "\nz\u{200B}"
-        XCTAssertEqual(make(late)?.hiddenRemoved, 0)
+        XCTAssertEqual(make(late)?.hiddenRemoved(expanded: true), 0)
     }
     func testFoldedAndExpandedViews() {
         let p = make((1...30).map { "\($0). step" }.joined(separator: "\n"))!
@@ -46,6 +46,17 @@ final class PlanProposalStructureTests: XCTestCase {
         XCTAssertEqual(p.visible(expanded: true).shown.count, 16)
         XCTAssertTrue(p.canExpand)
         XCTAssertFalse(make("1. a\n2. b")!.canExpand)
+        let shortTruncated = make("x " + String(repeating: "y", count: 400))!
+        XCTAssertTrue(shortTruncated.truncated); XCTAssertFalse(shortTruncated.canExpand)
+    }
+    func testIsStepAsciiDigitsOnly() {
+        XCTAssertTrue(PlanProposal.isStep("5. foo")); XCTAssertFalse(PlanProposal.isStep("5\u{301}. foo"))
+    }
+    func testHiddenCountsOnlyShownPortion() {
+        let rows = (1...8).map { $0 == 7 ? "row\u{200B} 7" : "row \($0)" } + [String(repeating: "a", count: 150) + "\u{200B}"]
+        let p = make(rows.joined(separator: "\n"))!
+        XCTAssertEqual(p.hiddenRemoved(expanded: false), 0)  // row 7 is folded away
+        XCTAssertEqual(p.hiddenRemoved(expanded: true), 1)   // row 7 shown; the zero-width past 140 chars is not
     }
     func testLinesStayWithinBudgetAndHugePlanIsBounded() {
         let p = make(String(repeating: "word ", count: 100_000))!
@@ -142,7 +153,7 @@ final class PlanApprovalTests: XCTestCase {
         XCTAssertTrue(m.pending.isEmpty)
     }
     func testHotkeyNeedsExpandedFoldedPlan() {
-        let long = ["plan": "# T\n" + (1...30).map { "\($0). step" }.joined(separator: "\n")]
+        let long = ["plan": "# T\n" + (1...10).map { "\($0). step" }.joined(separator: "\n")]
         let m = h.model(); let (c, _) = h.pair()
         m.receiveApproval(req("ExitPlanMode", long), c)
         let r = m.pending[0]
@@ -157,6 +168,10 @@ final class PlanApprovalTests: XCTestCase {
         let (c3, _) = h.pair()
         m.receiveApproval(h.payload(), c3)
         XCTAssertTrue(m.hotkeyMayApprove(m.pending[2]))
+        let (c4, _) = h.pair()
+        m.receiveApproval(req("ExitPlanMode", ["plan": (1...30).map { "\($0). step" }.joined(separator: "\n")]), c4) // truncated: never by key
+        let t = m.pending[3]; m.setPlanExpanded(t.id, true)
+        XCTAssertFalse(m.hotkeyMayApprove(t))
     }
     func testAlwaysIsNoOpOnPlanCard() {
         let m = h.model(); let (c, f) = h.pair()
