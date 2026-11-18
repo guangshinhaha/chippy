@@ -301,7 +301,7 @@ final class NeedsMeFoldTests: XCTestCase {
     func testSoundStillFiresOnceOnArrivalAndNotOnFold() {
         let m = model()
         var n = 0
-        m.onSound = { kind, _, _ in if kind == .needsYou { n += 1 } }
+        m.onSound = { kind, _, _, _ in if kind == .needsYou { n += 1 } }
         ask(m); advance(m, 16); advance(m, 5)
         XCTAssertEqual(n, 1)
     }

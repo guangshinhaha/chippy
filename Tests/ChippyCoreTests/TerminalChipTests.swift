@@ -122,7 +122,7 @@ final class TerminalChipTests: XCTestCase {
     func testSilentAndSingleSelectStillGetsCard() {
         let m = model()
         var sounds = 0
-        m.onSound = { _, _, _ in sounds += 1 }
+        m.onSound = { _, _, _, _ in sounds += 1 }
         m.receiveApproval(perm("AskUserQuestion", multi), Connection.detached())
         XCTAssertEqual(sounds, 0)
         let single: [String: Any] = ["questions": [["question": "Q?", "header": "h", "multiSelect": false, "options": [["label": "A", "description": "a"], ["label": "B", "description": "b"]]]]]
