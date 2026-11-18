@@ -212,17 +212,18 @@ struct ApprovalCard: View {
                 Text("“\(p)”").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
             }
             if let intent = req.intent {
+                // Agent-written text is unverified: small, secondary, captioned. The raw command below is the dominant element.
                 VStack(alignment: .leading, spacing: 1) {
-                    if intent.fromAgent { Text("Claude says").font(.caption2).foregroundStyle(.white.opacity(0.45)) }
-                    Text(intent.text).font(.callout.weight(.semibold)).foregroundStyle(.white).lineLimit(2)
+                    if intent.fromAgent { Text("Claude says (unverified):").font(.caption2).foregroundStyle(.white.opacity(0.45)) }
+                    Text(intent.text).font(.caption).foregroundStyle(.white.opacity(intent.fromAgent ? 0.65 : 0.85)).lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }.frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 Text("\(req.toolName) wants to run").font(.caption2).foregroundStyle(.white.opacity(0.6))
             }
             Text(req.detail.isEmpty ? req.toolName : ApprovalIntent.preview(req.detail))
-                .font(.system(.caption, design: .monospaced)).foregroundStyle(.white)
-                .lineLimit(6).truncationMode(.middle) // preview() already keeps head and tail
+                .font(.system(.callout, design: .monospaced).weight(.medium)).foregroundStyle(.white)
+                .fixedSize(horizontal: false, vertical: true) // no line limit: preview() bounds rows and keeps head and tail
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.4)).lineLimit(1).truncationMode(.head)
             TourCaption(sessionId: req.sessionId, step: .approval)

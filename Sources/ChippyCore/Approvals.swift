@@ -70,7 +70,7 @@ public struct PendingRequest: Identifiable, Equatable {
         leadIn = p.toolName == "AskUserQuestion" ? p.leadIn : nil
         branch = p.branch
         questions = p.toolName == "AskUserQuestion" ? AskQuestion.parse(p.toolInput) : nil
-        detail = ApprovalIntent.headTail(Self.rawDetail(p.toolInput))
+        detail = ApprovalIntent.headTail(ApprovalIntent.reveal(Self.rawDetail(p.toolInput)))
         let canon = (try? JSONSerialization.data(withJSONObject: p.toolInput, options: [.sortedKeys])) ?? Data()
         inputDigest = AlwaysStore.sha256(canon)
     }

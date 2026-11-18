@@ -89,18 +89,32 @@ enum Gallery {
         try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path) tall=\(model.tall)")
     }
 
+    /// A model with one prompt submitted and one pending approval, from sample text only. Throwaway log path per call.
+    @MainActor
+    private static func demoModel(prompt: String, tool: String, input: [String: Any], extra: [String: Any] = [:]) -> NotchModel {
+        let log = FileManager.default.temporaryDirectory.appendingPathComponent("chippy-gallery-\(UUID().uuidString).jsonl")
+        let model = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: log))
+        let base: [String: Any] = ["session_id": "demo-a", "cwd": "/demo/api-server", "chippy_branch": "fix/login-timeout"]
+        func payload(_ fields: [String: Any]) -> HookPayload? {
+            (try? JSONSerialization.data(withJSONObject: base.merging(fields) { $1 })).flatMap { HookPayload(json: $0) }
+        }
+        guard let ask = payload(["hook_event_name": "UserPromptSubmit", "prompt": prompt]),
+              let req = payload(["hook_event_name": "PermissionRequest", "tool_name": tool, "tool_input": input].merging(extra) { $1 }) else {
+            FileHandle.standardError.write(Data("bad demo payload\n".utf8)); exit(1)
+        }
+        model.apply(ask)
+        model.receiveApproval(req, Connection.detached())
+        return model
+    }
+
     /// `Chippy --render-question out.png`: a question card with prompt, lead-in and a long option description (sample text only).
     @MainActor
     static func renderQuestion(to path: String) {
-        let model = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("gal.jsonl")))
-        model.apply(HookPayload(json: Data(#"{"session_id":"demo-a","hook_event_name":"UserPromptSubmit","cwd":"/demo/api-server","chippy_branch":"fix/login-timeout","prompt":"Set up the login page"}"#.utf8))!)
-        let json: [String: Any] = ["session_id": "demo-a", "hook_event_name": "PermissionRequest", "cwd": "/demo/api-server", "chippy_branch": "fix/login-timeout",
-            "tool_name": "AskUserQuestion", "chippy_lead_in": "Before I wire up the login page I need to pick how people sign in. The school has an identity provider, but it is not set up for this app yet, and a plain password form would mean storing credentials.",
-            "tool_input": ["questions": [["question": "Which auth method should the login page use?", "header": "Auth", "multiSelect": false, "options": [
+        let model = demoModel(prompt: "Set up the login page", tool: "AskUserQuestion", input: ["questions": [["question": "Which auth method should the login page use?", "header": "Auth", "multiSelect": false, "options": [
                 ["label": "Email + password", "description": "Classic form, simplest to ship. We would store salted hashes and need a reset flow, rate limiting and a lockout policy before launch."],
                 ["label": "Magic link", "description": "No passwords to store"],
-                ["label": "SSO", "description": "Use the school's identity provider"]]]]]]
-        model.receiveApproval(HookPayload(json: try! JSONSerialization.data(withJSONObject: json))!, Connection.detached())
+                ["label": "SSO", "description": "Use the school's identity provider"]]]]],
+            extra: ["chippy_lead_in": "Before I wire up the login page I need to pick how people sign in. The school has an identity provider, but it is not set up for this app yet, and a plain password form would mean storing credentials."])
         let m = NotchMetrics(width: 185, height: 32)
         let sz = m.size(for: .expanded, tall: model.tall)
         let r = ImageRenderer(content: NotchView(model: model, box: box(m)).frame(width: sz.width, height: 560).background(Color(white: 0.25)))
@@ -113,10 +127,7 @@ enum Gallery {
     @MainActor
     static func renderApproval(to path: String) {
         func card(_ tool: String, _ input: [String: Any], height: CGFloat? = nil, prompt: String = "Fix the login timeout bug") -> some View {
-            let model = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("gal.jsonl")))
-            model.apply(HookPayload(json: Data(#"{"session_id":"demo-a","hook_event_name":"UserPromptSubmit","cwd":"/demo/api-server","chippy_branch":"fix/login-timeout","prompt":"\#(prompt)"}"#.utf8))!)
-            let json: [String: Any] = ["session_id": "demo-a", "hook_event_name": "PermissionRequest", "cwd": "/demo/api-server", "chippy_branch": "fix/login-timeout", "tool_name": tool, "tool_input": input]
-            model.receiveApproval(HookPayload(json: try! JSONSerialization.data(withJSONObject: json))!, Connection.detached())
+            let model = demoModel(prompt: prompt, tool: tool, input: input)
             let m = NotchMetrics(width: 185, height: 32)
             let b = box(m)
             if let height { b.contentHeight = height } // the app hugs measured content; give the worst case its cap so nothing is squeezed
