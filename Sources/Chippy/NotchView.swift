@@ -211,11 +211,18 @@ struct ApprovalCard: View {
             if let p = req.lastPrompt, !p.isEmpty {
                 Text("“\(p)”").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
             }
-            Text(req.intent).font(.callout.weight(.semibold)).foregroundStyle(.white).lineLimit(2)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Text(req.detail.isEmpty ? req.toolName : req.detail)
+            if let intent = req.intent {
+                VStack(alignment: .leading, spacing: 1) {
+                    if intent.fromAgent { Text("Claude says").font(.caption2).foregroundStyle(.white.opacity(0.45)) }
+                    Text(intent.text).font(.callout.weight(.semibold)).foregroundStyle(.white).lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text("\(req.toolName) wants to run").font(.caption2).foregroundStyle(.white.opacity(0.6))
+            }
+            Text(req.detail.isEmpty ? req.toolName : ApprovalIntent.preview(req.detail))
                 .font(.system(.caption, design: .monospaced)).foregroundStyle(.white)
-                .lineLimit(4).truncationMode(.middle)
+                .lineLimit(6).truncationMode(.middle) // preview() already keeps head and tail
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.4)).lineLimit(1).truncationMode(.head)
             TourCaption(sessionId: req.sessionId, step: .approval)

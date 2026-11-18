@@ -112,20 +112,25 @@ enum Gallery {
     /// `Chippy --render-approval out.png`: approval cards for a short Bash command with a description, an Edit, and a very long command (sample text only).
     @MainActor
     static func renderApproval(to path: String) {
-        func card(_ tool: String, _ input: [String: Any]) -> some View {
+        func card(_ tool: String, _ input: [String: Any], height: CGFloat? = nil, prompt: String = "Fix the login timeout bug") -> some View {
             let model = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("gal.jsonl")))
-            model.apply(HookPayload(json: Data(#"{"session_id":"demo-a","hook_event_name":"UserPromptSubmit","cwd":"/demo/api-server","chippy_branch":"fix/login-timeout","prompt":"Fix the login timeout bug"}"#.utf8))!)
+            model.apply(HookPayload(json: Data(#"{"session_id":"demo-a","hook_event_name":"UserPromptSubmit","cwd":"/demo/api-server","chippy_branch":"fix/login-timeout","prompt":"\#(prompt)"}"#.utf8))!)
             let json: [String: Any] = ["session_id": "demo-a", "hook_event_name": "PermissionRequest", "cwd": "/demo/api-server", "chippy_branch": "fix/login-timeout", "tool_name": tool, "tool_input": input]
             model.receiveApproval(HookPayload(json: try! JSONSerialization.data(withJSONObject: json))!, Connection.detached())
             let m = NotchMetrics(width: 185, height: 32)
-            let sz = m.size(for: .expanded, tall: model.tall)
-            return NotchView(model: model, box: box(m)).frame(width: sz.width, height: sz.height)
+            let b = box(m)
+            if let height { b.contentHeight = height } // the app hugs measured content; give the worst case its cap so nothing is squeezed
+            let sz = m.size(for: .expanded, tall: model.tall, contentHeight: b.contentHeight)
+            return NotchView(model: model, box: b).frame(width: sz.width, height: sz.height)
         }
-        let long = (1...40).map { "echo step-\($0) && sleep 1" }.joined(separator: " && ")
+        let long = (1...40).map { "echo step-\($0) && sleep 1" }.joined(separator: " && ") + " | sh"
+        let desc100 = "Run the unit tests for the login module and then report which ones failed so we can decide what to fix"
+        let longPrompt = "Fix the login timeout bug and also check that the refresh token lifetime is still correct after the change"
         let all = HStack(alignment: .top, spacing: 12) {
             card("Bash", ["command": "npm install", "description": "Install project dependencies"])
             card("Edit", ["file_path": "/demo/api-server/Sources/Auth.swift", "old_string": "a", "new_string": "b"])
-            card("Bash", ["command": long, "description": "Run the whole smoke sequence"])
+            // worst case at the tallest the real card ever gets (the app hugs content up to this cap)
+            card("Bash", ["command": long, "description": desc100], height: NotchMetrics.maxExpandedHeight, prompt: longPrompt)
         }.padding(12).background(Color(white: 0.25))
         let r = ImageRenderer(content: all)
         r.scale = 2
