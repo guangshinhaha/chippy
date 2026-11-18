@@ -214,8 +214,6 @@ struct NotchView: View {
         return d.glance(showReply: model.showReplyInGlance)
     }
 
-    private var headerTitle: String { model.headerTitle }
-
     static let terminalCardCap = 2
     /// Session rows in the peek, so the card's measured height stays within its cap.
     static let sessionRowCap = 4
@@ -246,7 +244,7 @@ struct NotchView: View {
                     let off = (m.width + NotchMetrics.glanceIcon) / 2 + NotchMetrics.badgeGap // past the centred icon
                     HStack(spacing: 0) {
                         Color.clear.frame(width: off)
-                        CountBadge(text: badge, maxWidth: m.width - off - 8, onTap: { model.openList() },
+                        CountBadge(text: badge, maxWidth: m.width - off - 8, onTap: { model.openBadge() },
                                    needsYou: model.badgeNeedsYou, deadline: model.foldedDeadline) // stays inside the tab
                         Spacer(minLength: 0)
                     }.frame(height: NotchMetrics.tabHeight)
@@ -257,7 +255,7 @@ struct NotchView: View {
                 HStack(spacing: 0) {
                     Color.clear.frame(width: wing)
                     Color.clear.frame(width: m.width)
-                    CountBadge(text: badge, maxWidth: wing - 8, onTap: { model.openList() },
+                    CountBadge(text: badge, maxWidth: wing - 8, onTap: { model.openBadge() },
                                    needsYou: model.badgeNeedsYou, deadline: model.foldedDeadline).frame(width: wing)
                 }
                 .frame(height: m.band, alignment: .center)
@@ -308,7 +306,7 @@ struct NotchView: View {
                 HStack(spacing: 10) {
                     Color.clear.frame(width: 28 * 1.4, height: 28 * 1.4) // where NotchView.icon sits
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(headerTitle).font(.headline.monospacedDigit()).foregroundStyle(.white)
+                        Text(model.headerTitle).font(.headline.monospacedDigit()).foregroundStyle(.white)
                         if !model.listOpen, let r = model.shownPending, let t = model.knownTimeout(for: r) { TimeoutNote(createdAt: r.createdAt, timeout: t) }
                     }
                     Spacer(minLength: 0)
@@ -621,7 +619,7 @@ struct DoneCard: View {
     let dismiss: () -> Void
 
     private var replyText: AttributedString {
-        let r = item.reply ?? ""
+        let r = (full && item.decision != nil) ? item.replyWithoutDecision : (item.reply ?? "")
         return (try? AttributedString(markdown: r, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(r)
     }
 
@@ -637,7 +635,11 @@ struct DoneCard: View {
             if full, let p = item.prompt, !p.isEmpty {
                 Text("You asked: \(p)").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
             }
-            if let r = item.reply, !r.isEmpty {
+            if full, let d = item.decision {
+                Text("Needs your call: \(d)").font(.caption.bold()).foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+            }
+            if let r = item.reply, !r.isEmpty, !(full && item.decision != nil && item.replyWithoutDecision.isEmpty) {
                 if full {
                     // Short reply: just the text (the card hugs it). Long reply: scrolls inside a capped area.
                     // The scroll fallback has a FIXED height: a flexible one fills whatever the panel offers,

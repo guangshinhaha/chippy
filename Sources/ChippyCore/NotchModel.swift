@@ -95,8 +95,12 @@ public final class NotchModel: ObservableObject {
     }
 
     private func refresh() {
-        let waiting = WaitingList.items(pending: pending, done: doneItems, terminal: terminalItems) // computed once per refresh
-        if waiting != waitingItems { waitingItems = waiting }
+        let waiting = WaitingList.items(pending: pending, done: doneItems, terminal: terminalItems, timeout: timeout(for:)) // computed once per refresh
+        if waiting != waitingItems {
+            waitingItems = waiting
+            let byId = Dictionary(pending.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+            rankedPending = waiting.compactMap { if case .pending(let id) = $0.target { return byId[id] } else { return nil } } // stored: not rebuilt per access
+        }
         guard !debugLock else { resting = false; return }
         if waiting.isEmpty { listOpen = false }
         if listOpen { let sel = WaitingList.reconcile(listSelection, in: waiting); if sel != listSelection { listSelection = sel } }
@@ -113,6 +117,11 @@ public final class NotchModel: ObservableObject {
         }
         if pending.isEmpty { if folded { folded = false } }
         else if !folded, foldDue(now: clock()) { folded = true }
+        // The visible card is sticky: rank only picks one when nothing is on screen (first show, after an answer, after a fold).
+        if folded || pending.isEmpty { shownId = nil }
+        else if case .done? = focus { shownId = nil } // leaving for a done detail: back to the queue head afterwards
+        else if case .pending(let id)? = focus { shownId = id } // a jump makes that card the remembered one, so answering it falls back to rank-first
+        else if shownId.map({ id in !pendingIds.contains(id) }) ?? true { shownId = rankedPending.first?.id }
         if doneItems.isEmpty && terminalItems.isEmpty { doneOpen = false }
         if !pending.isEmpty { restOpen = false } // an approval or question takes over; a passive chip just joins the open panel
         if !pending.isEmpty || doneOpen || listOpen || restOpen { peek.cancel() } // the user (or an approval) took over: no peek to resume on close
@@ -141,8 +150,17 @@ public final class NotchModel: ObservableObject {
         guard !listOpen, !folded else { return nil } // a folded card is not on screen, so no key may answer it
         if case .pending(let id)? = focus, let r = pending.first(where: { $0.id == id }) { return r }
         if case .done? = focus { return nil }
-        return pending.first
+        if let id = shownId, let r = pending.first(where: { $0.id == id }) { return r } // sticky: a new arrival never swaps it
+        return rankedPending.first
     }
+
+    /// The card remembered as on screen while it is still pending (nil when nothing is shown). Only `refresh` sets it.
+    private var shownId: String?
+
+    /// Pending requests in rank order (approvals, then questions, each soonest-timeout first; see `WaitingList.items`).
+    /// Computed once per `refresh`. Rank decides which card appears when none is shown, the list order, the badge tap
+    /// and the "n of N" index; it does not swap a card already on screen, and it does not pick the fold timer's owner.
+    public private(set) var rankedPending: [PendingRequest] = []
 
     /// The finished thread the user jumped to from the list (nil otherwise).
     public var shownDone: DoneItem? {
@@ -156,8 +174,8 @@ public final class NotchModel: ObservableObject {
     public var headerTitle: String {
         if listOpen { return "Waiting · \(waitingItems.count)" }
         if let r = shownPending {
-            let n = pending.count
-            let at = pending.firstIndex { $0.id == r.id } ?? 0
+            let n = rankedPending.count
+            let at = rankedPending.firstIndex { $0.id == r.id } ?? 0
             return n > 1 ? "Needs you · \(at + 1) of \(n)" : "Needs you"
         }
         if shownDone != nil { return pending.isEmpty ? "Done" : "Finished" }
@@ -174,6 +192,13 @@ public final class NotchModel: ObservableObject {
         listOpen = true
         listSelection = WaitingList.reconcile(listSelection, in: waitingItems)
         refresh()
+    }
+
+    /// Badge tap: open the top-ranked "needs you" item by hand (#93). It pins only that card, like a list jump (unfold pins all).
+    /// With only finished chips, open the list.
+    public func openBadge() {
+        if badgeNeedsYou, let top = waitingItems.first(where: { if case .pending = $0.target { return true } else { return false } }) { activate(top.target) }
+        else { openList() }
     }
 
     public func closeList() {
@@ -226,6 +251,7 @@ public final class NotchModel: ObservableObject {
     public var badgeNeedsYou: Bool { folded && !pending.isEmpty }
 
     /// When the soonest folded request's hook gives up and the terminal takes over (the badge ring drains to it).
+    /// Only requests with a known wait count; one without does not hide the others' deadline.
     public var foldedDeadline: (start: Date, end: Date)? {
         guard folded else { return nil }
         return pending.compactMap { r in knownTimeout(for: r).map { (r.createdAt, r.createdAt.addingTimeInterval($0)) } }
@@ -239,9 +265,10 @@ public final class NotchModel: ObservableObject {
         quietFolded.subtract(ids) // only the ones opened: others stay marked until quiet ends
     }
 
-    /// The oldest request decides: it is due and the user has pinned none. A pinned card (opened by hand) is never folded
-    /// away; while one exists the panel stays on it, the older due requests wait behind it in the list, and the moment it
-    /// is answered the panel folds (the oldest is due). Never while the list is open.
+    /// The oldest request decides: it is due and the user has pinned none, so a later request never restarts an earlier
+    /// one's timer. A pinned card (opened by hand) is never folded away; while one exists the panel stays on it, the older
+    /// due requests wait behind it in the list, and the moment it is answered the panel folds (the oldest is due).
+    /// Never while the list is open.
     private func foldDue(now: TimeInterval) -> Bool {
         guard !listOpen, let oldest = pending.first, !folds.values.contains(where: \.isPinned) else { return false }
         return folds[oldest.id]?.isDue(now: now) ?? false
@@ -570,12 +597,25 @@ public struct DoneItem: Identifiable, Equatable {
     public let added: Int
     public let removed: Int
     public let reply: String?
+    /// Already cleaned of system markup where it is stored (SessionStore).
     public let prompt: String?
     public let at: Date
     public var host: HostInfo? = nil
+    /// Claude ended on a question: the thread is waiting for you, not just done. Computed once, at build.
+    public let asksYou: Bool
+    /// The closing question as its own line (#98a); nil when there is none. Computed once, at build.
+    public let decision: String?
+    /// The reply with the decision sentence trimmed off, for when the decision is shown on its own line.
+    public let replyWithoutDecision: String
 
-    /// Claude ended on a question: the thread is waiting for you, not just done.
-    public var asksYou: Bool { reply?.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("?") ?? false }
+    public init(sessionId: String, project: String, branch: String?, files: Int, added: Int, removed: Int,
+                reply: String?, prompt: String?, at: Date, host: HostInfo? = nil) {
+        self.sessionId = sessionId; self.project = project; self.branch = branch
+        self.files = files; self.added = added; self.removed = removed
+        self.reply = reply; self.prompt = prompt; self.at = at; self.host = host
+        let a = SummaryCleaner.analyze(reply)
+        asksYou = a.asksYou; decision = a.decision; replyWithoutDecision = a.rest
+    }
 
     /// First non-empty line of the reply, for the one-line glance.
     public var headline: String {

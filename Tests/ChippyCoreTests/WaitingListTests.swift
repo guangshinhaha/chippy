@@ -150,7 +150,7 @@ final class WaitingListTests: XCTestCase {
         question(m, "q"); approval(m, "a")
         let q = m.pending[0]
         m.savePartial(q.id, step: 1, answers: ["Q1?": ["x"]])
-        m.openList(); m.activate(m.waitingItems[1].target) // go look at the approval
+        m.openList(); m.activate(m.waitingItems[0].target) // go look at the approval
         XCTAssertEqual(m.shownPending?.sessionId, "a")
         m.openList(); m.activate(.pending(q.id))           // and back
         XCTAssertEqual(m.partials[q.id], PartialAnswers(step: 1, answers: ["Q1?": ["x"]]))
@@ -300,5 +300,44 @@ final class WaitingListTests: XCTestCase {
         m.savePartial(id, step: 1, answers: ["Q1?": ["x"]])
         XCTAssertEqual(publishes, 1)
         c.cancel()
+    }
+
+    // MARK: ranking (#93)
+
+    private func req(_ id: String, q: Bool = false, at: TimeInterval, wait: Double? = nil) -> PendingRequest {
+        var o: [String: Any] = ["session_id": id, "cwd": "/w/\(id)", "hook_event_name": "PermissionRequest",
+                                "tool_name": q ? "AskUserQuestion" : "Bash", "tool_input": ["command": "x"]]
+        if q { o["tool_input"] = ["questions": [["question": "Q?", "header": "A", "multiSelect": false, "options": [["label": "x", "description": ""]]]]] }
+        if let wait { o["chippy_wait"] = wait }
+        return PendingRequest(payload: HookPayload(json: try! JSONSerialization.data(withJSONObject: o))!, id: id, now: Date(timeIntervalSince1970: at))
+    }
+    private func order(_ p: [PendingRequest], terminal: [TerminalItem] = [], timeout: @escaping (PendingRequest) -> TimeInterval = { _ in 0 }) -> [String] {
+        WaitingList.items(pending: p, done: [], terminal: terminal, timeout: timeout).map { $0.repo }
+    }
+
+    func testApprovalsRankBeforeQuestionsEvenWhenNewer() {
+        XCTAssertEqual(order([req("q", q: true, at: 0), req("a", at: 50)]), ["a", "q"])
+    }
+    func testSameKindOlderFirstWithoutTimeouts() {
+        XCTAssertEqual(order([req("new", at: 20), req("old", at: 10)]), ["old", "new"])
+    }
+    func testCloserToTimeoutWinsOverOlder() {
+        // old: 10 + 60 = 70; new: 20 + 10 = 30
+        let t: (PendingRequest) -> TimeInterval = { $0.waitSeconds ?? 0 }
+        XCTAssertEqual(order([req("old", at: 10, wait: 60), req("new", at: 20, wait: 10)], timeout: t), ["new", "old"])
+    }
+    func testTiesAreStable() {
+        XCTAssertEqual(order([req("b", at: 5), req("a", at: 5), req("c", at: 5)]), ["b", "a", "c"])
+    }
+    func testTerminalRowsOldestFirstAfterPending() {
+        let t = [TerminalItem(sessionId: "t2", project: "later", at: Date(timeIntervalSince1970: 9), tool: "Bash"),
+                 TerminalItem(sessionId: "t1", project: "earlier", at: Date(timeIntervalSince1970: 1), tool: "Bash")]
+        XCTAssertEqual(order([req("q", q: true, at: 100)], terminal: t), ["q", "earlier", "later"])
+    }
+    func testBadgeWithOnlyFinishedChipsOpensList() {
+        let m = model()
+        stop(m, "d")
+        m.openBadge()
+        XCTAssertTrue(m.listOpen)
     }
 }

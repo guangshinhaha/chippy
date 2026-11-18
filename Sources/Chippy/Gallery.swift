@@ -134,7 +134,10 @@ enum Gallery {
         let model = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("gal.jsonl")))
         let reply = "Fixed the login timeout: the session cookie was expiring at 5 minutes instead of 30.\n\nWhat changed:\n- **auth.ts**: session TTL 5 min → 30 min\n- **auth.test.ts**: new expiry test\n- **config.ts**: TTL read from SESSION_TTL_MINUTES\n\nNot touched: refresh-token lifetime (7 days), remember-me cookie, admin console session.\n\nRisk: users already logged in keep the old 5-minute expiry until they next sign in.\n\nShould I also bump the refresh-token lifetime, or leave it at 7 days?"
         func p(_ ev: String, _ extra: String = "") -> HookPayload { HookPayload(json: Data(#"{"session_id":"a","hook_event_name":"\#(ev)","cwd":"/demo/api-server","chippy_branch":"fix/login-timeout"\#(extra)}"#.utf8))! }
-        model.apply(p("UserPromptSubmit", #","prompt":"Fix the login timeout bug""#))
+        let noisy = CommandLine.arguments.contains("--noisy-prompt") // sample text only
+        let prompt = noisy ? "<task-notification><task-id>b7x2</task-id><summary>Background command finished</summary></task-notification> Fix the login timeout bug" : "Fix the login timeout bug"
+        let promptJSON = (try? JSONEncoder().encode(prompt)).flatMap { String(data: $0, encoding: .utf8) } ?? "\"\"" // escaped
+        model.apply(p("UserPromptSubmit", ",\"prompt\":\(promptJSON)"))
         model.apply(p("Stop", ",\"last_assistant_message\":\"\(reply.replacingOccurrences(of: "\n", with: "\\n"))\""))
         model.toggleOpen()
         let m = NotchMetrics(width: 185, height: 32)
