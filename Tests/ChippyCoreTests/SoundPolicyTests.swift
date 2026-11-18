@@ -7,7 +7,7 @@ final class SoundPolicyTests: XCTestCase {
 
     private func play(kind: SoundKind = .done, enabled: Bool = true, front: Bool = false, locked: Bool = false,
                       last: Date? = nil, now: Date? = nil) -> Bool {
-        SoundPolicy.shouldPlay(kind: kind, enabled: enabled, hostFrontmost: front, locked: locked,
+        SoundPolicy.shouldPlay(kind: kind, enabled: enabled, hostFrontmost: front, quiet: locked,
                                lastPlayed: last, now: now ?? t0)
     }
 
@@ -69,7 +69,7 @@ final class SoundPolicyTests: XCTestCase {
 
     func testModelEmitsDoneOnStopOnly() {
         let m = model(); var got: [(SoundKind, String)] = []
-        m.onSound = { k, s, _ in got.append((k, s)) }
+        m.onSound = { k, s, _, _ in got.append((k, s)) }
         m.apply(ev("UserPromptSubmit")); m.apply(ev("PreToolUse")); m.apply(ev("PostToolUse"))
         XCTAssertTrue(got.isEmpty)
         m.apply(ev("Stop"))
@@ -79,7 +79,7 @@ final class SoundPolicyTests: XCTestCase {
 
     func testModelEmitsNeedsYouOnApproval() {
         let m = model(); var got: [SoundKind] = []
-        m.onSound = { k, _, _ in got.append(k) }
+        m.onSound = { k, _, _, _ in got.append(k) }
         var fds: [Int32] = [0, 0]
         XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, &fds), 0)
         let p = HookPayload(json: try! JSONSerialization.data(withJSONObject: [
@@ -112,7 +112,7 @@ final class SoundPolicyTests: XCTestCase {
 
     func testRepeatStopWithoutActivityIsSilentButNewPromptSounds() {
         let m = model(); var n = 0
-        m.onSound = { _, _, _ in n += 1 }
+        m.onSound = { _, _, _, _ in n += 1 }
         m.apply(ev("Stop")); m.apply(ev("Stop"))
         XCTAssertEqual(n, 1)
         m.apply(ev("UserPromptSubmit")); m.apply(ev("Stop"))
@@ -121,7 +121,7 @@ final class SoundPolicyTests: XCTestCase {
 
     func testAgentWorktreeStopIsSilent() {
         let m = model(); var n = 0
-        m.onSound = { _, _, _ in n += 1 }
+        m.onSound = { _, _, _, _ in n += 1 }
         let p = HookPayload(json: try! JSONSerialization.data(withJSONObject: [
             "session_id": "w", "cwd": "/r/.claude/worktrees/agent-x", "hook_event_name": "Stop"]))!
         XCTAssertTrue(p.isAgentWorktree)
@@ -147,7 +147,7 @@ final class SoundPolicyTests: XCTestCase {
 
     func testAskUserQuestionSoundsNeedsYou() {
         let m = model(); var got: [SoundKind] = []
-        m.onSound = { k, _, _ in got.append(k) }
+        m.onSound = { k, _, _, _ in got.append(k) }
         approval(m, tool: "AskUserQuestion", input: ["questions": [["question": "Which?", "header": "H", "multiSelect": false,
                  "options": [["label": "A", "description": "a"], ["label": "B", "description": "b"]]]]])
         XCTAssertEqual(m.pending.count, 1)
@@ -162,7 +162,7 @@ final class SoundPolicyTests: XCTestCase {
         store.insert(PendingRequest(payload: p))
         let m = NotchModel(always: store, log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("ev-\(UUID()).jsonl")))
         var n = 0
-        m.onSound = { _, _, _ in n += 1 }
+        m.onSound = { _, _, _, _ in n += 1 }
         approval(m, tool: "Bash", input: ["command": "ls"])
         XCTAssertEqual(n, 0)
         XCTAssertTrue(m.pending.isEmpty)

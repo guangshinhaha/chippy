@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// The one menu: the status item shows it, and so do the notch's right-click and gear (never rebuilt).
     private var mainMenu: NSMenu?
     private let todayItem = NSMenuItem(), weekItem = NSMenuItem()
+    private let focusHintItem = NSMenuItem(title: "Focus detection needs Full Disk Access (open Settings)", action: #selector(openFullDiskAccess), keyEquivalent: "")
     private var server: SocketServer?
     private var sweeper: Timer?
     private var outsideClick: Any?
@@ -28,7 +29,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         panel = NotchPanel(model: model)
         panel?.onMenu = { [weak self] at, centered in self?.popMenu(at: at, centered: centered) }
-        model.onSound = { [weak self] kind, id, host in self?.sounds.handle(kind, sessionId: id, host: host) }
+        model.onSound = { [weak self] kind, id, host, quiet in self?.sounds.handle(kind, sessionId: id, host: host, quiet: quiet) }
+        model.silence = { [weak self] in self?.sounds.silenceState() ?? SilenceState() }
         model.onSessionEnd = { [weak self] id in self?.sounds.sessionEnded(id) }
         buildMenu()
         startServer()
@@ -124,6 +126,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         for i in [todayItem, weekItem] { i.isEnabled = false; menu.addItem(i) }
+        focusHintItem.target = self; focusHintItem.isHidden = true; menu.addItem(focusHintItem)
         menu.addItem(.separator())
         let peek = NSMenuItem(title: "Show sessions", action: #selector(peekSessions), keyEquivalent: "")
         peek.target = self
@@ -134,6 +137,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let soundItem = NSMenuItem(title: "Play sounds", action: #selector(toggleSounds(_:)), keyEquivalent: "")
         soundItem.target = self; soundItem.state = sounds.enabled ? .on : .off
         menu.addItem(soundItem)
+        let focusItem = NSMenuItem(title: "Quiet during Focus (best effort, needs Full Disk Access)", action: #selector(toggleFocusQuiet(_:)), keyEquivalent: "")
+        focusItem.target = self; focusItem.state = sounds.focusQuietEnabled ? .on : .off
+        menu.addItem(focusItem)
         let tourItem = NSMenuItem(title: "Show me how it works", action: #selector(runTour), keyEquivalent: "")
         tourItem.target = self
         menu.addItem(tourItem)
@@ -268,6 +274,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) {
+        focusHintItem.isHidden = !sounds.focusUnreadable // a hint in the menu only, never a nag
         let stale = hookStaleness()
         repairItem.isHidden = stale.isEmpty
         if !stale.isEmpty { repairItem.title = repairMenuTitle(stale) }
@@ -318,6 +325,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleSounds(_ sender: NSMenuItem) {
         sounds.enabled.toggle()
         sender.state = sounds.enabled ? .on : .off
+    }
+
+    @objc private func openFullDiskAccess() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") { NSWorkspace.shared.open(url) }
+    }
+
+    @objc private func toggleFocusQuiet(_ sender: NSMenuItem) {
+        sounds.focusQuietEnabled.toggle()
+        sender.state = sounds.focusQuietEnabled ? .on : .off
     }
 
     @objc private func peekSessions() { model.toggleOpen() }
