@@ -11,16 +11,23 @@ final class TourRunner {
     private let model: NotchModel
     private var running = false
     private var current: Process?
+    /// Called once when the first-launch tour ends (or fails to start), so other launch prompts can wait for it.
+    var onFinish: (() -> Void)?
 
     init(model: NotchModel) { self.model = model }
 
     static var settingsURL: URL { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/settings.json") }
 
+    /// True when the first-launch tour is about to run.
+    var willRunOnFirstLaunch: Bool { !UserDefaults.standard.bool(forKey: Tour.defaultsKey) }
+
+    private func finish() { let f = onFinish; onFinish = nil; f?() }
+
     func runOnFirstLaunch() {
-        guard !UserDefaults.standard.bool(forKey: Tour.defaultsKey) else { return }
+        guard willRunOnFirstLaunch else { return }
         // Give the socket server a moment to come up. Mark the tour seen only once a step really launched.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            if self?.start() == true { UserDefaults.standard.set(true, forKey: Tour.defaultsKey) }
+            if self?.start() == true { UserDefaults.standard.set(true, forKey: Tour.defaultsKey) } else { self?.finish() }
         }
     }
 
@@ -36,7 +43,7 @@ final class TourRunner {
     }
 
     private func run(_ rest: ArraySlice<Tour.Step>, exe: URL) {
-        guard let step = rest.first else { running = false; return }
+        guard let step = rest.first else { running = false; finish(); return }
         let next = { [weak self] in
             // Short beat so the next card doesn't replace the last one mid-click.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self?.run(rest.dropFirst(), exe: exe) }
@@ -44,12 +51,12 @@ final class TourRunner {
         let p = Process(); p.executableURL = exe; p.arguments = ["demo", step.rawValue]
         if step == .done {
             // The done demo exits at once; its card stays until dismissed (or the step times out).
-            guard (try? p.run()) != nil else { running = false; return }
+            guard (try? p.run()) != nil else { running = false; finish(); return }
             waitForDismiss(deadline: Date().addingTimeInterval(Tour.stepTimeout), seen: false, then: next)
         } else {
             // Approval and question demos exit when answered (or after their own 60s wait).
             p.terminationHandler = { _ in DispatchQueue.main.async { next() } }
-            guard (try? p.run()) != nil else { running = false; return }
+            guard (try? p.run()) != nil else { running = false; finish(); return }
             current = p
         }
     }

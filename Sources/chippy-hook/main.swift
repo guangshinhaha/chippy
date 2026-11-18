@@ -124,6 +124,9 @@ func install(_ args: [String]) -> Never {
                       FileManager.default.fileExists(atPath: settingsPath) ? settingsPath : "/dev/null", tmp.path]
     try? diff.run(); diff.waitUntilExit()
 
+    if SettingsInstaller.staleness(old).contains(.legacyApprovalTimeout) {
+        print("\nNote: a --timeout of \(SettingsInstaller.legacyApprovalTimeout) (the old default) will become \(SettingsInstaller.defaultApprovalTimeout). Other custom values are kept.")
+    }
     if !yes {
         print("\nWrite these changes? [y/N] ", terminator: "")
         guard let a = readLine(), a.lowercased() == "y" else { print("Aborted. Nothing written."); exit(1) }

@@ -31,3 +31,8 @@ Source: web research on Apple's Live Activities HIG and existing Claude Code not
 - The visible card is sticky: a newly arrived higher-ranked request never replaces a card already on screen. It waits in the list, and rank picks it only once the shown card is answered.
 - The fold timer is not rank-driven: the oldest pending request decides, and a later request never restarts it. The folded ring shows the soonest known deadline among folded requests (a request with no known wait does not hide the others).
 - Badge tap opens the rank-first card by hand: it pins that one card (same as a list jump), not the others. A plain click on the folded notch (unfold) pins all, as before.
+
+## Hook timeouts and stale installs (#99)
+- Defaults: approval wait 60s (cap 120), question wait 120s (cap 300). Claude's own hook timeout is `max(approval, question) + 10` so our relay always times out first; otherwise Claude kills the hook at its stale limit (30s on old installs) and a question card dies mid-answer.
+- A hook is stale when its `timeout` is below that, is missing, or the command has no `--question-timeout`. Chippy checks at launch (one alert) and when the menu opens (a "Repair Claude hook" item). Repair opens Terminal and runs `chippy-hook install`: backup, diff, confirm; nothing is written without a yes.
+- Migration keeps custom values. An old default (`--timeout 20` with no question flag) becomes 60; a missing question flag becomes 120; any other `--timeout` or `--question-timeout` is kept.
