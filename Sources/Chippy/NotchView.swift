@@ -31,6 +31,21 @@ extension View {
     func reveal(_ delay: Double) -> some View { modifier(Reveal(delay: delay)) }
 }
 
+/// Small count of finished items waiting, shown on the collapsed notch ("9+" caps it).
+struct CountBadge: View {
+    let text: String
+    /// Never wider than this (the wing it sits in): the text shrinks to fit.
+    let maxWidth: CGFloat
+    var body: some View {
+        Text(text).font(.system(size: 10, weight: .bold, design: .rounded).monospacedDigit()).foregroundStyle(.black)
+            .lineLimit(1).minimumScaleFactor(0.6)
+            .padding(.horizontal, 4).frame(minWidth: 16, maxWidth: max(maxWidth, 16), minHeight: 16)
+            .background(Capsule().fill(.white.opacity(0.92)))
+            .reveal(0.08)
+            .accessibilityLabel("\(text) finished waiting")
+    }
+}
+
 struct NotchView: View {
     @ObservedObject var model: NotchModel
     @ObservedObject var box: MetricsBox
@@ -80,7 +95,7 @@ struct NotchView: View {
     private func icon(_ size: CGSize) -> some View {
         let m = box.metrics
         let big: CGFloat = 28 * 1.4
-        let small: CGFloat = 18 * 1.4
+        let small = NotchMetrics.glanceIcon
         let open = model.density == .expanded
         return ChipmunkView(state: model.state).frame(width: big, height: big)
             .scaleEffect(open ? 1 : small / big, anchor: .topLeading)
@@ -123,13 +138,36 @@ struct NotchView: View {
         let m = box.metrics
         switch model.density {
         case .collapsed:
-            Color.clear.frame(height: m.band) // the icon is drawn once, by NotchView.icon
+            // The icon is drawn once, by NotchView.icon. Finished items waiting show a small count.
+            if let badge = model.badge, m.isTab {
+                VStack(spacing: 0) {
+                    Color.clear.frame(height: m.band)
+                    let off = (m.width + NotchMetrics.glanceIcon) / 2 + NotchMetrics.badgeGap // past the centred icon
+                    HStack(spacing: 0) {
+                        Color.clear.frame(width: off)
+                        CountBadge(text: badge, maxWidth: m.width - off - 8) // stays inside the tab
+                        Spacer(minLength: 0)
+                    }.frame(height: NotchMetrics.tabHeight)
+                }
+                .frame(maxHeight: .infinity, alignment: .top)
+            } else if let badge = model.badge {
+                let wing = m.wing(for: .collapsed)
+                HStack(spacing: 0) {
+                    Color.clear.frame(width: wing)
+                    Color.clear.frame(width: m.width)
+                    CountBadge(text: badge, maxWidth: wing - 8).frame(width: wing)
+                }
+                .frame(height: m.band, alignment: .center)
+                .frame(maxHeight: .infinity, alignment: .top)
+            } else {
+                Color.clear.frame(height: m.band)
+            }
         case .compact where m.isTab:
             // No room beside the camera: the glance lives in a tab under it (icon is drawn by NotchView.icon).
             VStack(spacing: 0) {
                 Color.clear.frame(height: m.band)
                 HStack(spacing: 6) {
-                    Color.clear.frame(width: 18 * 1.4 + 12)
+                    Color.clear.frame(width: NotchMetrics.glanceIcon + 12)
                     Text(compactText).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.tail)
                     if model.doneItems.count > 1 {
                         Text("+\(model.doneItems.count - 1)").font(.caption2).foregroundStyle(.white.opacity(0.6))
