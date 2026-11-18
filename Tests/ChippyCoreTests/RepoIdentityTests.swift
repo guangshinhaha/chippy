@@ -85,7 +85,7 @@ final class RepoIdentityTests: XCTestCase {
         var redraws = 0
         let cache = RepoIdentityCache(resolver: { _ in calls += 1; return RepoLabel(repo: "govapps", worktree: "fix-53") },
                                       background: { queued.append($0) }, deliver: { $0() })
-        cache.onResolved = { redraws += 1 }
+        cache.addObserver { redraws += 1 }
         XCTAssertEqual(cache.label(cwd: "/w/fix-53"), RepoLabel(repo: "fix-53")) // fallback, nothing resolved yet
         XCTAssertEqual(cache.label(cwd: "/w/fix-53"), RepoLabel(repo: "fix-53"))
         XCTAssertEqual(queued.count, 1) // one background read however many asks
@@ -99,7 +99,7 @@ final class RepoIdentityTests: XCTestCase {
     func testCacheDoesNotRedrawWhenGitAgreesWithTheFallback() {
         var redraws = 0
         let cache = RepoIdentityCache(resolver: { RepoResolver.fallback(cwd: $0) }, background: { $0() }, deliver: { $0() })
-        cache.onResolved = { redraws += 1 }
+        cache.addObserver { redraws += 1 }
         _ = cache.label(cwd: "/w/api")
         XCTAssertEqual(redraws, 0)
     }
@@ -108,9 +108,57 @@ final class RepoIdentityTests: XCTestCase {
         let w = try linked(main: "govapps", wt: "fix-9", name: "fix-9").wt
         let done = expectation(description: "resolved on main")
         let cache = RepoIdentityCache()
-        cache.onResolved = { XCTAssertTrue(Thread.isMainThread); done.fulfill() }
+        cache.addObserver { XCTAssertTrue(Thread.isMainThread); done.fulfill() }
         XCTAssertEqual(cache.label(cwd: w.path).repo, "fix-9") // immediate fallback
         wait(for: [done], timeout: 5)
         XCTAssertEqual(cache.label(cwd: w.path), RepoLabel(repo: "govapps", worktree: "fix-9"))
+    }
+
+    func testDeletedLinkedWorktreeKeepsItsTagAndResolveMatchesFallback() throws {
+        let m = try dir("chippy"); _ = try dir("chippy/.git")
+        let gone = m.appendingPathComponent(".claude/worktrees/wf_gone-1").path // never created
+        XCTAssertEqual(RepoResolver.fallback(cwd: gone), RepoLabel(repo: "chippy", worktree: "wf_gone-1"))
+        XCTAssertEqual(RepoResolver.resolve(cwd: gone), RepoResolver.fallback(cwd: gone))
+        // present folder without its own .git, inside the repo: git can't confirm, the path tag stays
+        let bare = try dir("chippy/.claude/worktrees/wf_plain")
+        XCTAssertEqual(RepoResolver.resolve(cwd: bare.path), RepoLabel(repo: "chippy", worktree: "wf_plain"))
+    }
+
+    func testCacheEvictsOnlyTheOldestAtCapacity() {
+        var t = Date(timeIntervalSince1970: 1000)
+        let cache = RepoIdentityCache(resolver: { RepoLabel(repo: "r" + $0) }, background: { $0() }, deliver: { $0() }, now: { t })
+        for i in 0..<RepoIdentityCache.capacity { _ = cache.label(cwd: "/w/\(i)"); t = t.addingTimeInterval(0.001) }
+        XCTAssertEqual(cache.count, RepoIdentityCache.capacity)
+        _ = cache.label(cwd: "/w/new")
+        XCTAssertEqual(cache.count, RepoIdentityCache.capacity)          // one out, one in (no wipe)
+        XCTAssertEqual(cache.label(cwd: "/w/5").repo, "r/w/5")          // a survivor is still cached
+    }
+
+    func testLabelsRefreshAfterTheTTLAndOnlyNotifyOnChange() {
+        var t = Date(timeIntervalSince1970: 1000)
+        var current = RepoLabel(repo: "api")
+        var reads = 0, redraws = 0
+        let cache = RepoIdentityCache(resolver: { _ in reads += 1; return current }, background: { $0() }, deliver: { $0() }, now: { t })
+        cache.addObserver { redraws += 1 }
+        _ = cache.label(cwd: "/w/api")                  // first read: same as the fallback, no redraw
+        XCTAssertEqual(reads, 1); XCTAssertEqual(redraws, 0)
+        t = t.addingTimeInterval(RepoIdentityCache.ttl - 1)
+        _ = cache.label(cwd: "/w/api"); XCTAssertEqual(reads, 1) // still fresh
+        t = t.addingTimeInterval(2)
+        _ = cache.label(cwd: "/w/api"); XCTAssertEqual(reads, 2) // stale: re-read, unchanged
+        XCTAssertEqual(redraws, 0)
+        current = RepoLabel(repo: "govapps", worktree: "api") // e.g. the folder became a linked worktree
+        t = t.addingTimeInterval(RepoIdentityCache.ttl + 1)
+        XCTAssertEqual(cache.label(cwd: "/w/api"), RepoLabel(repo: "api")) // old answer served at once
+        XCTAssertEqual(redraws, 1)
+        XCTAssertEqual(cache.label(cwd: "/w/api"), current)
+    }
+
+    func testEveryObserverIsNotified() {
+        var a = 0, b = 0
+        let cache = RepoIdentityCache(resolver: { _ in RepoLabel(repo: "x") }, background: { $0() }, deliver: { $0() })
+        cache.addObserver { a += 1 }; cache.addObserver { b += 1 }
+        _ = cache.label(cwd: "/w/y")
+        XCTAssertEqual(a, 1); XCTAssertEqual(b, 1)
     }
 }

@@ -119,13 +119,7 @@ enum Gallery {
         }.padding(16).background(Color(white: 0.25))
         let all = VStack(spacing: 0) { view; variants }
         let r = ImageRenderer(content: all)
-        r.scale = 2
-        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
-              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else {
-            FileHandle.standardError.write(Data("render failed\n".utf8)); exit(1)
-        }
-        do { try png.write(to: URL(fileURLWithPath: path)) } catch { print(error); exit(1) }
-        print("wrote \(path)")
+        writePNG(r, to: path)
     }
 
     /// `Chippy --render-done-detail out.png`: the opened finished-thread card with a long reply.
@@ -165,10 +159,22 @@ enum Gallery {
     @MainActor
     private static func writeNotchPNG(_ model: NotchModel, _ m: NotchMetrics, size sz: CGSize, to path: String, note: String) {
         let r = ImageRenderer(content: NotchView(model: model, box: box(m)).frame(width: sz.width, height: sz.height).background(Color(white: 0.25)))
+        writePNG(r, to: path, note: note)
+    }
+
+    /// The one place a gallery PNG is written (2x). Any failure (render, encode, write) prints to stderr and exits 1,
+    /// and "wrote ..." is only printed once the file is on disk.
+    @MainActor
+    private static func writePNG<V: View>(_ r: ImageRenderer<V>, to path: String, note: String = "") {
         r.scale = 2
         guard let img = r.nsImage, let tiff = img.tiffRepresentation,
-              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
-        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path) \(note)")
+              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else {
+            FileHandle.standardError.write(Data("render failed: \(path)\n".utf8)); exit(1)
+        }
+        do { try png.write(to: URL(fileURLWithPath: path)) } catch {
+            FileHandle.standardError.write(Data("could not write \(path): \(error.localizedDescription)\n".utf8)); exit(1)
+        }
+        print("wrote \(path)" + (note.isEmpty ? "" : " \(note)"))
     }
 
     private static func tempLog() -> URL {
@@ -206,10 +212,7 @@ enum Gallery {
         let sz = m.size(for: .expanded, tall: model.tall)
         let qbox = box(m); qbox.contentHeight = 540 // the app measures this; a static render must be told
         let r = ImageRenderer(content: NotchView(model: model, box: qbox).frame(width: sz.width, height: 560).background(Color(white: 0.25)))
-        r.scale = 2
-        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
-              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
-        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
+        writePNG(r, to: path)
     }
     /// `Chippy --render-terminal-chip out.png`: the compact `repo · asked in terminal` chip and its opened card (sample text only).
     @MainActor
@@ -260,10 +263,7 @@ enum Gallery {
             VStack(alignment: .leading, spacing: 12) { cell(false, "compact"); cell(true, "opened") }
             mixed()
         }.padding(16).background(Color(white: 0.25)))
-        r.scale = 2
-        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
-              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
-        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
+        writePNG(r, to: path)
     }
     /// `Chippy --render-waiting out.png`: the waiting list (#53) with an approval, a question and three done chips
     /// (sample repos only; note the rows never show the command or question), second row highlighted; plus the
@@ -299,10 +299,7 @@ enum Gallery {
             }
         }.padding(16).background(Color(white: 0.25))
         let r = ImageRenderer(content: all)
-        r.scale = 2
-        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
-              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
-        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
+        writePNG(r, to: path)
     }
 
     /// `Chippy --render-resting out.png` (#85): the resting tab on three screens (awake, asleep) and the panel a click opens
@@ -354,10 +351,7 @@ enum Gallery {
         }
         let all = VStack(alignment: .leading, spacing: 16) { tabs; panels }.padding(16).background(Color(white: 0.25))
         let r = ImageRenderer(content: all)
-        r.scale = 2
-        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
-              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
-        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
+        writePNG(r, to: path)
     }
 
     /// `Chippy --render-approval out.png`: approval cards for a short Bash command with a description, an Edit, and a very long command (sample text only).
@@ -383,10 +377,7 @@ enum Gallery {
             card("Bash", ["command": long, "description": desc100], height: NotchMetrics.maxExpandedHeight, prompt: longPrompt)
         }.padding(12).background(Color(white: 0.25))
         let r = ImageRenderer(content: all)
-        r.scale = 2
-        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
-              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
-        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
+        writePNG(r, to: path)
     }
 
     /// `Chippy --render-tab out.png`: no room beside the camera (menu extras hug the notch), so the indicator is a tab below it.
@@ -433,10 +424,7 @@ enum Gallery {
             }
         }.padding(16).background(Color(white: 0.25))
         let r = ImageRenderer(content: all)
-        r.scale = 2
-        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
-              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
-        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
+        writePNG(r, to: path)
     }
 
     // MARK: #101 NEEDS YOU / FINISHED
@@ -532,10 +520,7 @@ enum Gallery {
         }
         let all = VStack(alignment: .leading, spacing: 20) { grid; HStack(alignment: .top, spacing: 16) { six; caps } }.padding(16).background(Color(white: 0.25))
         let r = ImageRenderer(content: all)
-        r.scale = 2
-        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
-              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
-        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
+        writePNG(r, to: path)
     }
 
     /// `Chippy --render-badge-dot out.png` (#101): the collapsed notch with only finished items waiting (a dot).
@@ -550,9 +535,6 @@ enum Gallery {
             }
         }.padding(16).background(Color(white: 0.25))
         let r = ImageRenderer(content: all)
-        r.scale = 2
-        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
-              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
-        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
+        writePNG(r, to: path)
     }
 }

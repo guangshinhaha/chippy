@@ -102,8 +102,11 @@ public enum WaitingList {
     public static let sectionHeaderHeight: CGFloat = 22
     public static let moreRowHeight: CGFloat = 18
     public static let sectionGap: CGFloat = 8
-    /// Everything in the expanded card that is not the two sections (camera spacer, header, key hint, padding).
-    public static let chrome: CGFloat = 150
+    /// Everything in the expanded card that is not the two sections, built from the same constants NotchView lays out with
+    /// (camera spacer, header row, key hint, the stack's spacing, the shape's padding). The camera is the tallest one
+    /// (the model does not know the screen), so a real card is never taller than the layout assumed.
+    public static let chrome: CGFloat = NotchMetrics.tallestCamera + NotchMetrics.cameraInset + NotchMetrics.cardSpacing
+        + NotchMetrics.cardHeaderHeight + NotchMetrics.cardSpacing + sectionGap + NotchMetrics.keyHintHeight + NotchMetrics.shapePadding
     public static let maxFinished = 3
 
     /// Split into NEEDS YOU and FINISHED and fit them under `NotchMetrics.maxExpandedHeight`.
@@ -122,7 +125,8 @@ public enum WaitingList {
         var k = min(maxFinished, finished.count)
         while k > 0, needsBlock + gap() + finishedBlock(k) > budget { k -= 1 }
         let scrolls = needsBlock + gap() + finishedBlock(k) > budget
-        let needsHeight = scrolls ? max(needsRowHeight, budget - gap() - finishedBlock(k) - sectionHeaderHeight) : needsFull
+        // Clamped: the scrolling region never takes more than what the budget leaves (so the card never passes the cap).
+        let needsHeight = scrolls ? min(needsFull, max(0, budget - gap() - finishedBlock(k) - sectionHeaderHeight)) : needsFull
         let visible = Array(finished.prefix(k)) // newest k, then grouped so one repo's threads sit together
         return WaitingLayout(needs: needs, finished: groupedByRepo(visible), hiddenFinished: finished.count - k, totalFinished: finished.count,
                              needsHeight: needsHeight, needsScrolls: scrolls)

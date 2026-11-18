@@ -91,7 +91,8 @@ public final class NotchModel: ObservableObject {
     public init(state: ChippyState = .idle, density: Density = .collapsed,
                 always: AlwaysStore = AlwaysStore(), log: EventLog = EventLog(),
                 clock: @escaping () -> TimeInterval = PeekGate.monotonicNow,
-                identities: RepoIdentityCache = RepoIdentityCache()) {
+                identities: RepoIdentityCache = RepoIdentityCache(),
+                tick: @escaping (@escaping () -> Void) -> Void = { DispatchQueue.main.async(execute: $0) }) {
         self.clock = clock
         self.identities = identities
         self.state = state
@@ -99,8 +100,30 @@ public final class NotchModel: ObservableObject {
         self.resting = density == .collapsed // no chips yet, same as refresh()
         self.always = always
         self.log = log
-        identities.onResolved = { [weak self] in self?.refresh() } // a label that changed after git was read redraws the rows
+        self.tick = tick
+        // A label that changed after git was read redraws the rows. Observers add up (a shared cache keeps every owner's),
+        // and a burst of resolutions becomes one refresh per runloop tick.
+        identities.addObserver { [weak self] in self?.labelsChanged() }
     }
+
+    private let tick: (@escaping () -> Void) -> Void
+    private var labelRefreshQueued = false
+    /// Bumps when a resolved repo label changed, so views that show a label outside the waiting list (Recent) redraw.
+    @Published public private(set) var labelEpoch = 0
+
+    private func labelsChanged() {
+        guard !labelRefreshQueued else { return }
+        labelRefreshQueued = true
+        tick { [weak self] in
+            guard let self else { return }
+            self.labelRefreshQueued = false
+            self.labelEpoch += 1
+            self.refresh()
+        }
+    }
+
+    /// The one repo label for a cwd, as list rows show it: cached git result, or the folder-name fallback while it loads.
+    public func repoLabel(cwd: String, project: String) -> RepoLabel { identities.label(cwd: cwd, project: project) }
 
     private func refresh() {
         let waiting = WaitingList.items(pending: pending, done: doneItems, terminal: terminalItems, timeout: timeout(for:),
@@ -262,11 +285,14 @@ public final class NotchModel: ObservableObject {
     public var badge: String? { PeekGate.badge(count: (folded ? pending.count : 0) + terminalItems.count) }
 
     /// Only finished items wait: a plain dot (no number), so a tap still opens something without implying work for you.
-    public var badgeDot: Bool { badge == nil && !doneItems.isEmpty }
+    /// Never while an approval or question is pending (an unfolded card is on screen, so the notch is not at rest).
+    public var badgeDot: Bool { badge == nil && pending.isEmpty && !doneItems.isEmpty }
 
-    /// The collapsed badge is the needs-you one (pulsing) while any approval or question is folded.
-    public var badgeNeedsYou: Bool { folded && !pending.isEmpty }
+    /// The collapsed badge is the needs-you one (pulsing) while any approval or question is folded, or a question
+    /// fell back to the terminal: both are the same "needs you" to the user.
+    public var badgeNeedsYou: Bool { (folded && !pending.isEmpty) || !terminalItems.isEmpty }
 
+    /// A terminal-only badge has no deadline (the hook already gave up), so it pulses without a ring.
     /// When the soonest folded request's hook gives up and the terminal takes over (the badge ring drains to it).
     /// Only requests with a known wait count; one without does not hide the others' deadline.
     public var foldedDeadline: (start: Date, end: Date)? {
@@ -646,13 +672,16 @@ public struct DoneItem: Identifiable, Equatable {
     }
 
     /// One line beside the camera. Neutral unless the user opted in to seeing the reply there.
-    public func glance(showReply: Bool) -> String {
-        if showReply { return (asksYou ? "? " : "") + "\(project): \(headline)" }
-        return "\(project) · \(asksYou ? "needs you" : "finished")"
+    /// `repo` is the resolved label (same as the list rows); it defaults to the project name.
+    public func glance(showReply: Bool, repo: String? = nil) -> String {
+        let r = repo ?? project
+        if showReply { return (asksYou ? "? " : "") + "\(r): \(headline)" }
+        return "\(r) · \(asksYou ? "needs you" : "finished")"
     }
 
     /// "repo · branch", or just the repo.
-    public var identity: String { branch.map { "\(project) · \($0)" } ?? project }
+    public var identity: String { identityLine(repo: project) }
+    public func identityLine(repo: String) -> String { branch.map { "\(repo) · \($0)" } ?? repo }
 }
 
 /// A question or approval that fell back to the terminal. Holds no content (PDPA, #30): only the repo name.
@@ -668,5 +697,6 @@ public struct TerminalItem: Identifiable, Equatable {
     /// Working directory, kept only to resolve the repo + worktree label (#101); never shown.
     public var cwd = ""
 
-    public var glance: String { "\(project) · asked in terminal" }
+    public var glance: String { glance(repo: project) }
+    public func glance(repo: String) -> String { "\(repo) · asked in terminal" }
 }

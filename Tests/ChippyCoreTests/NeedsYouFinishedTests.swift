@@ -4,10 +4,11 @@ import XCTest
 
 /// Issue #101: the waiting list split into NEEDS YOU (act) and FINISHED (FYI).
 final class NeedsYouFinishedTests: XCTestCase {
-    private func model(identities: RepoIdentityCache = RepoIdentityCache()) -> NotchModel {
+    private func model(identities: RepoIdentityCache = RepoIdentityCache(),
+                       tick: @escaping (@escaping () -> Void) -> Void = { $0() }) -> NotchModel {
         NotchModel(always: AlwaysStore(url: nil),
                    log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("chippy-101-\(UUID()).jsonl")),
-                   identities: identities)
+                   identities: identities, tick: tick)
     }
     private func conn() -> Connection {
         var fds: [Int32] = [0, 0]
@@ -29,9 +30,9 @@ final class NeedsYouFinishedTests: XCTestCase {
         m.apply(HookPayload(json: try! JSONSerialization.data(withJSONObject: o))!, now: at)
     }
     /// A question the hook cannot answer (no options), so it lands as a terminal row.
-    private func terminalAsk(_ m: NotchModel, _ sid: String, cwd: String = "/w/term") {
+    private func terminalAsk(_ m: NotchModel, _ sid: String, cwd: String = "/w/term", now: Date = Date()) {
         let o: [String: Any] = ["session_id": sid, "hook_event_name": "PermissionRequest", "cwd": cwd, "tool_name": "AskUserQuestion", "tool_input": ["questions": [["question": "q"]]]]
-        m.receiveApproval(HookPayload(json: try! JSONSerialization.data(withJSONObject: o))!, conn())
+        m.receiveApproval(HookPayload(json: try! JSONSerialization.data(withJSONObject: o))!, conn(), now: now)
     }
 
     // MARK: sections and labels
@@ -99,9 +100,9 @@ final class NeedsYouFinishedTests: XCTestCase {
     }
 
     func testFinishedShrinksFirstThenNeedsScrolls() {
-        // 7 needs rows leave no room even for the FINISHED header and "+N more": FINISHED is gone first, then NEEDS YOU scrolls.
-        let tight = WaitingList.layout(rows(needs: 7, finished: 6))
-        XCTAssertEqual(tight.needs.count, 7)                // NEEDS YOU is never cut
+        // 8 needs rows leave no room even for the FINISHED header and "+N more": FINISHED is gone first, then NEEDS YOU scrolls.
+        let tight = WaitingList.layout(rows(needs: 8, finished: 6))
+        XCTAssertEqual(tight.needs.count, 8)                // NEEDS YOU is never cut
         XCTAssertEqual(tight.finished.count, 0)
         XCTAssertEqual(tight.hiddenFinished, 6)
         XCTAssertTrue(tight.needsScrolls)
@@ -186,12 +187,12 @@ final class NeedsYouFinishedTests: XCTestCase {
     func testTerminalRowOutlivesFinishedChipsAndExpiresAfterThirtyMinutes() {
         let m = model(); let t0 = Date()
         stop(m, "d", at: t0)
-        terminalAsk(m, "t")
-        m.terminalItems.first.map { _ in () }
-        m.sweep(now: Date().addingTimeInterval(NotchModel.doneSeconds + 5))
+        terminalAsk(m, "t", now: t0)
+        XCTAssertEqual(m.terminalItems.count, 1)
+        m.sweep(now: t0.addingTimeInterval(NotchModel.doneSeconds + 5))
         XCTAssertTrue(m.doneItems.isEmpty)                 // finished: 10 min
         XCTAssertEqual(m.terminalItems.count, 1)           // needs-you: still there
-        m.sweep(now: Date().addingTimeInterval(NotchModel.terminalSeconds + 5))
+        m.sweep(now: t0.addingTimeInterval(NotchModel.terminalSeconds + 5))
         XCTAssertTrue(m.terminalItems.isEmpty)
     }
 
@@ -205,6 +206,98 @@ final class NeedsYouFinishedTests: XCTestCase {
         XCTAssertEqual(m.badge, "1"); XCTAssertFalse(m.badgeDot)
         m.dismissTerminal("t"); m.dismissDone(nil)
         XCTAssertNil(m.badge); XCTAssertFalse(m.badgeDot)
+    }
+
+    func testTerminalOnlyBadgeIsNeedsYouStyleAndNeverADot() {
+        let m = model()
+        terminalAsk(m, "t")
+        XCTAssertEqual(m.badge, "1")
+        XCTAssertTrue(m.badgeNeedsYou)          // pulses like a folded approval
+        XCTAssertNil(m.foldedDeadline)          // no hook left to time out: pulse, no ring
+        XCTAssertFalse(m.badgeDot)
+        m.dismissTerminal("t")
+        XCTAssertFalse(m.badgeNeedsYou)
+    }
+
+    func testFinishedOnlyBadgeIsDotNotNeedsYou() {
+        let m = model()
+        stop(m, "d")
+        XCTAssertTrue(m.badgeDot); XCTAssertFalse(m.badgeNeedsYou)
+    }
+
+    func testNoDotWhileAnUnfoldedApprovalIsPending() {
+        let m = model()
+        stop(m, "d")
+        approval(m, "a")
+        XCTAssertFalse(m.folded)
+        XCTAssertNil(m.badge)
+        XCTAssertFalse(m.badgeDot)
+        XCTAssertFalse(m.badgeNeedsYou)
+    }
+
+    // MARK: label cache wiring
+
+    func testResolvedBurstRefreshesOncePerTick() {
+        var queued: [() -> Void] = []
+        var jobs: [() -> Void] = []
+        let cache = RepoIdentityCache(resolver: { RepoLabel(repo: "r-" + ($0 as NSString).lastPathComponent) },
+                                      background: { jobs.append($0) }, deliver: { $0() })
+        let m = model(identities: cache, tick: { queued.append($0) })
+        for i in 1...5 { stop(m, "s\(i)", cwd: "/w/p\(i)") }
+        var published = 0
+        let c = m.$waitingItems.dropFirst().sink { _ in published += 1 }
+        jobs.forEach { $0() }                      // five resolutions in one burst
+        XCTAssertEqual(queued.count, 1)            // one scheduled refresh, not five
+        queued.removeFirst()()
+        XCTAssertEqual(published, 1)
+        XCTAssertEqual(m.waitingItems.first?.repo.hasPrefix("r-"), true)
+        c.cancel()
+    }
+
+    func testSharedCacheKeepsEveryModelsObserver() {
+        var jobs: [() -> Void] = []
+        let cache = RepoIdentityCache(resolver: { _ in RepoLabel(repo: "resolved") }, background: { jobs.append($0) }, deliver: { $0() })
+        let a = model(identities: cache), b = model(identities: cache)
+        stop(a, "x", cwd: "/w/one"); stop(b, "y", cwd: "/w/one")
+        jobs.forEach { $0() }
+        XCTAssertEqual(a.waitingItems.first?.repo, "resolved")
+        XCTAssertEqual(b.waitingItems.first?.repo, "resolved") // creating b did not unseat a
+    }
+
+    func testChipsCardsAndRecentUseTheRowLabel() {
+        let cache = RepoIdentityCache(resolver: { _ in RepoLabel(repo: "govapps", worktree: "fix-53") }, background: { $0() }, deliver: { $0() })
+        let m = model(identities: cache)
+        stop(m, "d", cwd: "/work/fix-53")
+        terminalAsk(m, "t", cwd: "/work/fix-53")
+        let want = "govapps / fix-53"
+        let row = m.waitingItems.first { $0.target == .done("d") }!
+        XCTAssertEqual(RepoLabel(repo: row.repo, worktree: row.worktree).text, want)
+        let d = m.doneItems[0], t = m.terminalItems[0]
+        XCTAssertEqual(m.repoLabel(cwd: d.cwd, project: d.project).text, want)
+        XCTAssertEqual(t.glance(repo: m.repoLabel(cwd: t.cwd, project: t.project).text), "\(want) · asked in terminal")
+        XCTAssertEqual(d.glance(showReply: false, repo: want), "\(want) · finished")
+        XCTAssertTrue(d.identityLine(repo: want).hasPrefix(want))
+        m.dismissDone("d")
+        let r = m.recent.items[0]
+        XCTAssertEqual(m.repoLabel(cwd: r.cwd, project: r.project).text, want)
+    }
+
+    // MARK: height budget
+
+    func testNeedsRegionNeverPassesTheCapAndScrollsInstead() {
+        for n in [1, 5, 9, 10, 20, 60] {
+            let rows = (0..<n).map { WaitingItem(target: .pending("n\($0)"), kind: .approval, repo: "r", at: Date()) }
+            let l = WaitingList.layout(rows)
+            XCTAssertLessThanOrEqual(WaitingList.sectionHeaderHeight + l.needsHeight + WaitingList.chrome, NotchMetrics.maxExpandedHeight)
+        }
+        // an absurdly small budget still clamps
+        let rows = (0..<5).map { WaitingItem(target: .pending("n\($0)"), kind: .approval, repo: "r", at: Date()) }
+        XCTAssertLessThanOrEqual(WaitingList.layout(rows, budget: 30).needsHeight, 30)
+    }
+
+    func testChromeIsBuiltFromTheSharedViewConstants() {
+        XCTAssertEqual(WaitingList.chrome, NotchMetrics.tallestCamera + NotchMetrics.cameraInset + 2 * NotchMetrics.cardSpacing
+            + NotchMetrics.cardHeaderHeight + WaitingList.sectionGap + NotchMetrics.keyHintHeight + NotchMetrics.shapePadding)
     }
 
     // MARK: consistent repo + worktree labels

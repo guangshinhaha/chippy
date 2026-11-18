@@ -32,13 +32,19 @@ public enum RepoResolver {
         let fb = fallback(cwd: cwd, project: project)
         guard cwd.hasPrefix("/") else { return fb }
         let fm = FileManager.default
+        // A folder that is gone (deleted worktree) cannot be confirmed by git; walking up would land on the main checkout
+        // and drop the worktree tag the path heuristic still knows, so resolve and fallback must agree here.
+        guard fm.fileExists(atPath: cwd) else { return fb }
         var dir = URL(fileURLWithPath: cwd)
         for _ in 0..<12 {
             let dot = dir.appendingPathComponent(".git")
             var isDir: ObjCBool = false
             if fm.fileExists(atPath: dot.path, isDirectory: &isDir) {
                 let root = dir.lastPathComponent
-                if isDir.boolValue { return RepoLabel(repo: root) } // main checkout
+                if isDir.boolValue { // main checkout (a path-heuristic worktree tag survives when git cannot say otherwise)
+                    if fb.worktree != nil, fb.repo == root { return fb }
+                    return RepoLabel(repo: root)
+                }
                 guard let t = try? String(contentsOf: dot, encoding: .utf8),
                       let line = t.split(separator: "\n").first, line.hasPrefix("gitdir:") else { return fb }
                 let p = line.dropFirst(7).trimmingCharacters(in: .whitespaces)
@@ -60,44 +66,62 @@ public enum RepoResolver {
 }
 
 /// Resolved labels per cwd, so git is read once per folder and never on the main thread (#101). `label` answers at once:
-/// the cached label, or the folder-name fallback while a background read runs; `onResolved` fires on the main thread
-/// when a label turns out different, so the UI redraws.
+/// the cached label, or the folder-name fallback while a background read runs; observers are told on the main thread
+/// when a shown label turns out different, so the UI redraws. Entries older than `ttl` are served as-is and re-read in the
+/// background, so labels follow a `git init` or a worktree change.
 public final class RepoIdentityCache {
+    private struct Entry { var label: RepoLabel; var at: Date; var seq: Int }
     private let lock = NSLock()
-    private var labels: [String: RepoLabel] = [:]
+    private var labels: [String: Entry] = [:]
     private var inflight: Set<String> = []
+    private var seq = 0
+    private var observers: [() -> Void] = []
     private let resolver: (String) -> RepoLabel
     private let background: (@escaping () -> Void) -> Void
     private let deliver: (@escaping () -> Void) -> Void
-    /// Folders kept; past this the cache restarts (a long day of throwaway worktrees must not grow it forever).
+    private let now: () -> Date
+    /// Folders kept; at the cap the single oldest entry makes room (a long day of throwaway worktrees must not grow it forever).
     public static let capacity = 256
-    public var onResolved: (() -> Void)?
+    /// How long a label is trusted before a background re-read.
+    public static let ttl: TimeInterval = 60
 
     public init(resolver: @escaping (String) -> RepoLabel = { RepoResolver.resolve(cwd: $0) },
                 background: @escaping (@escaping () -> Void) -> Void = { DispatchQueue.global(qos: .utility).async(execute: $0) },
-                deliver: @escaping (@escaping () -> Void) -> Void = { DispatchQueue.main.async(execute: $0) }) {
-        self.resolver = resolver; self.background = background; self.deliver = deliver
+                deliver: @escaping (@escaping () -> Void) -> Void = { DispatchQueue.main.async(execute: $0) },
+                now: @escaping () -> Date = Date.init) {
+        self.resolver = resolver; self.background = background; self.deliver = deliver; self.now = now
     }
+
+    /// Several owners may watch one cache (each model, a test); every observer is called, on the main thread.
+    public func addObserver(_ f: @escaping () -> Void) { lock.lock(); observers.append(f); lock.unlock() }
+
+    public var count: Int { lock.lock(); defer { lock.unlock() }; return labels.count }
 
     public func label(cwd: String, project: String = "") -> RepoLabel {
         let fb = RepoResolver.fallback(cwd: cwd, project: project)
         guard !cwd.isEmpty else { return fb }
+        let t = now()
         lock.lock()
-        if let hit = labels[cwd] { lock.unlock(); return hit }
-        let start = inflight.insert(cwd).inserted
+        let hit = labels[cwd]
+        let stale = hit.map { t.timeIntervalSince($0.at) >= Self.ttl } ?? true
+        let start = stale && inflight.insert(cwd).inserted
         lock.unlock()
         if start {
             background { [weak self] in
                 guard let self else { return }
                 let found = self.resolver(cwd)
                 self.lock.lock()
-                if self.labels.count >= Self.capacity { self.labels.removeAll() }
-                self.labels[cwd] = found
+                let shown = self.labels[cwd]?.label ?? fb
+                if self.labels[cwd] == nil, self.labels.count >= Self.capacity,
+                   let oldest = self.labels.min(by: { $0.value.seq < $1.value.seq })?.key { self.labels[oldest] = nil }
+                self.seq += 1
+                self.labels[cwd] = Entry(label: found, at: self.now(), seq: self.seq)
                 self.inflight.remove(cwd)
+                let obs = found != shown ? self.observers : []
                 self.lock.unlock()
-                if found != fb { self.deliver { [weak self] in self?.onResolved?() } }
+                if !obs.isEmpty { self.deliver { obs.forEach { $0() } } }
             }
         }
-        return fb
+        return hit?.label ?? fb
     }
 }
