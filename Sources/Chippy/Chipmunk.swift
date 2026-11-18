@@ -5,6 +5,9 @@ import SwiftUI
 /// 100x100 space: round head, forehead stripes, cream cheek pouches. One look per v1 state.
 struct ChipmunkView: View {
     let state: ChippyState
+    /// Idle for 5 minutes (#54): closed eyes, slow breathing and drifting z's. Static under Reduce Motion.
+    var sleeping = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let fur = Color(red: 0.74, green: 0.46, blue: 0.22)
     private let dark = Color(red: 0.30, green: 0.17, blue: 0.09)
@@ -12,10 +15,24 @@ struct ChipmunkView: View {
     private let pink = Color(red: 0.93, green: 0.62, blue: 0.58)
 
     var body: some View {
+        if sleeping && !reduceMotion {
+            // 2 fps is plenty for a 4 s breath; the schedule exists only while a sleeping mascot is on screen.
+            TimelineView(.periodic(from: .now, by: 0.5)) { tl in canvas(t: tl.date.timeIntervalSinceReferenceDate) }
+        } else {
+            canvas(t: nil)
+        }
+    }
+
+    /// `t` nil = static pose (no animation).
+    private func canvas(t: Double?) -> some View {
         Canvas { ctx, size in
             let s = min(size.width, size.height) / 100
             ctx.translateBy(x: (size.width - 100 * s) / 2, y: (size.height - 100 * s) / 2)
             ctx.scaleBy(x: s, y: s)
+            if sleeping, let t { // slow breath: 4 s period, +-2.5% about the chin
+                let k = 1 + 0.025 * sin(t * 2 * .pi / 4)
+                ctx.translateBy(x: 50, y: 92); ctx.scaleBy(x: k, y: k); ctx.translateBy(x: -50, y: -92)
+            }
             func oval(_ r: CGRect, _ c: Color) { ctx.fill(Path(ellipseIn: r), with: .color(c)) }
             func stroke(_ p: Path, _ c: Color, _ w: CGFloat) {
                 ctx.stroke(p, with: .color(c), style: StrokeStyle(lineWidth: w, lineCap: .round))
@@ -42,7 +59,7 @@ struct ChipmunkView: View {
 
             // eyes + mouth per state
             let leftEye = CGPoint(x: 34, y: 52), rightEye = CGPoint(x: 66, y: 52)
-            switch state {
+            switch sleeping ? ChippyState.idle : state {
             case .idle: // asleep
                 arc(leftEye.x, leftEye.y - 3, 6, up: false); arc(rightEye.x, rightEye.y - 3, 6, up: false)
                 line(CGPoint(x: 46, y: 72), CGPoint(x: 54, y: 72), dark, 3)
@@ -61,6 +78,15 @@ struct ChipmunkView: View {
             case .done: // content: happy closed eyes, wide smile
                 arc(leftEye.x, leftEye.y + 3, 6, up: true); arc(rightEye.x, rightEye.y + 3, 6, up: true)
                 arc(50, 64, 11, up: false, 3.5)
+            }
+
+            if sleeping { // z's in place of the badge; one more every 0.5 s on a 2 s loop, all shown when static
+                let n = t.map { Int($0 / 0.5) % 4 } ?? 2
+                for i in 0...min(n, 2) {
+                    ctx.draw(Text("z").font(.system(size: CGFloat(22 - i * 4), weight: .black)).foregroundColor(.white.opacity(0.9 - Double(i) * 0.2)),
+                             at: CGPoint(x: 78 + CGFloat(i) * 10, y: 20 - CGFloat(i) * 9))
+                }
+                return
             }
 
             // state badge, top-right

@@ -42,6 +42,9 @@ public final class NotchModel: ObservableObject {
     @Published public var showReplyInGlance = UserDefaults.standard.bool(forKey: "showReplyInGlance") {
         didSet { UserDefaults.standard.set(showReplyInGlance, forKey: "showReplyInGlance") }
     }
+    /// Asleep after 5 quiet minutes (#54); any hook event wakes it. Only changes the mascot's pose.
+    @Published public private(set) var asleep = false
+    private var idleClock = IdleClock()
     public static let doneSeconds: TimeInterval = 600
     private var store = SessionStore()
     private var connections: [String: Connection] = [:]
@@ -94,9 +97,15 @@ public final class NotchModel: ObservableObject {
         refresh()
     }
 
+    private func updateSleep(now: Date) {
+        let s = SleepPolicy.shouldSleep(state: state, clock: idleClock, now: now)
+        if s != asleep { asleep = s }
+    }
+
     /// A PermissionRequest hook is waiting on `conn`. Main thread only.
     /// AskUserQuestion is answerable only when every question is single-select; otherwise no reply, so the terminal handles it.
     public func receiveApproval(_ payload: HookPayload, _ conn: Connection) {
+        idleClock.noteEvent(); updateSleep(now: Date())
         var req = PendingRequest(payload: payload)
         if payload.toolName == "AskUserQuestion" {
             guard req.questions != nil else { conn.respond(nil); return }
@@ -167,6 +176,7 @@ public final class NotchModel: ObservableObject {
 
     /// Drop requests whose hook went away (timeout fallback, or answered in the terminal).
     public func sweep(now: Date = Date()) {
+        updateSleep(now: now)
         let gone = pending.filter { connections[$0.id]?.peerGone ?? true }
         let before = doneItems.count
         doneItems.removeAll { now.timeIntervalSince($0.at) > Self.doneSeconds }
@@ -182,6 +192,7 @@ public final class NotchModel: ObservableObject {
 
     /// Apply a live hook event. Main thread only.
     public func apply(_ payload: HookPayload, now: Date = Date()) {
+        idleClock.noteEvent(now: now)
         store.apply(payload, now: now)
         sessions = store.rows
         switch payload.event {
@@ -200,6 +211,7 @@ public final class NotchModel: ObservableObject {
         default: break
         }
         refresh()
+        updateSleep(now: now)
     }
 }
 

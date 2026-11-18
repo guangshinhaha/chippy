@@ -19,6 +19,19 @@ enum Gallery {
                     .background(Color(white: 0.12))
                 }
             }
+            HStack(alignment: .top, spacing: 12) { // idle-sleep pose (#54): static, and in the notch after a quiet 5 min
+                VStack {
+                    ChipmunkView(state: .idle, sleeping: true).frame(width: 300, height: 200)
+                    Text("Asleep (static)").font(.caption).foregroundStyle(.white)
+                }.background(Color(white: 0.12))
+                let m = NotchMetrics.sample14
+                VStack(spacing: 4) {
+                    let model = NotchModel(state: .done, density: .compact)
+                    let _ = { model.apply(HookPayload(json: Data(#"{"session_id":"s","hook_event_name":"Stop","cwd":"/demo/api-server"}"#.utf8))!, now: .distantPast); model.sweep() }()
+                    NotchView(model: model, box: box(m)).frame(width: m.size(for: .compact).width, height: m.size(for: .compact).height)
+                    Text("Asleep in the notch (done chip, quiet 5 min)").font(.caption2).foregroundStyle(.secondary)
+                }
+            }
             ForEach(Density.allCases, id: \.self) { d in
                 let m = NotchMetrics.sample14
                 HStack(alignment: .top, spacing: 12) {
