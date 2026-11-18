@@ -67,8 +67,6 @@ public final class NotchModel: ObservableObject {
     private var folds: [String: NeedsMeFold] = [:]
     /// Requests the user opened by hand (click, list jump, key, a panel already open on arrival) never fold.
     private var userOpened = Set<String>()
-    /// Requests pinned only because the user picked an answer; clearing the picks undoes it.
-    private var answerPinned = Set<String>()
     /// Last pointer state from the panel, kept even while expanded so a new peek can start from it.
     private var hovering = false
     private let clock: () -> TimeInterval
@@ -108,7 +106,7 @@ public final class NotchModel: ObservableObject {
         if doneItems.isEmpty { peek.cancel() }
         if folds.keys.contains(where: { !pendingIds.contains($0) }) {
             folds = folds.filter { pendingIds.contains($0.key) }
-            userOpened.formIntersection(pendingIds); answerPinned.formIntersection(pendingIds)
+            userOpened.formIntersection(pendingIds)
         }
         if pending.isEmpty { if folded { folded = false } }
         else if !folded, foldDue(now: clock()) { folded = true }
@@ -195,13 +193,7 @@ public final class NotchModel: ObservableObject {
     public func savePartial(_ id: String, step: Int, answers: [String: Set<String>], byUser: Bool = true) {
         guard pending.contains(where: { $0.id == id }) else { return }
         let new = PartialAnswers(step: step, answers: answers)
-        if byUser, partials[id] != new {
-            if answers.values.contains(where: { !$0.isEmpty }) { // answering has begun: the card must not fold under the user's hand
-                answerPinned.insert(id); folds[id]?.pin()
-            } else if answerPinned.remove(id) != nil, !userOpened.contains(id) { // cleared back to nothing: not opened by hand
-                folds[id]?.unpin(now: clock(), hovering: hovering)
-            }
-        }
+        if byUser { userOpened.insert(id); folds[id]?.pin() } // any real interaction (step, pick, toggle, clear) means the user is engaged
         if partials[id] != new { partials[id] = new } // an unchanged write would still notify observers
 
     }
@@ -215,7 +207,7 @@ public final class NotchModel: ObservableObject {
     /// When the soonest folded request's hook gives up and the terminal takes over (the badge ring drains to it).
     public var foldedDeadline: (start: Date, end: Date)? {
         guard folded else { return nil }
-        return pending.map { r in (r.createdAt, r.createdAt.addingTimeInterval(timeout(for: r))) }
+        return pending.compactMap { r in knownTimeout(for: r).map { (r.createdAt, r.createdAt.addingTimeInterval($0)) } }
             .min { $0.1 < $1.1 }.map { (start: $0.0, end: $0.1) }
     }
 
@@ -234,6 +226,10 @@ public final class NotchModel: ObservableObject {
     }
 
     /// Hook-side wait for this request, so a card can show when the terminal takes over.
+    /// The wait the relay reported, or nil from an older relay: then nothing is dropped on a timeout (only a hang-up ends
+    /// the request), and no ring or "times out" text is shown, because the real wait may be custom.
+    public func knownTimeout(for r: PendingRequest) -> TimeInterval? { r.waitSeconds }
+
     /// The relay's own reported wait wins (a custom `--timeout`); the defaults cover an older relay.
     public func timeout(for r: PendingRequest) -> TimeInterval { r.waitSeconds ?? (r.questions != nil ? questionTimeout : approvalTimeout) }
 
@@ -364,8 +360,10 @@ public final class NotchModel: ObservableObject {
             record(req, channel: .notch, decision: "auto_always", now: req.createdAt)
             return
         }
-        // A panel the user opened by click (rest panel, list, done detail) is theirs: the approval joins it and never folds.
-        let engaged = restOpen || listOpen || doneOpen
+        if case .done? = focus { focus = nil }
+        doneOpen = false // a new blocking request takes over from a done detail: it is not a panel the user opened for this
+        // A rest panel or list the user opened by click is theirs: the approval joins it and never folds.
+        let engaged = restOpen || listOpen
         if folded { // a new request auto-expands; the earlier ones, shown again with it, get a fresh timer
             folded = false
             for id in Array(folds.keys) { folds[id]?.arrive(now: clock(), hovering: hovering, engaged: false) }
@@ -376,7 +374,6 @@ public final class NotchModel: ObservableObject {
         if engaged { userOpened.insert(req.id) }
         pending.append(req)
         connections[req.id] = conn
-        if case .done? = focus { focus = nil; doneOpen = false } // a new blocking request takes over from a done detail
         refresh()
         updateSleep(now: now)
         if !Tour.isDemo(req.sessionId) {
@@ -457,8 +454,9 @@ public final class NotchModel: ObservableObject {
         defer { updateSleep(now: now) } // after expiry + refresh, so it sees the settled state
         if peeking, !peek.isPeeking(now: clock()) { refresh() } // an expired peek settles to collapsed
         if !folded, !pending.isEmpty, foldDue(now: clock()) { refresh() } // an expired needs-me timer folds the card
-        // Gone: the hook hung up, or its wait is over (hover only holds the fold, never the hook's deadline).
-        let gone = pending.filter { r in (connections[r.id]?.peerGone ?? true) || now >= r.createdAt.addingTimeInterval(timeout(for: r)) }
+        // Gone: the hook hung up, or its reported wait is over (hover only holds the fold, never the hook's deadline).
+        // With no reported wait (older relay) only a hang-up counts.
+        let gone = pending.filter { r in (connections[r.id]?.peerGone ?? true) || (knownTimeout(for: r).map { now >= r.createdAt.addingTimeInterval($0) } ?? false) }
         let expired = doneItems.contains { now.timeIntervalSince($0.at) > Self.doneSeconds }
             || terminalItems.contains { now.timeIntervalSince($0.at) > Self.doneSeconds }
         var r = recent

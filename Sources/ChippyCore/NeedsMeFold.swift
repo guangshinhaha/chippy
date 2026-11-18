@@ -24,14 +24,12 @@ public struct NeedsMeFold: Equatable {
     /// The user opened the card (click, list jump, key): it stays until nothing is pending.
     public mutating func pin() { pinned = true; armed = false; gate.cancel() }
 
-    /// A selection pin was undone (the user cleared their answer): the card was never opened by hand, so it gets a full timer again.
-    public mutating func unpin(now: TimeInterval, hovering: Bool) {
-        guard pinned else { return }
-        pinned = false; armed = true
-        gate.start(now: now, hovering: hovering)
+    /// A pointer arriving after the deadline but before the fold was applied (the model folds on its next sweep or
+    /// refresh) must not be folded away under: the timer restarts paused and resumes in full when the pointer leaves.
+    public mutating func setHover(_ inside: Bool, now: TimeInterval) {
+        if inside, armed, !pinned, !gate.isPeeking(now: now) { gate.start(now: now, hovering: true); return }
+        gate.setHover(inside, now: now)
     }
-
-    public mutating func setHover(_ inside: Bool, now: TimeInterval) { gate.setHover(inside, now: now) }
 
     /// Nothing is pending any more: forget the timer and the pin.
     public mutating func reset() { armed = false; pinned = false; gate.cancel() }

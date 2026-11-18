@@ -38,7 +38,11 @@ public struct HookPayload {
         leadIn = (o["chippy_lead_in"] as? String).map { TranscriptTail.truncate($0, to: TranscriptTail.maxChars) }
         transcriptPath = o["transcript_path"] as? String
         branchOverride = o["chippy_branch"] as? String // only the demo command sets this
-        waitSeconds = (o["chippy_wait"] as? NSNumber).map(\.doubleValue).flatMap { $0 >= 1 && $0 <= 600 ? $0 : nil }
+        // A real number only (a JSON boolean is an NSNumber too), within what the relay can send: approval <= 120s, question <= 300s.
+        let cap: Double = toolName == "AskUserQuestion" ? 300 : 120
+        waitSeconds = (o["chippy_wait"] as? NSNumber).flatMap { n in
+            CFGetTypeID(n) == CFBooleanGetTypeID() ? nil : n.doubleValue
+        }.flatMap { $0 >= 1 && $0 <= cap ? $0 : nil }
     }
 
     /// Repo name for the session. A Claude worktree (`<repo>/.claude/worktrees/agent-xyz`) is labelled by its repo,

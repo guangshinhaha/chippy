@@ -103,7 +103,7 @@ final class NeedsMeFoldTests: XCTestCase {
 
     func testFoldedRequestKeepsItsRemainingTime() throws {
         let m = model()
-        ask(m)
+        ask(m, wait: 20)
         advance(m, 16)
         // The model mirrors the hook's 20s; the badge ring drains to createdAt + 20s.
         let d = try XCTUnwrap(m.foldedDeadline)
@@ -224,13 +224,13 @@ final class NeedsMeFoldTests: XCTestCase {
         m.setHover(false)                                    // 5s left: not due yet
         XCTAssertFalse(m.folded)
         clockNow += 5.1
-        m.setHover(true); m.setHover(false)                  // no sweep ran; a hover change re-evaluates
+        m.setHover(false)                                    // idempotent leave; no sweep ran, and the re-evaluation folds it
         XCTAssertTrue(m.folded)
     }
 
     func testHoverNeverHoldsAHookDeadlineOpen() {
         let m = model()
-        let id = ask(m)
+        let id = ask(m, wait: 20)
         m.setHover(true)
         advance(m, 100); XCTAssertFalse(m.folded)            // held by the cursor
         m.sweep(now: Date().addingTimeInterval(21))          // the hook's 20s wait is over
@@ -252,14 +252,64 @@ final class NeedsMeFoldTests: XCTestCase {
         advance(m, 0.2); XCTAssertTrue(m.folded)             // 15s after the FIRST, not the second
     }
 
-    func testPickingAnAnswerPinsAndClearingItUnpins() {
+    func testAnyRealInteractionWithTheCardPins() {
+        for (step, answers) in [(0, ["Q?": Set(["x"])]), (1, [:]), (0, ["Q?": Set<String>()])] { // a pick, a step change, a clear
+            let m = model()
+            let id = ask(m)
+            m.savePartial(id, step: step, answers: answers)
+            advance(m, 600)
+            XCTAssertFalse(m.folded, "step \(step) answers \(answers)")
+        }
+    }
+
+    func testUnknownWaitIsNeverDroppedOnTimeoutAndShowsNoRing() {
         let m = model()
-        let id = ask(m)
-        m.savePartial(id, step: 0, answers: ["Q?": ["x"]])
-        advance(m, 600); XCTAssertFalse(m.folded)            // picked: held open
-        m.savePartial(id, step: 0, answers: ["Q?": []])      // cleared back to nothing
-        advance(m, 14.9); XCTAssertFalse(m.folded)           // a full timer again
-        advance(m, 0.2); XCTAssertTrue(m.folded)
+        let id = ask(m)                                       // older relay: no chippy_wait
+        XCTAssertNil(m.knownTimeout(for: m.pending[0]))
+        advance(m, 16)
+        XCTAssertNil(m.foldedDeadline)
+        m.sweep(now: Date().addingTimeInterval(500))
+        XCTAssertTrue(m.pending.contains { $0.id == id })     // only a hang-up ends it
+        close(fds[fds.count - 1][1]); fds[fds.count - 1][1] = -1
+        m.sweep(now: Date().addingTimeInterval(500))
+        XCTAssertFalse(m.pending.contains { $0.id == id })
+    }
+
+    func testHookWaitRejectsBooleansAndOutOfRangeForTheTool() {
+        func w(_ x: String, tool: String = "Bash") -> TimeInterval? {
+            HookPayload(json: Data(#"{"session_id":"s","hook_event_name":"PermissionRequest","tool_name":"\#(tool)","chippy_wait":\#(x)}"#.utf8))!.waitSeconds
+        }
+        XCTAssertNil(w("true")); XCTAssertNil(w("false"))
+        XCTAssertEqual(w("120"), 120); XCTAssertNil(w("121"))
+        XCTAssertEqual(w("300", tool: "AskUserQuestion"), 300); XCTAssertNil(w("301", tool: "AskUserQuestion"))
+    }
+
+    func testApprovalReplacingAnOpenDoneCardIsNotUserOpened() {
+        let m = model()
+        m.apply(HookPayload(json: Data(#"{"session_id":"d","hook_event_name":"Stop","cwd":"/x/q"}"#.utf8))!, now: t0)
+        m.toggleOpen()                                        // done detail open by click
+        XCTAssertTrue(m.doneOpen)
+        ask(m)
+        XCTAssertFalse(m.doneOpen)
+        advance(m, 15.1)
+        XCTAssertTrue(m.folded); XCTAssertEqual(m.density, .collapsed)
+    }
+
+    func testPointerArrivingAfterTheDeadlineButBeforeTheFoldHoldsIt() {
+        var f = NeedsMeFold()
+        f.arrive(now: 0, hovering: false, engaged: false)
+        f.setHover(true, now: 20)                             // due since 15, not yet applied
+        XCTAssertFalse(f.isDue(now: 500))
+        f.setHover(false, now: 500)
+        XCTAssertFalse(f.isDue(now: 514.9)); XCTAssertTrue(f.isDue(now: 515))
+
+        let m = model()
+        ask(m)
+        clockNow += 16                                        // due, but no sweep or refresh has folded it yet
+        m.setHover(true)
+        XCTAssertFalse(m.folded)                              // never folded under the pointer
+        advance(m, 100); XCTAssertFalse(m.folded)
+        m.setHover(false); advance(m, 15.1); XCTAssertTrue(m.folded)
     }
 
     func testClearingAfterOpeningByHandStaysPinned() {

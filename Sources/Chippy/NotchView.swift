@@ -98,7 +98,7 @@ struct CountBadge: View {
             .padding(.horizontal, 4).frame(minWidth: 16, maxWidth: max(maxWidth, 16), minHeight: 16)
             .background(Capsule().fill(needsYou ? Color.orange : .white.opacity(0.92)))
             .overlay {
-                if needsYou { Capsule().trim(from: 0, to: fraction).stroke(.white.opacity(0.9), style: StrokeStyle(lineWidth: 1.5, lineCap: .round)).padding(-2.5) }
+                if needsYou, deadline != nil { Capsule().trim(from: 0, to: fraction).stroke(.white.opacity(0.9), style: StrokeStyle(lineWidth: 1.5, lineCap: .round)).padding(-2.5) }
             }
             .scaleEffect(pulsing ? 1.12 : 1)
             .opacity(pulsing ? 0.85 : 1)
@@ -317,7 +317,7 @@ struct NotchView: View {
                     Color.clear.frame(width: 28 * 1.4, height: 28 * 1.4) // where NotchView.icon sits
                     VStack(alignment: .leading, spacing: 0) {
                         Text(headerTitle).font(.headline.monospacedDigit()).foregroundStyle(.white)
-                        if !model.listOpen, let r = model.shownPending { TimeoutNote(createdAt: r.createdAt, timeout: model.timeout(for: r)) }
+                        if !model.listOpen, let r = model.shownPending, let t = model.knownTimeout(for: r) { TimeoutNote(createdAt: r.createdAt, timeout: t) }
                     }
                     Spacer(minLength: 0)
                     if model.waitingItems.count > 1 && !model.listOpen {
@@ -539,7 +539,7 @@ struct QuestionCard: View {
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: on ? 0.26 : 0.18)))
                 .animation(.easeOut(duration: reduceMotion ? 0.01 : 0.12), value: on)
                 .contentShape(Rectangle())
-                .onTapGesture { pick(i) }
+                .onTapGesture { pick(i); progress(step, answers, true) } // a tap is an interaction even when the pick does not change
                 .accessibilityAddTraits(on ? .isSelected : [])
             }
         }
