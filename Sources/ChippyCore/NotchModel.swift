@@ -133,7 +133,7 @@ public final class NotchModel: ObservableObject {
     }
 
     /// A PermissionRequest hook is waiting on `conn`. Main thread only.
-    /// AskUserQuestion is answerable only when every question is single-select; otherwise no reply, so the terminal handles it.
+    /// AskUserQuestion is answerable when every question parses (single or multi-select); otherwise no reply, so the terminal handles it.
     public func receiveApproval(_ payload: HookPayload, _ conn: Connection, now: Date = Date()) {
         idleClock.noteEvent(now: now)
         var req = PendingRequest(payload: payload)
@@ -179,19 +179,38 @@ public final class NotchModel: ObservableObject {
         refresh()
     }
 
-    /// Answer a question request with one chosen option label per question (keyed by question text).
-    public func answer(_ id: String, _ answers: [String: String], now: Date = Date()) {
-        guard let i = pending.firstIndex(where: { $0.id == id }), let conn = connections.removeValue(forKey: id),
-              var input = questionInputs.removeValue(forKey: id) else { return }
+    /// Answer with a set of labels per question. Single-select needs exactly one; multi-select at least one.
+    /// Multi-select labels are joined in the question's option order with ", " (the documented answer format;
+    /// not yet verified in a live Claude Code session). An invalid selection changes nothing: the card stays up.
+    /// `.refused` consumes nothing (card stays up); `.gone` means the hook had already given up, so the request is dropped.
+    public enum Answered: Equatable { case sent, refused, gone }
+
+    @discardableResult
+    public func answer(_ id: String, selections: [String: Set<String>], now: Date = Date()) -> Answered {
+        guard let i = pending.firstIndex(where: { $0.id == id }), connections[id] != nil, questionInputs[id] != nil,
+              let answers = Self.joined(pending[i].questions ?? [], selections) else { return .refused }
+        let conn = connections.removeValue(forKey: id)!
+        var input = questionInputs.removeValue(forKey: id)!
         let req = pending.remove(at: i)
-        // A complete set of real option labels, or nothing: a partial answer would run the tool with a wrong one.
-        let valid = req.questions?.allSatisfy { q in answers[q.question].map { a in q.options.contains { $0.label == a } } ?? false } ?? false
-        if conn.peerGone || !valid { conn.respond(nil); record(req, channel: .terminal, decision: "none", now: now); refresh(); return }
+        if conn.peerGone { conn.respond(nil); record(req, channel: .terminal, decision: "none", now: now); refresh(); return .gone }
         input["answers"] = answers
         let reply: [String: Any] = ["behavior": "allow", "updatedInput": input]
         conn.respond(try? JSONSerialization.data(withJSONObject: reply))
         record(req, channel: .notch, decision: "answered", now: now)
         refresh()
+        return .sent
+    }
+
+    /// One joined answer string per question, or nil unless every question has a valid selection.
+    static func joined(_ qs: [AskQuestion], _ selections: [String: Set<String>]) -> [String: String]? {
+        guard !qs.isEmpty else { return nil }
+        var out: [String: String] = [:]
+        for q in qs {
+            guard let chosen = selections[q.question], !chosen.isEmpty, chosen.isSubset(of: Set(q.options.map(\.label))),
+                  q.multiSelect || chosen.count == 1 else { return nil }
+            out[q.question] = q.options.map(\.label).filter(chosen.contains).joined(separator: ", ")
+        }
+        return out
     }
 
     /// "Answer in terminal": reply with nothing so the hook prints nothing and Claude Code shows its own dialog at once.

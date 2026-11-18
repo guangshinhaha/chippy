@@ -97,7 +97,7 @@ final class TranscriptTailTests: XCTestCase {
         socketpair(AF_UNIX, SOCK_STREAM, 0, &fds)
         m.receiveApproval(HookPayload(json: questionPayload("AskUserQuestion"))!, Connection(fd: fds[0]))
         XCTAssertEqual(m.pending.first?.leadIn, "SECRET-LEAD-IN")
-        m.answer(m.pending[0].id, ["A or B?": "A"])
+        m.answer(m.pending[0].id, selections: ["A or B?": ["A"]])
         let logged = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
         XCTAssertFalse(logged.isEmpty)
         XCTAssertFalse(logged.contains("SECRET-LEAD-IN"))
