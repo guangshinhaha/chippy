@@ -44,6 +44,9 @@ public final class NotchModel: ObservableObject {
     @Published public var showReplyInGlance = UserDefaults.standard.bool(forKey: "showReplyInGlance") {
         didSet { UserDefaults.standard.set(showReplyInGlance, forKey: "showReplyInGlance") }
     }
+    /// Asleep after 5 quiet minutes (#54); any hook event wakes it. Only changes the mascot's pose.
+    @Published public private(set) var asleep = false
+    private var idleClock = IdleClock()
     public static let doneSeconds: TimeInterval = 600
     /// A finished chip is shown compact while peeking, then the island settles to collapsed (chip stays in `doneItems`).
     @Published public private(set) var peeking = false
@@ -95,7 +98,8 @@ public final class NotchModel: ObservableObject {
 
     /// The pointer entered or left the island: a running peek holds while it is over and resumes when it leaves.
     /// Ignored while expanded, and it never re-opens an expired peek.
-    public func setHover(_ inside: Bool) {
+    public func setHover(_ inside: Bool, now: Date = Date()) {
+        wake(now: now)
         hovering = inside
         guard density != .expanded else { return }
         peek.setHover(inside, now: clock())
@@ -103,7 +107,8 @@ public final class NotchModel: ObservableObject {
 
     /// Click on the notch. A waiting approval ignores it. A done chip opens its detail (click again to go back);
     /// otherwise it opens or closes the session peek.
-    public func toggleOpen() {
+    public func toggleOpen(now: Date = Date()) {
+        wake(now: now)
         guard pending.isEmpty else { return }
         if (!doneItems.isEmpty || !terminalItems.isEmpty) && !pinnedOpen { doneOpen.toggle() } else { pinnedOpen.toggle() }
         refresh()
@@ -131,9 +136,6 @@ public final class NotchModel: ObservableObject {
     /// Hook-side waits, mirrored here to tell a timeout from an answer (defaults; the installer writes the same numbers).
     public var approvalTimeout: TimeInterval = TimeInterval(SettingsInstaller.defaultApprovalTimeout)
     public var questionTimeout: TimeInterval = TimeInterval(SettingsInstaller.defaultQuestionTimeout)
-
-    /// Requests and chips that want the user's attention: pending cards plus terminal chips.
-    public var waitingCount: Int { pending.count + terminalItems.count }
 
     /// The stored session host first, then the one the request arrived with (same order everywhere).
     private func host(for req: PendingRequest) -> HostInfo? {
@@ -164,9 +166,21 @@ public final class NotchModel: ObservableObject {
     /// A terminal chip must outlive a parallel call's tool events, so a matching PostToolUse counts only after this.
     private static let terminalGrace: TimeInterval = 2
 
+    /// User interaction (hover, click) wakes the mascot and restarts the countdown, like an event does.
+    public func wake(now: Date = Date()) {
+        idleClock.noteEvent(now: now)
+        if asleep { asleep = false }
+    }
+
+    private func updateSleep(now: Date) {
+        let s = SleepPolicy.shouldSleep(state: state, hasDoneChips: !doneItems.isEmpty, clock: idleClock, now: now)
+        if s != asleep { asleep = s }
+    }
+
     /// A PermissionRequest hook is waiting on `conn`. Main thread only.
-    /// AskUserQuestion is answerable only when every question is single-select; otherwise no reply, so the terminal handles it.
-    public func receiveApproval(_ payload: HookPayload, _ conn: Connection) {
+    /// AskUserQuestion is answerable when every question parses (single or multi-select); otherwise no reply, so the terminal handles it.
+    public func receiveApproval(_ payload: HookPayload, _ conn: Connection, now: Date = Date()) {
+        idleClock.noteEvent(now: now)
         var req = PendingRequest(payload: payload)
         if payload.toolName == "AskUserQuestion" {
             guard req.questions != nil else {
@@ -186,6 +200,7 @@ public final class NotchModel: ObservableObject {
         pending.append(req)
         connections[req.id] = conn
         refresh()
+        updateSleep(now: now)
         if !Tour.isDemo(req.sessionId) {
             onSound?(.needsYou, req.sessionId, sessions.first { $0.id == req.sessionId }?.host ?? payload.host)
         }
@@ -214,20 +229,38 @@ public final class NotchModel: ObservableObject {
         refresh()
     }
 
-    /// Answer a question request with one chosen option label per question (keyed by question text).
-    public func answer(_ id: String, _ answers: [String: String], now: Date = Date()) {
-        guard let i = pending.firstIndex(where: { $0.id == id }), let conn = connections.removeValue(forKey: id),
-              var input = questionInputs.removeValue(forKey: id) else { return }
+    /// Answer with a set of labels per question. Single-select needs exactly one; multi-select at least one.
+    /// Multi-select labels are joined in the question's option order with ", " (the documented answer format;
+    /// not yet verified in a live Claude Code session). An invalid selection changes nothing: the card stays up.
+    /// `.refused` consumes nothing (card stays up); `.gone` means the hook had already given up, so the request is dropped.
+    public enum Answered: Equatable { case sent, refused, gone }
+
+    @discardableResult
+    public func answer(_ id: String, selections: [String: Set<String>], now: Date = Date()) -> Answered {
+        guard let i = pending.firstIndex(where: { $0.id == id }), connections[id] != nil, questionInputs[id] != nil,
+              let answers = Self.joined(pending[i].questions ?? [], selections) else { return .refused }
+        let conn = connections.removeValue(forKey: id)!
+        var input = questionInputs.removeValue(forKey: id)!
         let req = pending.remove(at: i)
-        // A complete set of real option labels, or nothing: a partial answer would run the tool with a wrong one.
-        let valid = req.questions?.allSatisfy { q in answers[q.question].map { a in q.options.contains { $0.label == a } } ?? false } ?? false
-        if conn.peerGone { connections[id] = conn; dropGone(req, now: now); refresh(); return }
-        if !valid { conn.respond(nil); record(req, channel: .terminal, decision: "none", now: now); refresh(); return }
+        if conn.peerGone { connections[id] = conn; dropGone(req, now: now); refresh(); return .gone }
         input["answers"] = answers
         let reply: [String: Any] = ["behavior": "allow", "updatedInput": input]
         conn.respond(try? JSONSerialization.data(withJSONObject: reply))
         record(req, channel: .notch, decision: "answered", now: now)
         refresh()
+        return .sent
+    }
+
+    /// One joined answer string per question, or nil unless every question has a valid selection.
+    static func joined(_ qs: [AskQuestion], _ selections: [String: Set<String>]) -> [String: String]? {
+        guard !qs.isEmpty else { return nil }
+        var out: [String: String] = [:]
+        for q in qs {
+            guard let chosen = selections[q.question], !chosen.isEmpty, chosen.isSubset(of: Set(q.options.map(\.label))),
+                  q.multiSelect || chosen.count == 1 else { return nil }
+            out[q.question] = q.options.map(\.label).filter(chosen.contains).joined(separator: ", ")
+        }
+        return out
     }
 
     /// "Answer in terminal": reply with nothing so the hook prints nothing and Claude Code shows its own dialog at once.
@@ -243,6 +276,7 @@ public final class NotchModel: ObservableObject {
 
     /// Drop requests whose hook went away (timeout fallback, or answered in the terminal).
     public func sweep(now: Date = Date()) {
+        defer { updateSleep(now: now) } // after expiry + refresh, so it sees the settled state
         if peeking, !peek.isPeeking(now: clock()) { refresh() } // an expired peek settles to collapsed
         let gone = pending.filter { connections[$0.id]?.peerGone ?? true }
         let expired = doneItems.contains { now.timeIntervalSince($0.at) > Self.doneSeconds }
@@ -260,6 +294,7 @@ public final class NotchModel: ObservableObject {
 
     /// Apply a live hook event. Main thread only.
     public func apply(_ payload: HookPayload, now: Date = Date()) {
+        idleClock.noteEvent(now: now)
         store.apply(payload, now: now)
         sessions = store.rows
         // Conservative: tool events are shared with parallel/subagent calls, so only a turn boundary (prompt, Stop, end)
@@ -286,6 +321,7 @@ public final class NotchModel: ObservableObject {
         default: break
         }
         refresh()
+        updateSleep(now: now)
     }
 }
 

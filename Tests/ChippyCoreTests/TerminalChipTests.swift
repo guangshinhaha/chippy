@@ -14,7 +14,7 @@ final class TerminalChipTests: XCTestCase {
             "cwd": "/Users/x/repos/api-server", "chippy_branch": "main", "tool_name": tool, "tool_input": input]))!
     }
     private let multi: [String: Any] = ["questions": [["question": "SECRET Q?", "header": "h", "multiSelect": true,
-                                                       "options": [["label": "A", "description": "a"], ["label": "B", "description": "b"]]]]]
+                                                       "options": [["label": "A, x", "description": "a"], ["label": "B", "description": "b"]]]]]
 
     func testUnanswerableQuestionCreatesChipWithRepoOnly() {
         let m = model()
@@ -90,12 +90,11 @@ final class TerminalChipTests: XCTestCase {
         }
     }
 
-    func testChipNeverOverridesWorkingAndCountsWaiting() {
+    func testChipNeverOverridesWorking() {
         let m = model()
         m.apply(hook("UserPromptSubmit", "s1"))
         m.receiveApproval(perm("AskUserQuestion", multi, sid: "s2"), Connection.detached())
         XCTAssertEqual(m.state, .working)
-        XCTAssertEqual(m.waitingCount, 1)
         XCTAssertFalse(m.tall)
     }
 

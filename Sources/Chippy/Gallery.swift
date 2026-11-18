@@ -19,6 +19,12 @@ enum Gallery {
 
     @MainActor
     static func render(to path: String) {
+        // The asleep sample: built once here (isolated store/log), a quiet session. No side effects in the view body.
+        let sleepy = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("gal-sleep.jsonl")))
+        sleepy.apply(HookPayload(json: Data(#"{"session_id":"s","hook_event_name":"Stop","cwd":"/demo/api-server"}"#.utf8))!, now: .distantPast)
+        sleepy.dismissDone()
+        sleepy.toggleOpen() // peek open so the mascot is visible
+        sleepy.sweep(now: Date().addingTimeInterval(400))
         let view = VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) { // all 4 v1 states, side by side
                 ForEach(ChippyState.allCases, id: \.self) { s in
@@ -27,6 +33,17 @@ enum Gallery {
                         Text(s.title).font(.caption).foregroundStyle(.white)
                     }
                     .background(Color(white: 0.12))
+                }
+            }
+            HStack(alignment: .top, spacing: 12) { // idle-sleep pose (#54): static, and in the notch after a quiet 5 min
+                VStack {
+                    ChipmunkView(state: .idle, sleeping: true).frame(width: 300, height: 200)
+                    Text("Asleep (static)").font(.caption).foregroundStyle(.white)
+                }.background(Color(white: 0.12))
+                let m = NotchMetrics.sample14
+                VStack(spacing: 4) {
+                    NotchView(model: sleepy, box: box(m)).frame(width: m.size(for: .expanded).width, height: 120)
+                    Text("Asleep in the notch (quiet session peeked open, quiet 5 min)").font(.caption2).foregroundStyle(.secondary)
                 }
             }
             ForEach(Density.allCases, id: \.self) { d in
@@ -135,14 +152,15 @@ enum Gallery {
     static func renderQuestion(to path: String) {
         let log = tempLog()
         defer { try? FileManager.default.removeItem(at: log) }
-        let model = demoModel(prompt: "Set up the login page", tool: "AskUserQuestion", input: ["questions": [["question": "Which auth method should the login page use?", "header": "Auth", "multiSelect": false, "options": [
+        let model = demoModel(prompt: "Set up the login page", tool: "AskUserQuestion", input: ["questions": [["question": "Which sign-in methods should the login page offer?", "header": "Auth", "multiSelect": true, "options": [
                 ["label": "Email + password", "description": "Classic form, simplest to ship. We would store salted hashes and need a reset flow, rate limiting and a lockout policy before launch."],
                 ["label": "Magic link", "description": "No passwords to store"],
                 ["label": "SSO", "description": "Use the school's identity provider"]]]]],
             extra: ["chippy_lead_in": "Before I wire up the login page I need to pick how people sign in. The school has an identity provider, but it is not set up for this app yet, and a plain password form would mean storing credentials."], log: log)
         let m = NotchMetrics(width: 185, height: 32)
         let sz = m.size(for: .expanded, tall: model.tall)
-        let r = ImageRenderer(content: NotchView(model: model, box: box(m)).frame(width: sz.width, height: 560).background(Color(white: 0.25)))
+        let qbox = box(m); qbox.contentHeight = 540 // the app measures this; a static render must be told
+        let r = ImageRenderer(content: NotchView(model: model, box: qbox).frame(width: sz.width, height: 560).background(Color(white: 0.25)))
         r.scale = 2
         guard let img = r.nsImage, let tiff = img.tiffRepresentation,
               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
@@ -154,7 +172,7 @@ enum Gallery {
         func make(open: Bool) -> NotchModel {
             let model = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("gal.jsonl")))
             let json: [String: Any] = ["session_id": "a", "hook_event_name": "PermissionRequest", "cwd": "/demo/api-server", "chippy_branch": "main",
-                "tool_name": "AskUserQuestion", "tool_input": ["questions": [["question": "SECRET QUESTION TEXT", "header": "x", "multiSelect": true, "options": [["label": "A", "description": "a"], ["label": "B", "description": "b"]]]]]]
+                "tool_name": "AskUserQuestion", "tool_input": ["questions": [["question": "SECRET QUESTION TEXT", "header": "x", "multiSelect": true, "options": [["label": "A, x", "description": "a"], ["label": "B", "description": "b"]]]]]]
             model.receiveApproval(HookPayload(json: try! JSONSerialization.data(withJSONObject: json))!, Connection.detached())
             if open { model.toggleOpen() }
             return model
@@ -172,14 +190,19 @@ enum Gallery {
         func mixed() -> some View {
             let model = make(open: false)
             let reply = "Fixed the login timeout.\n\n" + (1...12).map { "- change \($0) in auth.ts" }.joined(separator: "\n") + "\n\nShould I also bump the refresh-token lifetime?"
-            for sid in ["d1", "d2", "d3"] {
-                func p(_ ev: String, _ extra: String = "") -> HookPayload { HookPayload(json: Data(#"{"session_id":"\#(sid)","hook_event_name":"\#(ev)","cwd":"/demo/repo-\#(sid)"\#(extra)}"#.utf8))! }
-                model.apply(p("UserPromptSubmit", #","prompt":"Fix it""#))
-                model.apply(p("Stop", ",\"last_assistant_message\":\"\(reply.replacingOccurrences(of: "\n", with: "\\n"))\""))
+            func send(_ fields: [String: Any]) {
+                model.apply(HookPayload(json: try! JSONSerialization.data(withJSONObject: fields))!)
             }
-            let json: [String: Any] = ["session_id": "b", "hook_event_name": "PermissionRequest", "cwd": "/demo/web-app", "tool_name": "AskUserQuestion",
-                "tool_input": ["questions": [["question": "q", "header": "x", "multiSelect": true, "options": [["label": "A", "description": "a"], ["label": "B", "description": "b"]]]]]]
-            model.receiveApproval(HookPayload(json: try! JSONSerialization.data(withJSONObject: json))!, Connection.detached())
+            for sid in ["d1", "d2", "d3"] {
+                let base: [String: Any] = ["session_id": sid, "cwd": "/demo/repo-\(sid)"]
+                send(base.merging(["hook_event_name": "UserPromptSubmit", "prompt": "Fix it"]) { $1 })
+                send(base.merging(["hook_event_name": "Stop", "last_assistant_message": reply]) { $1 }) // JSONSerialization does the escaping
+            }
+            // Two terminal chips, built explicitly: the one from make() ("a" / api-server) plus a second session.
+            let ask: [String: Any] = ["session_id": "b", "hook_event_name": "PermissionRequest", "cwd": "/demo/web-app", "tool_name": "AskUserQuestion",
+                "tool_input": ["questions": [["question": "q"]]]] // no options: not answerable, so it goes to the terminal
+            model.receiveApproval(HookPayload(json: try! JSONSerialization.data(withJSONObject: ask))!, Connection.detached())
+            precondition(model.terminalItems.count == 2, "mixed() needs exactly two terminal chips")
             model.toggleOpen()
             let b = box(m); b.contentHeight = NotchMetrics.maxExpandedHeight
             let sz = m.size(for: .expanded, tall: model.tall, contentHeight: b.contentHeight)
