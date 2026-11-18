@@ -247,6 +247,21 @@ struct NotchView: View {
     static let sessionRowCap = GlanceMetrics.rowCap // rows are GlanceMetrics.rowHeight each
 
     /// Terminal chips as cards (at most `terminalCardCap`, then a "N more" row, so the panel's measured height stays within its cap beside done cards).
+    @ViewBuilder private var glanceRows: some View {
+        // Live glance (#90): one line per session, working first. The word is the tool's category only, never its input.
+        // One timeline for the rows: a word with no new event for 90s (Esc, crash) falls back to the state at read time.
+        TimelineView(.periodic(from: .now, by: 15)) { ctx in
+            let ordered = model.glanceSessions(now: ctx.date) // re-ranked every tick, needs-you always first
+            ForEach(ordered.prefix(Self.sessionRowCap)) { row in
+                let line = model.glanceLine(for: row, now: ctx.date)
+                GlanceRow(label: model.repoLabel(cwd: row.cwd, project: row.project), mark: model.identity(cwd: row.cwd, project: row.project), text: line.text, live: line.live)
+            }
+            if ordered.count > Self.sessionRowCap {
+                Text("\(ordered.count - Self.sessionRowCap) more sessions").font(.caption2).foregroundStyle(.white.opacity(0.6))
+            }
+        }
+    }
+
     @ViewBuilder private var terminalCards: some View {
         ForEach(model.terminalItems.reversed().prefix(Self.terminalCardCap)) { t in TerminalCard(item: t, repo: model.repoLabel(cwd: t.cwd, project: t.project).text, mark: model.identity(cwd: t.cwd, project: t.project)) { model.dismissTerminal(t.sessionId) }.reveal(0.12) }
         let hidden = model.terminalItems.count - Self.terminalCardCap
@@ -371,7 +386,16 @@ struct NotchView: View {
                 } else if let d = model.shownDone {
                     DoneCard(item: d, repo: model.repoLabel(cwd: d.cwd, project: d.project).text, mark: model.identity(cwd: d.cwd, project: d.project), full: true) { model.dismissDone(d.sessionId) }.reveal(0.12)
                 } else if model.restOpen, let digest = model.awayDigest {
-                    AwayDigestView(model: model, digest: digest).reveal(0.12) // #92: replaces the chips and Recent it already covers
+                    AwayDigestView(model: model, digest: digest).reveal(0.12) // #92: on top; it covers its own chips and Recent
+                    // Everything the digest does not cover stays reachable below, compact.
+                    let covered = Set(digest.rows.map(\.sessionId)).union(digest.finishedIds)
+                    ForEach(model.terminalItems.reversed().filter { !covered.contains($0.sessionId) }.prefix(2)) { t in
+                        TerminalCard(item: t, repo: model.repoLabel(cwd: t.cwd, project: t.project).text, mark: model.identity(cwd: t.cwd, project: t.project)) { model.dismissTerminal(t.sessionId) }.reveal(0.12)
+                    }
+                    ForEach(model.doneItems.reversed().filter { !covered.contains($0.sessionId) }.prefix(1)) { d in
+                        DoneCard(item: d, repo: model.repoLabel(cwd: d.cwd, project: d.project).text, mark: model.identity(cwd: d.cwd, project: d.project), full: false) { model.dismissDone(d.sessionId) }.reveal(0.12)
+                    }
+                    glanceRows
                 } else if model.restOpen {
                     terminalCards
                     doneCards(limit: 3)
@@ -382,18 +406,7 @@ struct NotchView: View {
                                                           mark: { model.identity(cwd: $0.cwd, project: $0.project) }).reveal(0.12) }
                     }
                     if model.sessions.isEmpty && model.recent.items.isEmpty { Text("No agent sessions.").font(.caption).foregroundStyle(.white.opacity(0.6)) }
-                    // Live glance (#90): one line per session, working first. The word is the tool's category only, never its input.
-                    // One timeline for the rows: a word with no new event for 90s (Esc, crash) falls back to the state at read time.
-                    TimelineView(.periodic(from: .now, by: 15)) { ctx in
-                        let ordered = model.glanceSessions(now: ctx.date) // re-ranked every tick, needs-you always first
-                        ForEach(ordered.prefix(Self.sessionRowCap)) { row in
-                            let line = model.glanceLine(for: row, now: ctx.date)
-                            GlanceRow(label: model.repoLabel(cwd: row.cwd, project: row.project), mark: model.identity(cwd: row.cwd, project: row.project), text: line.text, live: line.live)
-                        }
-                        if ordered.count > Self.sessionRowCap {
-                            Text("\(ordered.count - Self.sessionRowCap) more sessions").font(.caption2).foregroundStyle(.white.opacity(0.6))
-                        }
-                    }
+                    glanceRows
                 } else {
                     terminalCards
                     doneCards(limit: model.tall ? 1 : 3, full: model.tall)

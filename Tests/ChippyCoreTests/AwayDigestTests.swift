@@ -59,10 +59,15 @@ final class AwayDigestTests: XCTestCase {
         XCTAssertEqual(Set(r.rows.map(\.sessionId)), ["new", "d-new", "r-new"])
     }
 
-    func testTerminalAskRaisedBeforeAwayButUnansweredIsStillARow() {
+    func testTerminalAskRaisedBeforeAwayIsNotARow() {
         let r = AwayDigest.build(since: at(100), terminal: [term("old", 10)], done: [done("d", "d", 150)], recent: [])
-        XCTAssertEqual(r.rows.map(\.sessionId), ["old", "d"])
-        XCTAssertEqual(r.rows.first?.status, .needsYou)
+        XCTAssertEqual(r.rows.map(\.sessionId), ["d"])
+        XCTAssertTrue(AwayDigest.build(since: at(100), terminal: [term("old", 10)], done: [], recent: []).isEmpty)
+    }
+
+    func testItemsAfterTheAwayEndAreExcluded() {
+        let r = AwayDigest.build(since: at(100), until: at(200), terminal: [term("late", 250)], done: [done("in", "in", 150), done("late2", "late2", 300)], recent: [])
+        XCTAssertEqual(r.rows.map(\.sessionId), ["in"])
     }
 
     // MARK: tracker: back-dating and sleep
@@ -76,7 +81,15 @@ final class AwayDigestTests: XCTestCase {
     func testSleepGapIsAnAwayPeriodFromThePreviousPoll() {
         var t = AwayTracker(threshold: 300)
         XCTAssertNil(t.observe(now: at(0), locked: false, idle: 0))
-        XCTAssertEqual(t.observe(now: at(3600), locked: false, idle: 0), at(0)) // woke after an hour, user already back
+        XCTAssertNil(t.observe(now: at(3600), locked: false, idle: 3600)) // slept an hour, idle clock agrees
+        XCTAssertEqual(t.observe(now: at(3605), locked: false, idle: 1), at(0))
+    }
+
+    func testThrottledTimerWithActiveUserIsNotAway() {
+        var t = AwayTracker(threshold: 300)
+        XCTAssertNil(t.observe(now: at(0), locked: false, idle: 0))
+        XCTAssertNil(t.observe(now: at(900), locked: false, idle: 2)) // timer starved, user typing
+        XCTAssertFalse(t.isAway)
     }
 
     func testSleepWakeToLockScreenStaysAway() {
@@ -258,9 +271,12 @@ final class AwayDigestTests: XCTestCase {
 
     func testSleepGapOnModelOffersDigest() {
         let m = model()
+        var idle: TimeInterval = 0
+        m.awaySignal = { (false, idle) }
         m.sweep(now: at(0))
-        stop(m, "a", at: at(1800))
-        m.sweep(now: at(3600))
+        stop(m, "a", at: at(3400))
+        idle = 3600; m.sweep(now: at(3600))
+        idle = 1; m.sweep(now: at(3605))
         XCTAssertEqual(m.awaySince, at(0))
         XCTAssertEqual(m.awayDigest?.rows.map(\.sessionId), ["a"])
     }
@@ -310,7 +326,47 @@ final class AwayDigestTests: XCTestCase {
             "options": [["label": "A, x", "description": "a"], ["label": "B", "description": "b"]]]]]
         m.receiveApproval(HookPayload(json: try! JSONSerialization.data(withJSONObject: ["session_id": "q", "hook_event_name": "PermissionRequest",
             "cwd": "/x/p", "tool_name": "AskUserQuestion", "tool_input": multi]))!, Connection.detached(), now: at(60))
-        locked = false; m.sweep(now: at(400))
+        locked = false; m.sweep(now: at(1200)) // the ask is stamped with the real clock (about at(1000)), inside the window
         XCTAssertEqual(m.awayDigest?.rows.first?.status, .needsYou)
+    }
+
+    func testFinishAfterReturnIsNotFoldedIn() {
+        var locked = true
+        let m = model(locked: { locked })
+        m.sweep(now: at(0)); stop(m, "a", at: at(50)); locked = false; m.sweep(now: at(400))
+        stop(m, "later", cwd: "/x/q", at: at(450)); m.sweep(now: at(460))
+        XCTAssertEqual(m.awayDigest?.rows.map(\.sessionId), ["a"])
+        XCTAssertEqual(m.awayEnd, at(400))
+    }
+
+    func testAwayStateClearsWhenDigestEmptiesOnItsOwn() {
+        var locked = true
+        let m = model(locked: { locked })
+        m.sweep(now: at(0)); stop(m, "a", at: at(50)); locked = false; m.sweep(now: at(400))
+        m.dismissDone("a", now: at(401))
+        XCTAssertNotNil(m.awayDigest) // still in Recent
+        m.sweep(now: at(401 + 2400)) // Recent's TTL passes: nothing left to report
+        XCTAssertNil(m.awayDigest); XCTAssertNil(m.awaySince); XCTAssertNil(m.awayEnd)
+    }
+
+    func testDismissLeavesAskingChipInFinished() {
+        var locked = true
+        let m = model(locked: { locked })
+        m.sweep(now: at(0))
+        m.apply(HookPayload(json: Data(#"{"session_id":"q","hook_event_name":"Stop","cwd":"/x/p","last_assistant_message":"Done.\n\nShall I deploy it?"}"#.utf8))!, now: at(50))
+        stop(m, "f", cwd: "/x/f", at: at(60))
+        locked = false; m.sweep(now: at(400))
+        m.dismissAwayDigest(now: at(401))
+        XCTAssertEqual(m.doneItems.map(\.sessionId), ["q"])
+        XCTAssertEqual(m.recent.items.map(\.sessionId), ["f"])
+    }
+
+    func testClosingWhileJumpedToDoneCardDoesNotMarkSeen() {
+        var locked = true
+        let m = model(locked: { locked })
+        m.sweep(now: at(0)); stop(m, "a", at: at(50)); locked = false; m.sweep(now: at(400))
+        m.openBadge(); m.activate(.done("a"))
+        m.closeDetail()
+        XCTAssertNotNil(m.awaySince)
     }
 }

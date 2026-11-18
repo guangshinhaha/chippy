@@ -18,7 +18,11 @@ public struct AwayTracker: Equatable {
     public mutating func observe(now: Date, locked: Bool, idle: TimeInterval) -> Date? {
         let idle = max(0, idle)
         // Sleep: nobody polled for longer than the threshold, so the machine was asleep. Away from the previous poll.
-        if let last = lastPoll, awaySince == nil, now.timeIntervalSince(last) > threshold { awaySince = last }
+        // Only when the idle clock agrees (or the screen is locked): a throttled timer with an active user is not sleep.
+        if let last = lastPoll, awaySince == nil {
+            let gap = now.timeIntervalSince(last)
+            if gap > threshold, locked || idle >= gap * 0.9 { awaySince = last }
+        }
         lastPoll = now
         if locked || idle >= threshold {
             // Back-dated by the idle time even when first seen locked, so a finish during the idle lead-in counts.
@@ -63,22 +67,22 @@ public enum AwayDigest {
         public var total: Int { rows.count + hidden }
     }
 
-    public static func build(since: Date, terminal: [TerminalItem], done: [DoneItem], recent: [RecentItem],
+    public static func build(since: Date, until: Date = .distantFuture, terminal: [TerminalItem], done: [DoneItem], recent: [RecentItem],
                              label: (_ cwd: String, _ project: String) -> RepoLabel = { RepoLabel(repo: $1.isEmpty ? "unknown" : $1) },
                              resolved: (_ cwd: String) -> Bool = { _ in true }, cap: Int = maxRows) -> Result {
         var seen = Set<String>()
         var needs: [DigestRow] = [], finished: [DigestRow] = []
-        for t in terminal where seen.insert(t.sessionId).inserted {
+        for t in terminal where t.at >= since && t.at <= until && seen.insert(t.sessionId).inserted {
             let l = label(t.cwd, t.project)
             needs.append(DigestRow(sessionId: t.sessionId, status: .needsYou, repo: l.repo, worktree: l.worktree, at: t.at, resolved: resolved(t.cwd),
                                    target: .terminal(t.sessionId), host: t.host, cwd: t.cwd, project: t.project))
         }
-        for d in done where d.at >= since && seen.insert(d.sessionId).inserted {
+        for d in done where d.at >= since && d.at <= until && seen.insert(d.sessionId).inserted {
             let l = label(d.cwd, d.project)
             finished.append(DigestRow(sessionId: d.sessionId, status: d.asksYou ? .asksYou : .finished, repo: l.repo, worktree: l.worktree, at: d.at,
                                       resolved: resolved(d.cwd), target: .done(d.sessionId), host: d.host, cwd: d.cwd, project: d.project))
         }
-        for r in recent where r.at >= since && seen.insert(r.sessionId).inserted {
+        for r in recent where r.at >= since && r.at <= until && seen.insert(r.sessionId).inserted {
             let l = label(r.cwd, r.project)
             finished.append(DigestRow(sessionId: r.sessionId, status: .finished, repo: l.repo, worktree: l.worktree, at: r.at,
                                       resolved: resolved(r.cwd), target: nil, host: r.host, cwd: r.cwd, project: r.project))

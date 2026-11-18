@@ -64,6 +64,8 @@ public final class NotchModel: ObservableObject {
     /// Start of the last away period that left something to report. The only thing kept for the digest (the rows are
     /// rebuilt from state already held), so nothing new is stored, logged or sent (PDPA). Cleared once seen.
     @Published public private(set) var awaySince: Date?
+    /// When the user came back; the digest covers only `awaySince...awayEnd`, so later finishes never fold in.
+    @Published public private(set) var awayEnd: Date?
     /// Last time the away signal was read; `sweep` runs every 0.5s but the signal is polled at most every `awayPollInterval`.
     private var lastAwayPoll: Date?
     public static let awayPollInterval: TimeInterval = 5
@@ -181,9 +183,9 @@ public final class NotchModel: ObservableObject {
     @Published public private(set) var awayDigest: AwayDigest.Result?
 
     /// Pure: the digest for a given start, from state already held. nil when nothing is left to report.
-    private func digest(since: Date?) -> AwayDigest.Result? {
-        guard let since else { return nil }
-        let d = AwayDigest.build(since: since, terminal: terminalItems, done: doneItems, recent: recent.items,
+    private func digest(since: Date?, until: Date?) -> AwayDigest.Result? {
+        guard let since, let until else { return nil }
+        let d = AwayDigest.build(since: since, until: until, terminal: terminalItems, done: doneItems, recent: recent.items,
                                  label: { [identities] cwd, project in identities.label(cwd: cwd, project: project) },
                                  resolved: { [identities] in identities.isResolved(cwd: $0) })
         return d.isEmpty ? nil : d
@@ -201,18 +203,20 @@ public final class NotchModel: ObservableObject {
     /// The user read the digest and closed its panel themselves (Esc, click-away, dot toggle): the dot clears.
     /// Row activation and an approval folding the panel do not come through here, so they never mark it seen.
     private func markDigestSeenIfOpen() {
-        if restOpen, awayDigest != nil { awaySince = nil }
+        if restOpen, awayDigest != nil, !listOpen, shownPending == nil, shownDone == nil { awaySince = nil; awayEnd = nil }
     }
 
     /// Dismiss: the digest's finished chips move to Recent (same as "Clear all" for those), terminal asks stay (they
     /// are still needs-you, cleared by "Handled"), and the digest is gone.
     public func dismissAwayDigest(now: Date = Date()) {
         if let d = awayDigest {
-            let ids = Set(d.finishedIds) // every finished chip the digest covers, including those behind "+N more"
+            // Every finished chip the digest covers, including those behind "+N more"; a chip that asks the user stays in FINISHED.
+            let asking = Set(doneItems.filter(\.asksYou).map(\.sessionId))
+            let ids = Set(d.finishedIds).subtracting(asking)
             retire(doneItems.filter { ids.contains($0.sessionId) }, now: now)
             doneItems.removeAll { ids.contains($0.sessionId) }
         }
-        awaySince = nil
+        awaySince = nil; awayEnd = nil
         refresh()
     }
 
@@ -222,9 +226,9 @@ public final class NotchModel: ObservableObject {
         lastAwayPoll = now
         let s = awaySignal()
         guard let since = awayTracker.observe(now: now, locked: s.locked, idle: s.idle) else { return }
-        let start = min(awaySince ?? since, since)
-        guard digest(since: start) != nil else { return } // nothing to report: no dot
-        awaySince = start
+        guard awaySince == nil else { return } // an unseen digest stands; a later period starts fresh once it is seen, dismissed or empty
+        guard digest(since: since, until: now) != nil else { awaySince = nil; awayEnd = nil; return } // nothing to report: no dot
+        awaySince = since; awayEnd = now
         refresh()
     }
 
@@ -237,7 +241,8 @@ public final class NotchModel: ObservableObject {
         let waiting = WaitingList.items(pending: pending, done: doneItems, terminal: terminalItems, timeout: timeout(for:),
                                         label: { [identities] cwd, project in identities.label(cwd: cwd, project: project) }, // computed once per refresh
                                         resolved: { [identities] in identities.isResolved(cwd: $0) })
-        let dg = digest(since: awaySince)
+        let dg = digest(since: awaySince, until: awayEnd)
+        if dg == nil, awaySince != nil || awayEnd != nil { awaySince = nil; awayEnd = nil } // emptied on its own
         if dg != awayDigest { awayDigest = dg }
         if waiting != waitingItems {
             waitingItems = waiting
