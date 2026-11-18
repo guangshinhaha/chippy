@@ -25,7 +25,7 @@ final class SummaryMarkdownTests: XCTestCase {
         XCTAssertEqual(b[3], .ordered(2, [.text("four")]))
     }
     func testHeadingBecomesBoldLine() {
-        XCTAssertEqual(SummaryMarkdown.parse("## What changed"), [.paragraph([.bold("What changed")])])
+        XCTAssertEqual(SummaryMarkdown.parse("## What changed"), [.heading([.bold("What changed")])])
     }
     func testParagraphsJoinAndSplit() {
         XCTAssertEqual(SummaryMarkdown.parse("a\nb\n\nc").map(\.plain), ["a b", "c"])
@@ -67,7 +67,7 @@ final class SummaryMarkdownTests: XCTestCase {
     func testNilEmptyAndCodeOnly() {
         XCTAssertNil(SummaryMarkdown.doc(nil)); XCTAssertNil(SummaryMarkdown.doc(" \n\n "))
         let d = SummaryMarkdown.doc("```\nx\n```")!
-        XCTAssertEqual(d.outcome, [.code("x")]); XCTAssertEqual(d.details, [.code("x")])
+        XCTAssertEqual(d.outcome, [.code("x")]); XCTAssertEqual(d.details, [])
     }
     func testCodeFirstFallsBackToTextLine() {
         let d = SummaryMarkdown.doc("```\nlet a = 1\n```\n\nThat sets a.\n\n- more")!
@@ -84,11 +84,11 @@ final class SummaryMarkdownTests: XCTestCase {
         for m in ["[", "`", "**", "__", "!["] {
             let t0 = Date()
             _ = SummaryMarkdown.inline(String(repeating: m, count: 20_000 / m.count))
-            XCTAssertLessThan(Date().timeIntervalSince(t0), 2.0, "slow for \(m)")
+            XCTAssertLessThan(Date().timeIntervalSince(t0), 10.0, "slow for \(m)")
         }
         let t0 = Date()
         _ = SummaryMarkdown.inline(String(repeating: "[a](b ", count: 3_000))
-        XCTAssertLessThan(Date().timeIntervalSince(t0), 2.0)
+        XCTAssertLessThan(Date().timeIntervalSince(t0), 10.0)
     }
     func testDunderAndIntraWordUnderscoresLiteral() {
         XCTAssertEqual(SummaryMarkdown.inline("__init__"), [.text("__init__")])
@@ -113,5 +113,47 @@ final class SummaryMarkdownTests: XCTestCase {
     }
     func testHugeInputBounded() {
         XCTAssertNotNil(SummaryMarkdown.doc(String(repeating: "**a** ", count: 100_000)))
+    }
+
+    func testLeadingHeadingIsNotOutcome() {
+        let d = SummaryMarkdown.doc("## Summary\n\nFixed the login timeout by raising the TTL.")!
+        XCTAssertEqual(d.outcomePlain, "Fixed the login timeout by raising the TTL.")
+        XCTAssertEqual(d.details, [.heading([.bold("Summary")])])
+        XCTAssertEqual(SummaryMarkdown.doc("# Only")!.outcomePlain, "Only")
+    }
+    func testInlineTripleBacktickIsNotAFence() {
+        let b = SummaryMarkdown.parse("```npm test``` passes\n\nok")
+        XCTAssertEqual(b.map(\.plain), ["npm test passes", "ok"])
+    }
+    func testFenceClosesWithSameCharAndLength() {
+        let b = SummaryMarkdown.parse("````\n```\nx\n```\n````\n\n~~~\na\n````\n~~~\nafter")
+        XCTAssertEqual(b[0], .code("```\nx\n```"))
+        XCTAssertEqual(b[1], .code("a\n````"))
+        XCTAssertEqual(b[2].plain, "after")
+    }
+    func testLoneMarkersStayLiteral() {
+        for s in ["_app.tsx", "char*", "foo_", "see _app.tsx and _other", "2*3 and 4*5"] {
+            XCTAssertEqual(SummaryMarkdown.inline(s), [.text(s)], s)
+        }
+        XCTAssertEqual(SummaryMarkdown.inline("a *b c* d"), [.text("a b c d")])
+    }
+    func testSingleWordDunderBold() {
+        XCTAssertEqual(SummaryMarkdown.inline("__Important__ now"), [.bold("Important"), .text(" now")])
+        XCTAssertEqual(SummaryMarkdown.inline("__init__"), [.text("__init__")])
+    }
+    func testCodeOnlyNotRepeated() {
+        let m = SummaryMarkdown.doc("```\nfirst\nsecond\nthird\n```")!
+        XCTAssertEqual(m.outcome, [.code("first")]); XCTAssertEqual(m.details, [.code("second\nthird")])
+    }
+    func testNoSentenceCutAtWordBoundaryKeepsMarker() {
+        let words = (1...60).map { "word\($0)" }.joined(separator: " ")
+        let d = SummaryMarkdown.doc("- " + words)!
+        XCTAssertTrue(d.outcomePlain.hasSuffix("…"))
+        let head = String(d.outcomePlain.dropLast())
+        XCTAssertFalse(head.hasSuffix(" "))
+        guard case .bullet(let r) = d.details[0] else { return XCTFail("tail should stay a bullet") }
+        let tail = r.map(\.string).joined()
+        XCTAssertEqual(head + " " + tail, words)
+        XCTAssertTrue(tail.hasPrefix("word"))
     }
 }

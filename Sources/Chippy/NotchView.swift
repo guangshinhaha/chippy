@@ -777,16 +777,15 @@ struct DoneCard: View {
 /// decision Claude needs, then the rest folded behind "Show details". Light markdown only; raw markers never show.
 /// Recent rows hold no reply text by design (PDPA #30), so they do not use this.
 struct SummaryView: View {
-    let reply: String?
     var decision: String? = nil
     /// Glance list: the outcome line only, no controls.
     var compact = false
-    /// Parsed once per reply, not per body evaluation.
+    /// From SummaryMarkdown's 16-entry reply cache, so re-created views do not re-parse.
     private let doc: SummaryMarkdown.Doc?
     @State private var open = false
 
     init(reply: String?, decision: String? = nil, compact: Bool = false) {
-        self.reply = reply; self.decision = decision; self.compact = compact
+        self.decision = decision; self.compact = compact
         self.doc = SummaryMarkdown.doc(reply)
     }
 
@@ -803,7 +802,7 @@ struct SummaryView: View {
     private func block(_ b: SummaryMarkdown.Block) -> some View {
         Group {
             switch b {
-            case .paragraph(let r): text(r).foregroundColor(.white.opacity(0.85))
+            case .paragraph(let r), .heading(let r): text(r).foregroundColor(.white.opacity(0.85))
             case .ordered(let n, let r):
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text("\(n).").font(.caption).foregroundColor(.white.opacity(0.5))

@@ -15,6 +15,7 @@ public enum SummaryMarkdown {
     }
     public enum Block: Equatable {
         case paragraph([Run])
+        case heading([Run])
         case bullet([Run])
         case ordered(Int, [Run])
         case code(String)
@@ -22,7 +23,7 @@ public enum SummaryMarkdown {
         /// The block's text with no styling, for tests and accessibility.
         public var plain: String {
             switch self {
-            case .paragraph(let r), .bullet(let r), .ordered(_, let r): return r.map(\.string).joined()
+            case .paragraph(let r), .heading(let r), .bullet(let r), .ordered(_, let r): return r.map(\.string).joined()
             case .code(let c): return c
             }
         }
@@ -39,35 +40,64 @@ public enum SummaryMarkdown {
     static let maxOutcome = 200
     static let maxCodeLines = 12
 
-    /// Outcome = the first block, cut at its first sentence when long; the remainder leads the details.
+    private static let cache: NSCache<NSString, DocBox> = {
+        let c = NSCache<NSString, DocBox>(); c.countLimit = 16; return c
+    }()
+    private final class DocBox { let doc: Doc?; init(_ d: Doc?) { doc = d } }
+
+    /// Parsed docs for the last 16 replies, in memory only (never persisted), so a re-created view reuses the parse.
     public static func doc(_ reply: String?) -> Doc? {
+        guard let reply else { return nil }
+        let key = reply as NSString
+        if let hit = cache.object(forKey: key) { return hit.doc }
+        let d = build(reply)
+        cache.setObject(DocBox(d), forKey: key)
+        return d
+    }
+
+    private static func textRuns(_ b: Block) -> [Run]? {
+        switch b {
+        case .paragraph(let r), .bullet(let r), .ordered(_, let r): return r
+        case .heading, .code: return nil
+        }
+    }
+    /// A block of the same kind (so bullet and ordered markers survive a split) holding `runs`.
+    private static func like(_ b: Block, _ runs: [Run]) -> Block {
+        switch b {
+        case .bullet: return .bullet(runs)
+        case .ordered(let n, _): return .ordered(n, runs)
+        default: return .paragraph(runs)
+        }
+    }
+
+    /// Outcome = the first non-heading text block, cut at its first sentence (else a word boundary) when long; the
+    /// remainder follows in the details. Headings stay in the details.
+    static func build(_ reply: String?) -> Doc? {
         var blocks = parse(reply)
         guard !blocks.isEmpty else { return nil }
-        func runsOf(_ b: Block) -> [Run]? {
-            switch b {
-            case .paragraph(let r), .bullet(let r), .ordered(_, let r): return r
-            case .code: return nil
-            }
-        }
-        if let runs = runsOf(blocks[0]) {
-            blocks.removeFirst()
-            let (head, tail) = splitOutcome(runs)
-            return Doc(outcome: head, details: (tail.map { [Block.paragraph($0)] } ?? []) + blocks)
-        }
-        // Reply opens with code: the outcome is the first text line after it, else the first code line (clipped).
-        if let idx = blocks.firstIndex(where: { runsOf($0) != nil }), let runs = runsOf(blocks[idx]) {
-            blocks.remove(at: idx)
-            let (head, tail) = splitOutcome(runs)
-            if let tail { blocks.insert(.paragraph(tail), at: idx) }
+        if let idx = blocks.firstIndex(where: { textRuns($0) != nil }) {
+            let b = blocks.remove(at: idx)
+            let (head, tail) = splitOutcome(textRuns(b) ?? [])
+            if let tail { blocks.insert(like(b, tail), at: idx) }
             return Doc(outcome: head, details: blocks)
         }
-        let line = blocks.compactMap { b -> String? in
-            if case .code(let c) = b { return c.components(separatedBy: "\n").first { !$0.trimmingCharacters(in: .whitespaces).isEmpty } }
-            return nil
-        }.first?.trimmingCharacters(in: .whitespaces) ?? ""
-        guard !line.isEmpty else { return nil }
-        let clipped = line.count > maxOutcome ? String(line.prefix(maxOutcome)) + "…" : line
-        return Doc(outcome: [.code(clipped)], details: blocks)
+        // No prose: the outcome is the first code line (clipped). Code the outcome already shows is not repeated.
+        if let ci = blocks.firstIndex(where: { if case .code = $0 { return true }; return false }), case .code(let c) = blocks[ci] {
+            let lines = c.components(separatedBy: "\n")
+            if let k = lines.firstIndex(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) {
+                let line = lines[k].trimmingCharacters(in: .whitespaces)
+                let clipped = line.count > maxOutcome
+                if !clipped {
+                    let rest = lines[(k + 1)...].joined(separator: "\n")
+                    if rest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { blocks.remove(at: ci) }
+                    else { blocks[ci] = .code(rest) }
+                }
+                return Doc(outcome: [.code(clipped ? String(line.prefix(maxOutcome)) + "…" : line)], details: blocks)
+            }
+        }
+        // Headings only: the first one is the outcome.
+        if case .heading(let r) = blocks[0] { blocks.removeFirst(); return Doc(outcome: r, details: blocks) }
+        return nil
     }
 
     private static let abbreviations: Set<String> = ["e.g", "i.e", "vs", "etc", "approx", "cf", "incl"]
@@ -98,7 +128,13 @@ public enum SummaryMarkdown {
             i += 1
         }
         var ellipsis = false
-        if cut == nil, chars.count > maxOutcome { cut = maxOutcome; ellipsis = true }
+        if cut == nil, chars.count > maxOutcome {
+            // No sentence end: back up to a word boundary; the remainder starts there.
+            var w = maxOutcome
+            while w > 0, !chars[w].isWhitespace { w -= 1 }
+            cut = w > 0 ? w : maxOutcome
+            ellipsis = true
+        }
         guard let cut, cut < chars.count else { return (runs, nil) }
         var head: [Run] = [], tail: [Run] = []
         var seen = 0
@@ -113,9 +149,20 @@ public enum SummaryMarkdown {
             }
             seen += n
         }
+        head = trimTrailing(head)
         if ellipsis { head.append(.text("…")) }
         tail = trimLeading(tail)
         return (head, tail.isEmpty ? nil : tail)
+    }
+
+    private static func trimTrailing(_ runs: [Run]) -> [Run] {
+        var out = runs
+        while let l = out.last {
+            var t = l.string
+            while let ch = t.last, ch.isWhitespace { t.removeLast() }
+            if t.isEmpty { out.removeLast() } else { out[out.count - 1] = l.with(t); break }
+        }
+        return out
     }
 
     private static func trimLeading(_ runs: [Run]) -> [Run] {
@@ -133,6 +180,7 @@ public enum SummaryMarkdown {
         var blocks: [Block] = []
         var para: [String] = []
         var code: [String]? = nil
+        var fence: (ch: Character, len: Int) = ("`", 3)
         func codeBlock(_ c: [String]) -> Block {
             .code(c.prefix(maxCodeLines).joined(separator: "\n") + (c.count > maxCodeLines ? "\n…" : ""))
         }
@@ -148,11 +196,11 @@ public enum SummaryMarkdown {
         }
         for raw in lines {
             let line = raw.trimmingCharacters(in: .whitespaces)
-            if line.hasPrefix("```") {
-                if let c = code { appendCode(c); code = nil } else { flush(); code = [] }
+            if let c = code {
+                if isFenceClose(line, fence.ch, fence.len) { appendCode(c); code = nil } else { code?.append(raw) }
                 continue
             }
-            if code != nil { code?.append(raw); continue }
+            if let f = fenceOpen(line) { flush(); fence = f; code = []; continue }
             if line.isEmpty || isRule(line) { flush(); continue }
             if let (num, b) = bulletBody(line) {
                 flush()
@@ -161,7 +209,7 @@ public enum SummaryMarkdown {
             } else if let h = headingBody(line) {
                 flush()
                 let t = inline(h).map(\.string).joined()
-                if !t.isEmpty { blocks.append(.paragraph([.bold(t)])) }
+                if !t.isEmpty { blocks.append(.heading([.bold(t)])) }
             } else {
                 para.append(line.hasPrefix(">") ? String(line.drop(while: { $0 == ">" || $0 == " " })) : line)
             }
@@ -171,6 +219,20 @@ public enum SummaryMarkdown {
         return blocks
     }
 
+    /// A line opens a fence only when it starts with ``` or ~~~ and does not close it on the same line
+    /// ("```npm test``` passes" is inline text).
+    private static func fenceOpen(_ line: String) -> (ch: Character, len: Int)? {
+        guard let ch = line.first, ch == "`" || ch == "~" else { return nil }
+        let len = line.prefix(while: { $0 == ch }).count
+        guard len >= 3 else { return nil }
+        if line.dropFirst(len).contains(String(repeating: ch, count: len)) { return nil }
+        return (ch, len)
+    }
+    /// Closes with the same char, at least as long, and nothing else on the line.
+    private static func isFenceClose(_ line: String, _ ch: Character, _ len: Int) -> Bool {
+        let n = line.prefix(while: { $0 == ch }).count
+        return n >= len && line.dropFirst(n).allSatisfy(\.isWhitespace)
+    }
     private static func isRule(_ l: String) -> Bool {
         let s = l.filter { !$0.isWhitespace }
         return s.count >= 3 && (s.allSatisfy { $0 == "-" } || s.allSatisfy { $0 == "*" } || s.allSatisfy { $0 == "_" })
@@ -214,7 +276,15 @@ public enum SummaryMarkdown {
             if ch == "*" { return find("**", from: from) { $0 + 1 < c.count && c[$0] == "*" && c[$0 + 1] == "*" } }
             return find("__", from: from) { $0 + 1 < c.count && c[$0] == "_" && c[$0 + 1] == "_" && !c[$0 - 1 >= 0 ? $0 - 1 : 0].isWhitespace && !isWord($0 + 2) }
         }
-        func isIdentifier(_ t: String) -> Bool { !t.isEmpty && t.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" } }
+        // Identifier-like = all-lowercase word characters (__init__); __Important__ is not.
+        func isIdentifier(_ t: String) -> Bool { !t.isEmpty && t.allSatisfy { ($0.isLetter && !$0.isUppercase) || $0.isNumber || $0 == "_" } }
+        // Closer for a single * or _: no neighbouring marker, not preceded by space; _ also not followed by a word char.
+        func findSingle(_ ch: Character, from: Int) -> Int? {
+            find("1" + String(ch), from: from) { j in
+                guard c[j] == ch, j > 0, !c[j - 1].isWhitespace, c[j - 1] != ch, !(j + 1 < c.count && c[j + 1] == ch) else { return false }
+                return ch == "*" || !isWord(j + 1)
+            }
+        }
         // "[label](url)" starting at the "[" at `start`. "](" must follow with no "[" or "]" in between.
         func link(from start: Int) -> (String, String, Int)? {
             var j = start + 1
@@ -270,10 +340,17 @@ public enum SummaryMarkdown {
                 continue
             }
             if ch == "*" || ch == "_" {
-                // Single emphasis marker: dropped only when it opens or closes a word (snake_case and 2*3 stay).
-                let inside = isWord(i - 1) && isWord(i + 1)
-                let edge = (isWord(i + 1) && !isWord(i - 1)) || (isWord(i - 1) && !isWord(i + 1))
-                if !inside && edge { i += 1; continue }
+                // Single marker: stripped only with a matching closer in this paragraph; else it stays literal
+                // (_app.tsx, char*, foo_, 2*3).
+                let opens = i + 1 < c.count && !c[i + 1].isWhitespace
+                    && (ch == "_" ? !isWord(i - 1) : !(isWord(i - 1) && isWord(i + 1)))
+                if opens, let e = findSingle(ch, from: i + 1), e > i + 1 {
+                    for r in inline(String(c[(i + 1)..<e])) {
+                        if case .text(let t) = r { buf += t } else { text(); runs.append(r) }
+                    }
+                    i = e + 1
+                    continue
+                }
             }
             buf.append(ch); i += 1
         }
