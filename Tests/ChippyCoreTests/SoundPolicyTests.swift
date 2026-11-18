@@ -29,6 +29,12 @@ final class SoundPolicyTests: XCTestCase {
         XCTAssertTrue(play(last: t0, now: t0.addingTimeInterval(5)))
     }
 
+    func testNeedsYouBypassesCooldownButDedupes() {
+        XCTAssertFalse(play(kind: .needsYou, last: t0, now: t0.addingTimeInterval(0.2)))
+        XCTAssertTrue(play(kind: .needsYou, last: t0, now: t0.addingTimeInterval(0.31)))
+        XCTAssertTrue(play(kind: .needsYou, last: t0, now: t0.addingTimeInterval(1)))
+    }
+
     func testCooldownIsPerSessionByCallerLastPlayed() {
         // Session A played at t0; session B never did. The policy only sees each session's own lastPlayed.
         let now = t0.addingTimeInterval(1)
@@ -83,9 +89,15 @@ final class SoundPolicyTests: XCTestCase {
         XCTAssertEqual(got, [.needsYou])
     }
 
-    func testPidDiffersButBundleMatches() {
+    func testKnownPidIgnoresBundle() {
         let h = HostInfo(pid: 10, bundle: "com.a", tty: nil)
-        XCTAssertTrue(SoundPolicy.isHostFrontmost(host: h, frontmostPid: 99, frontmostBundle: "com.a"))
+        XCTAssertFalse(SoundPolicy.isHostFrontmost(host: h, frontmostPid: 99, frontmostBundle: "com.a"))
+    }
+
+    func testPidNotRunningAppFallsBackToBundle() {
+        let h = HostInfo(pid: 10, bundle: "com.a", tty: nil)
+        XCTAssertTrue(SoundPolicy.isHostFrontmost(host: h, frontmostPid: 99, frontmostBundle: "com.a", pidIsRunningApp: false))
+        XCTAssertFalse(SoundPolicy.isHostFrontmost(host: h, frontmostPid: 99, frontmostBundle: "com.b", pidIsRunningApp: false))
     }
 
     func testCooldownsPerSessionAndKind() {
@@ -143,15 +155,16 @@ final class SoundPolicyTests: XCTestCase {
     }
 
     func testAutoAllowedApprovalIsSilent() {
-        let log = EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("ev-\(UUID()).jsonl"))
         let store = AlwaysStore(url: FileManager.default.temporaryDirectory.appendingPathComponent("always-\(UUID()).json"))
-        let m = NotchModel(always: store, log: log); var n = 0
+        let p = HookPayload(json: try! JSONSerialization.data(withJSONObject: [
+            "session_id": "s1", "cwd": "/w/api", "hook_event_name": "PermissionRequest",
+            "tool_name": "Bash", "tool_input": ["command": "ls"]]))!
+        store.insert(PendingRequest(payload: p))
+        let m = NotchModel(always: store, log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("ev-\(UUID()).jsonl")))
+        var n = 0
         m.onSound = { _, _, _ in n += 1 }
         approval(m, tool: "Bash", input: ["command": "ls"])
-        XCTAssertEqual(n, 1)
-        m.resolve(m.pending[0].id, .always)
-        approval(m, tool: "Bash", input: ["command": "ls"])
-        XCTAssertEqual(n, 1)
+        XCTAssertEqual(n, 0)
         XCTAssertTrue(m.pending.isEmpty)
     }
 }

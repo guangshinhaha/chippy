@@ -9,8 +9,14 @@ final class SoundPlayer {
     private let defaults = UserDefaults.standard
     private var cooldowns = SoundCooldowns()
     private var playing: [NSSound] = []
-    private var locked = false
+    private var locked = SoundPlayer.screenIsLocked()
+    private var warnedMissing = false
     private var observers: [NSObjectProtocol] = []
+
+    private static func screenIsLocked() -> Bool {
+        let d = CGSessionCopyCurrentDictionary() as? [String: Any]
+        return (d?["CGSSessionScreenIsLocked"] as? Bool) ?? false
+    }
 
     init() {
         defaults.register(defaults: [Self.key: true])
@@ -32,15 +38,19 @@ final class SoundPlayer {
 
     func handle(_ kind: SoundKind, sessionId: String, host: HostInfo?, now: Date = Date()) {
         let front = NSWorkspace.shared.frontmostApplication
+        let pidIsApp = host?.pid.map { NSRunningApplication(processIdentifier: $0) != nil } ?? false
         let frontmost = SoundPolicy.isHostFrontmost(host: host, frontmostPid: front?.processIdentifier,
-                                                    frontmostBundle: front?.bundleIdentifier)
+                                                    frontmostBundle: front?.bundleIdentifier, pidIsRunningApp: pidIsApp)
         guard SoundPolicy.shouldPlay(kind: kind, enabled: enabled, hostFrontmost: frontmost, locked: locked,
                                      lastPlayed: cooldowns.lastPlayed(kind, session: sessionId), now: now) else { return }
-        cooldowns.record(kind, session: sessionId, at: now)
         // The named sound is a shared instance and play() on a playing one is a no-op: play a copy.
-        guard let s = (NSSound(named: kind == .needsYou ? "Pop" : "Tink")?.copy() as? NSSound) else { return }
+        guard let s = (NSSound(named: kind == .needsYou ? "Pop" : "Tink")?.copy() as? NSSound) else {
+            if !warnedMissing { warnedMissing = true; NSLog("Chippy: built-in sound missing") }
+            return
+        }
         playing.removeAll { !$0.isPlaying }
         playing.append(s)
-        s.play()
+        _ = s.play()
+        cooldowns.record(kind, session: sessionId, at: now)
     }
 }

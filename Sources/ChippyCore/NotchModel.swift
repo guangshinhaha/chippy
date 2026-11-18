@@ -112,7 +112,7 @@ public final class NotchModel: ObservableObject {
         connections[req.id] = conn
         refresh()
         if !Tour.isDemo(req.sessionId) {
-            onSound?(.needsYou, req.sessionId, payload.host ?? sessions.first { $0.id == req.sessionId }?.host)
+            onSound?(.needsYou, req.sessionId, sessions.first { $0.id == req.sessionId }?.host ?? payload.host)
         }
     }
 
