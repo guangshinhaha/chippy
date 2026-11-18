@@ -63,68 +63,58 @@ enum TerminalJump {
     /// "Landed" also needs one of the app's windows on the visible Space: macOS switches to the window's Space on
     /// activation only when Desktop & Dock > "When switching to an application, switch to a Space with open
     /// windows" is on. There is no supported API to switch Space ourselves; if it stays off-Space the jump reports failure.
-    static func bringForward(pid: Int32, completion: @escaping (Bool) -> Void) {
-        guard let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else { completion(false); return }
+    static func bringForward(pid: Int32, completion: @escaping (ActivationOutcome.Verdict) -> Void) {
+        guard let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else { completion(.notFrontmost); return }
         let bundle = app.bundleIdentifier
-        /// All processes of the host app (multi-process hosts own windows under helper pids).
-        func hostPids() -> Set<Int32> {
-            guard let b = bundle else { return [pid] }
-            return Set(NSRunningApplication.runningApplications(withBundleIdentifier: b).map { $0.processIdentifier }).union([pid])
-        }
-        /// Windows of the host app (normal layer, not tiny helpers) and how many are on the visible Space;
-        /// nil when the window list cannot be parsed.
-        func windowCounts() -> (all: Int, onScreen: Int)? {
-            guard let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] else { return nil }
-            let pids = hostPids()
-            var all = 0, on = 0
-            for w in list {
-                guard let owner = (w[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value, pids.contains(owner),
-                      (w[kCGWindowLayer as String] as? NSNumber)?.intValue == 0 else { continue }
-                let b = w[kCGWindowBounds as String] as? [String: Any] ?? [:]
-                guard ((b["Width"] as? NSNumber)?.doubleValue ?? 0) >= 100, ((b["Height"] as? NSNumber)?.doubleValue ?? 0) >= 50 else { continue }
-                all += 1
-                if (w[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue == true { on += 1 }
-            }
-            return (all, on)
-        }
-        func isFront() -> Bool {
+        /// All processes of the host app, computed once per jump.
+        let pids: Set<Int32> = bundle.map { Set(NSRunningApplication.runningApplications(withBundleIdentifier: $0).map { $0.processIdentifier }).union([pid]) } ?? [pid]
+        var unreadable = false
+        func verdict() -> ActivationOutcome.Verdict {
             let front = NSWorkspace.shared.frontmostApplication
             // Same app counts even if the frontmost pid differs (multi-process hosts).
             let frontmost = ActivationOutcome.isFrontmost(frontmostPid: front?.processIdentifier, target: pid)
                 || (bundle != nil && front?.bundleIdentifier == bundle)
-            guard frontmost else { return false }   // only query windows once the app is frontmost
-            guard let c = windowCounts() else {
-                NSLog("Chippy: window list unavailable, judging the jump by frontmost only")
-                return true
-            }
-            let landed = ActivationOutcome.landed(frontmost: true, windowCount: c.all, onScreenCount: c.onScreen)
-            if !landed { NSLog("Chippy: app frontmost but its windows are on another Space (check System Settings > Desktop & Dock > \"When switching to an application, switch to a Space with open windows\")") }
-            return landed
+            guard frontmost else { return .notFrontmost }   // window list only once the app is frontmost
+            var counts: WindowScan.Counts?
+            if let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] {
+                counts = WindowScan.counts(in: list, pids: pids)
+            } else { unreadable = true }
+            return ActivationOutcome.verdict(frontmost: true, counts: counts)
         }
-        /// Checks every 0.15s up to `window` seconds (a Space-switch animation takes a while); stops at the first success.
-        func poll(for window: TimeInterval, _ done: @escaping (Bool) -> Void) {
+        /// Checks every 0.15s up to `window` seconds (a Space-switch animation takes a while); stops at the first
+        /// frontmost+visible verdict. Gives the last verdict otherwise.
+        func poll(for window: TimeInterval, _ done: @escaping (ActivationOutcome.Verdict) -> Void) {
             let deadline = Date().addingTimeInterval(window)
             func step() {
-                if isFront() { done(true); return }
-                if Date() >= deadline { done(false); return }
+                let v = verdict()
+                if v == .landed || v == .landedUnverified || Date() >= deadline { done(v); return }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { step() }
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { step() }
         }
+        /// One log line per jump, after the polling ends.
+        func finish(_ v: ActivationOutcome.Verdict, _ err: Error? = nil) {
+            switch v {
+            case .landed: break
+            case .landedUnverified:
+                NSLog("Chippy: window check inconclusive for %@ (%@), judged by frontmost only", bundle ?? "?", unreadable ? "window list unreadable" : "no windows found for its processes")
+            case .offSpace:
+                NSLog("Chippy: app frontmost but its windows are on another Space (check System Settings > Desktop & Dock > \"When switching to an application, switch to a Space with open windows\")")
+            case .notFrontmost:
+                NSLog("Chippy: open terminal failed for pid %d (%@): %@", pid, bundle ?? "?", String(describing: err))
+            }
+            completion(v)
+        }
         if app.isHidden { app.unhide() }
         if #available(macOS 14.0, *) { NSApp.yieldActivation(to: app) }
         _ = app.activate(options: [])
-        poll(for: 1.5) { ok in
-            if ok { completion(true); return }
-            guard let url = app.bundleURL else { completion(false); return }
+        poll(for: 1.5) { v in
+            // Already frontmost (windows just elsewhere): reopening would not move a Space, so report it as is.
+            if v != .notFrontmost { finish(v); return }
+            guard let url = app.bundleURL else { finish(v); return }
             let cfg = NSWorkspace.OpenConfiguration(); cfg.activates = true
             NSWorkspace.shared.openApplication(at: url, configuration: cfg) { _, err in
-                DispatchQueue.main.async {
-                    poll(for: 1.5) { ok in
-                        if !ok { NSLog("Chippy: open terminal failed for pid %d (%@): %@", pid, bundle ?? "?", String(describing: err)) }
-                        completion(ok)
-                    }
-                }
+                DispatchQueue.main.async { poll(for: 1.5) { finish($0, err) } }
             }
         }
     }
@@ -144,15 +134,16 @@ enum TerminalJump {
         }
     }
 
-    /// `completion(true)` when the host app is frontmost afterwards with a window on the visible Space (polled for up to
-    /// ~3s), false when it could not be brought forward or its windows stayed on another Space. Known limit: we cannot
+    /// `.landed` when the host app is frontmost with a window on the visible Space (polled for up to ~3s);
+    /// `.offSpace` when it is frontmost but its windows stayed on another Space (no reopen is attempted);
+    /// `.notFrontmost` when it could not be brought forward. Known limit: we cannot
     /// tell which of the app's windows is the session's, only that one is visible.
-    static func open(_ host: HostInfo?, completion: @escaping (Bool) -> Void = { _ in }) {
-        guard available(host), let h = host, let pid = h.pid, let bundle = h.bundle else { completion(false); return }
+    static func open(_ host: HostInfo?, completion: @escaping (ActivationOutcome.Verdict) -> Void = { _ in }) {
+        guard available(host), let h = host, let pid = h.pid, let bundle = h.bundle else { completion(.notFrontmost); return }
         let activate = {
-            bringForward(pid: pid) { ok in
-                if ok, bundle == "com.stablyai.orca", let cwd = h.cwd { selectOrcaWorkspace(cwd) }
-                completion(ok)
+            bringForward(pid: pid) { v in
+                if v == .landed || v == .landedUnverified, bundle == "com.stablyai.orca", let cwd = h.cwd { selectOrcaWorkspace(cwd) }
+                completion(v)
             }
         }
         guard let src = script(bundle: bundle, tty: h.tty ?? "") else { activate(); return }
