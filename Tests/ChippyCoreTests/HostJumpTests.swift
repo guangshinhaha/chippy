@@ -30,7 +30,7 @@ final class HostCarryTests: XCTestCase {
         if host { o["chippy_host_pid"] = 4242; o["chippy_host_bundle"] = "com.apple.Terminal"; o["chippy_tty"] = "ttys004" }
         return payload(o)
     }
-    let want = HostInfo(pid: 4242, bundle: "com.apple.Terminal", tty: "ttys004")
+    let want = HostInfo(pid: 4242, bundle: "com.apple.Terminal", tty: "ttys004", cwd: "/w/p")
 
     func testPayloadParsesHost() { XCTAssertEqual(ev("Stop", host: true).host, want); XCTAssertNil(ev("Stop", host: false).host) }
 
