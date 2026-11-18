@@ -44,7 +44,9 @@ struct CountBadge: View {
             .padding(.horizontal, 4).frame(minWidth: 16, maxWidth: max(maxWidth, 16), minHeight: 16)
             .background(Capsule().fill(.white.opacity(0.92)))
             .reveal(0.08)
-            .padding(6).contentShape(Rectangle()).padding(-6)
+            // A real, larger tap target (24pt), never wider than the wing / tab the badge lives in.
+            .frame(minWidth: min(24, max(maxWidth, 16)), maxWidth: max(maxWidth, 16), minHeight: 24)
+            .contentShape(Rectangle())
             .onTapGesture(perform: onTap)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("\(text) finished waiting")
@@ -270,10 +272,20 @@ struct ApprovalCard: View {
             if let p = req.lastPrompt, !p.isEmpty {
                 Text("“\(p)”").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
             }
-            Text("\(req.toolName) wants to run").font(.caption2).foregroundStyle(.white.opacity(0.6))
-            Text(req.detail.isEmpty ? req.toolName : req.detail)
-                .font(.system(.caption, design: .monospaced)).foregroundStyle(.white)
-                .lineLimit(4).truncationMode(.middle)
+            if let intent = req.intent {
+                // Agent-written text is unverified: small, secondary, captioned. The raw command below is the dominant element.
+                VStack(alignment: .leading, spacing: 1) {
+                    if intent.fromAgent { Text("Claude says (unverified):").font(.caption2).foregroundStyle(.white.opacity(0.45)) }
+                    Text(intent.text).font(.caption).foregroundStyle(.white.opacity(intent.fromAgent ? 0.65 : 0.85)).lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text("\(req.toolName) wants to run").font(.caption2).foregroundStyle(.white.opacity(0.6))
+            }
+            Text(req.detail.isEmpty ? req.toolName : ApprovalIntent.preview(req.detail))
+                .font(.system(.callout, design: .monospaced).weight(.medium)).foregroundStyle(.white)
+                .lineLimit(12) // backstop only: preview() already bounds rows and keeps head, tail and a hidden-count marker
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.4)).lineLimit(1).truncationMode(.head)
             TourCaption(sessionId: req.sessionId, step: .approval)
@@ -422,6 +434,7 @@ struct QuestionCard: View {
             TourCaption(sessionId: req.sessionId, step: .question)
         }
         .onChange(of: step) { leadExpanded = false; ShortcutBus.steps.send((req.id, $0)) }
+        .onDisappear { if !sent { progress(step, answers) } } // leaving the card keeps what was answered
         .onAppear { if step > 0 { ShortcutBus.steps.send((req.id, step)) } }
         .onReceive(ShortcutBus.events) { e in
             // Keys take the same path as a tap, for this card only.
@@ -438,7 +451,7 @@ struct QuestionCard: View {
         let q = qs[min(step, qs.count - 1)]
         guard q.options.indices.contains(index) else { return }
         answers[q.question] = q.options[index].label
-        if step + 1 < qs.count { step += 1; progress(step, answers) } else { sent = true; send(answers) }
+        if step + 1 < qs.count { step += 1; progress(step, answers) } else { sent = true; send(answers) } // each pick is saved at once
     }
 }
 

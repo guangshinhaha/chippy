@@ -184,6 +184,12 @@ final class NotchPanel: NSPanel {
     /// Esc (when the notch has focus) folds an open detail.
     override func cancelOperation(_ sender: Any?) { model.closeDetail() }
 
+    /// The list is keyboard-driven, so it must not outlive key focus: losing key (another window took it) closes it.
+    override func resignKey() {
+        super.resignKey()
+        if model.listOpen { DispatchQueue.main.async { [weak self] in self?.model.closeList() } }
+    }
+
     /// The waiting list is keyboard-driven (#53): arrows move, Return opens. Other keys pass through untouched.
     override func keyDown(with event: NSEvent) {
         guard model.listOpen, event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { super.keyDown(with: event); return }
@@ -216,6 +222,7 @@ final class NotchPanel: NSPanel {
     private func syncMouse() {
         let inside = hitRect.contains(NSEvent.mouseLocation)
         if ignoresMouseEvents == inside { ignoresMouseEvents = !inside }
+        if inside, model.listOpen, !isKeyWindow { makeKey() } // pointer on the list: keys reach it again
         if metrics.hover != inside { metrics.hover = inside; model.setHover(inside) } // the peek holds while hovered; an ignoring window gets no hover-exit, so hover comes from here
     }
 

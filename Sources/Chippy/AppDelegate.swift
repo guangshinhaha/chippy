@@ -66,15 +66,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.questionStep = s.step
             self.registerQuestionKeys(req) // the next question may have fewer options
         }
-        pendingWatch = Publishers.Merge3(model.$pending.map { _ in () }, model.$listOpen.map { _ in () }, model.$focus.map { _ in () })
+        pendingWatch = Publishers.MergeMany([model.$pending.map { _ in () }.eraseToAnyPublisher(), model.$listOpen.map { _ in () }.eraseToAnyPublisher(),
+                                      model.$focus.map { _ in () }.eraseToAnyPublisher(), model.$partials.map { _ in () }.eraseToAnyPublisher()])
             .receive(on: DispatchQueue.main).sink { [weak self] in self?.syncShortcuts() }
     }
 
     private func syncShortcuts() {
         guard let req = model.shownPending else { shortcutCard = nil; hotKeys.unregister(); return }
-        if shortcutCard?.id == req.id { return } // same card: keep keys and its shownAt
+        let seed = model.partials[req.id]?.step ?? 0 // re-seeded on every sync, step 0 included
+        if shortcutCard?.id == req.id { // same card: keep keys and its shownAt
+            if req.questions != nil, questionStep != seed { questionStep = seed; registerQuestionKeys(req) }
+            return
+        }
         shortcutCard = (req.id, Date())
-        questionStep = model.partials[req.id]?.step ?? 0
+        questionStep = seed
         if req.questions != nil {
             registerQuestionKeys(req)
         } else {

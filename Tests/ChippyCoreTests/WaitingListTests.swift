@@ -201,4 +201,64 @@ final class WaitingListTests: XCTestCase {
         XCTAssertTrue(m.listOpen)
         XCTAssertEqual(m.density, .expanded)
     }
+
+    func testNewApprovalTakesOverFromAFocusedDoneDetail() {
+        let m = model()
+        stop(m, "d")
+        m.openList(); m.activate(.done("d"))
+        XCTAssertNotNil(m.shownDone)
+        approval(m, "a")
+        XCTAssertNil(m.focus)
+        XCTAssertFalse(m.doneOpen)
+        XCTAssertNil(m.shownDone)
+        XCTAssertEqual(m.shownPending?.sessionId, "a") // so the shortcuts have a card to act on
+        XCTAssertFalse(m.tall)
+    }
+
+    func testToggleOpenFoldsAFocusedDoneWithoutDrift() {
+        let m = model()
+        stop(m, "d1"); stop(m, "d2")
+        m.openList(); m.activate(.done("d1"))
+        m.toggleOpen()
+        XCTAssertNil(m.focus)
+        XCTAssertFalse(m.doneOpen)
+        XCTAssertEqual(m.density, .collapsed)
+        m.toggleOpen()                                  // a normal open still works afterwards
+        XCTAssertTrue(m.doneOpen)
+        XCTAssertNil(m.shownDone)
+    }
+
+    func testDoneOpenResetsWhenFocusedChipGoesEvenWithAnApprovalWaiting() {
+        let m = model()
+        stop(m, "d1"); stop(m, "d2")
+        m.openList(); m.activate(.done("d1"))
+        approval(m, "a")                                // takes over; refocus the chip afterwards
+        m.openList(); m.activate(.done("d1"))
+        XCTAssertTrue(m.doneOpen)
+        m.dismissDone("d1")
+        XCTAssertNil(m.focus)
+        XCTAssertFalse(m.doneOpen)
+        XCTAssertEqual(m.shownPending?.sessionId, "a")
+    }
+
+    func testPartialsClearedWhenQuestionIsAnswered() {
+        let m = model()
+        question(m, "q", two: false)
+        let id = m.pending[0].id
+        m.savePartial(id, step: 0, answers: ["Q1?": "x"])
+        XCTAssertNotNil(m.partials[id])
+        m.answer(id, ["Q1?": "x"])
+        XCTAssertNil(m.partials[id])
+        m.savePartial(id, step: 0, answers: ["Q1?": "x"]) // a late save for a gone request is ignored
+        XCTAssertNil(m.partials[id])
+    }
+
+    func testWaitingItemsStayCurrentAfterEveryChange() {
+        let m = model()
+        XCTAssertTrue(m.waitingItems.isEmpty)
+        stop(m, "d"); XCTAssertEqual(m.waitingItems.count, 1)
+        approval(m, "a"); XCTAssertEqual(m.waitingItems.count, 2)
+        m.dismissDone("d"); XCTAssertEqual(m.waitingItems.count, 1)
+        m.handBack(m.pending[0].id); XCTAssertTrue(m.waitingItems.isEmpty)
+    }
 }

