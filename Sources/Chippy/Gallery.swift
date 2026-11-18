@@ -109,6 +109,31 @@ enum Gallery {
               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
         try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
     }
+    /// `Chippy --render-approval out.png`: approval cards for a short Bash command with a description, an Edit, and a very long command (sample text only).
+    @MainActor
+    static func renderApproval(to path: String) {
+        func card(_ tool: String, _ input: [String: Any]) -> some View {
+            let model = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("gal.jsonl")))
+            model.apply(HookPayload(json: Data(#"{"session_id":"demo-a","hook_event_name":"UserPromptSubmit","cwd":"/demo/api-server","chippy_branch":"fix/login-timeout","prompt":"Fix the login timeout bug"}"#.utf8))!)
+            let json: [String: Any] = ["session_id": "demo-a", "hook_event_name": "PermissionRequest", "cwd": "/demo/api-server", "chippy_branch": "fix/login-timeout", "tool_name": tool, "tool_input": input]
+            model.receiveApproval(HookPayload(json: try! JSONSerialization.data(withJSONObject: json))!, Connection.detached())
+            let m = NotchMetrics(width: 185, height: 32)
+            let sz = m.size(for: .expanded, tall: model.tall)
+            return NotchView(model: model, box: box(m)).frame(width: sz.width, height: sz.height)
+        }
+        let long = (1...40).map { "echo step-\($0) && sleep 1" }.joined(separator: " && ")
+        let all = HStack(alignment: .top, spacing: 12) {
+            card("Bash", ["command": "npm install", "description": "Install project dependencies"])
+            card("Edit", ["file_path": "/demo/api-server/Sources/Auth.swift", "old_string": "a", "new_string": "b"])
+            card("Bash", ["command": long, "description": "Run the whole smoke sequence"])
+        }.padding(12).background(Color(white: 0.25))
+        let r = ImageRenderer(content: all)
+        r.scale = 2
+        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
+              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
+        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
+    }
+
     /// `Chippy --render-tab out.png`: no room beside the camera (menu extras hug the notch), so the indicator is a tab below it.
     /// A mock menu bar with items touching both edges and the camera in red; wings (room) vs tab (no room), per density.
     @MainActor
