@@ -748,16 +748,6 @@ struct DoneCard: View {
     var full = false
     let dismiss: () -> Void
 
-    private var replyText: AttributedString {
-        let r = (full && item.decision != nil) ? item.replyWithoutDecision : (item.reply ?? "")
-        return (try? AttributedString(markdown: r, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(r)
-    }
-
-    private var replyBody: some View {
-        Text(replyText).font(.caption).foregroundStyle(.white.opacity(0.92)).textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(item.identityLine(repo: repo ?? item.project) + (item.asksYou ? " · waiting for your reply" : " · finished"))
@@ -766,25 +756,9 @@ struct DoneCard: View {
             if full, let p = item.prompt, !p.isEmpty {
                 Text("You asked: \(p)").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
             }
-            if full, let d = item.decision {
-                Text("Needs your call: \(d)").font(.caption.bold()).foregroundStyle(.orange)
-                    .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
-            }
-            if let r = item.reply, !r.isEmpty, !(full && item.decision != nil && item.replyWithoutDecision.isEmpty) {
-                if full {
-                    // Short reply: just the text (the card hugs it). Long reply: scrolls inside a capped area.
-                    // The scroll fallback has a FIXED height: a flexible one fills whatever the panel offers,
-                    // the panel grows to fit it, and the card keeps expanding.
-                    ViewThatFits(in: .vertical) {
-                        replyBody
-                        ScrollView { replyBody }.frame(height: 290)
-                    }
-                    .frame(maxHeight: 290)
-                } else {
-                    Text(r).font(.caption).foregroundStyle(.white.opacity(0.9)).lineLimit(6)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
+            let reply = full && item.decision != nil ? item.replyWithoutDecision : item.reply
+            SummaryView(reply: reply, decision: full ? item.decision : nil, compact: !full)
+                .id(reply)
             TourCaption(sessionId: item.sessionId, step: .done)
             HStack {
                 Text(item.files == 0 ? "No file edits" : "\(item.files) file\(item.files == 1 ? "" : "s") · +\(item.added) −\(item.removed)")
@@ -794,6 +768,105 @@ struct DoneCard: View {
                     OpenTerminalButton(host: item.host, onOpened: dismiss)
                 }
                 ChipButton(title: "Dismiss", kind: .neutral, action: dismiss)
+            }
+        }
+    }
+}
+
+/// The one summary component (#98b), used by the finished card (glance list and opened). Hierarchy: outcome line, then the
+/// decision Claude needs, then the rest folded behind "Show details". Light markdown only; raw markers never show.
+/// Recent rows hold no reply text by design (PDPA #30), so they do not use this.
+struct SummaryView: View {
+    var decision: String? = nil
+    /// Glance list: the outcome line only, no controls.
+    var compact = false
+    /// From SummaryMarkdown's 16-entry reply cache, so re-created views do not re-parse.
+    private let doc: SummaryMarkdown.Doc?
+    /// Shown when the parser yields no doc (e.g. "---", an empty fence, a table): the raw text, clipped, never blank.
+    private let fallback: String?
+    @State private var open = false
+
+    init(reply: String?, decision: String? = nil, compact: Bool = false) {
+        self.decision = decision; self.compact = compact
+        self.doc = SummaryMarkdown.doc(reply)
+        let t = reply?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.fallback = t.isEmpty ? nil : String(t.prefix(600)) + (t.count > 600 ? "…" : "")
+    }
+
+    private func text(_ runs: [SummaryMarkdown.Run], size: Font = .caption, bold: Bool = false) -> Text {
+        runs.reduce(Text("")) { acc, r in
+            switch r {
+            case .text(let s): return acc + Text(s).font(size).fontWeight(bold ? .semibold : .regular)
+            case .bold(let s): return acc + Text(s).font(size).fontWeight(.semibold)
+            case .code(let s): return acc + Text(s).font(.system(size: 11, design: .monospaced)).foregroundColor(.white)
+            }
+        }
+    }
+
+    private func block(_ b: SummaryMarkdown.Block) -> some View {
+        Group {
+            switch b {
+            case .paragraph(let r), .heading(let r): text(r).foregroundColor(.white.opacity(0.85))
+            case .ordered(let n, let r):
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("\(n).").font(.caption).foregroundColor(.white.opacity(0.5))
+                    text(r).foregroundColor(.white.opacity(0.85))
+                }
+            case .bullet(let r):
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("•").font(.caption).foregroundColor(.white.opacity(0.5))
+                    text(r).foregroundColor(.white.opacity(0.85))
+                }
+            case .code(let c):
+                Text(c).font(.system(size: 11, design: .monospaced)).foregroundColor(.white.opacity(0.85))
+                    .padding(6).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 5).fill(.white.opacity(0.08)))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var detailsBody: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            ForEach(Array((doc?.details ?? []).enumerated()), id: \.offset) { _, b in block(b) }
+        }.textSelection(.enabled)
+    }
+
+    var body: some View {
+        let d = doc
+        VStack(alignment: .leading, spacing: 6) {
+            if d == nil, let raw = fallback {
+                Text(raw).font(.caption).foregroundColor(.white.opacity(0.95))
+                    .lineLimit(compact ? 6 : nil)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+            }
+            if let d, !d.outcome.isEmpty {
+                text(d.outcome).foregroundColor(.white.opacity(0.95))
+                    .lineLimit(compact ? 3 : nil)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+            }
+            if !compact, let dec = decision {
+                Text("Needs your call: \(dec)").font(.caption.bold()).foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+            }
+            if !compact, let d, !d.details.isEmpty {
+                Button { open.toggle() } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold)).rotationEffect(.degrees(open ? 90 : 0))
+                        Text(open ? "Hide details" : "Show details").font(.caption2)
+                    }.foregroundStyle(.white.opacity(0.6)).contentShape(Rectangle())
+                }.buttonStyle(.plain)
+                .accessibilityLabel(open ? "Hide details" : "Show details")
+                if open {
+                    // Short: the card hugs it. Long: scrolls in a FIXED-height area (a flexible one fills what the
+                    // panel offers, the panel grows to fit it, and the card keeps expanding).
+                    ViewThatFits(in: .vertical) {
+                        detailsBody
+                        ScrollView { detailsBody }.frame(height: 240)
+                    }.frame(maxHeight: 240)
+                }
             }
         }
     }
