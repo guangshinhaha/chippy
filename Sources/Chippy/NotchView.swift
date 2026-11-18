@@ -84,11 +84,16 @@ struct NotchView: View {
         let open = model.density == .expanded
         return ChipmunkView(state: model.state).frame(width: big, height: big)
             .scaleEffect(open ? 1 : small / big, anchor: .topLeading)
-            .offset(x: open ? 16 : 10, y: open ? m.height + 2 : (m.band - small) / 2)
+            .offset(x: iconX(open: open, small: small, size: size), y: open ? m.height + 2 : m.isTab ? m.band + (NotchMetrics.tabHeight - small) / 2 : (m.band - small) / 2)
             .frame(width: size.width, height: size.height, alignment: .topLeading)
-            .opacity(open || m.pillShowsIcon ? 1 : 0)
-            .animation(motion, value: m.pillShowsIcon) // the same spring as the shape; linear 0.01s under reduced motion
             .allowsHitTesting(false)
+    }
+
+    /// Wings: the left edge. Tab: centred when collapsed, left of the glance text when compact.
+    private func iconX(open: Bool, small: CGFloat, size: CGSize) -> CGFloat {
+        if open { return 16 }
+        guard box.metrics.isTab else { return 10 }
+        return model.density == .compact ? 12 : (size.width - small) / 2
     }
 
     private func report(_ h: CGFloat) {
@@ -119,6 +124,22 @@ struct NotchView: View {
         switch model.density {
         case .collapsed:
             Color.clear.frame(height: m.band) // the icon is drawn once, by NotchView.icon
+        case .compact where m.isTab:
+            // No room beside the camera: the glance lives in a tab under it (icon is drawn by NotchView.icon).
+            VStack(spacing: 0) {
+                Color.clear.frame(height: m.band)
+                HStack(spacing: 6) {
+                    Color.clear.frame(width: 18 * 1.4 + 12)
+                    Text(compactText).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.tail)
+                    if model.doneItems.count > 1 {
+                        Text("+\(model.doneItems.count - 1)").font(.caption2).foregroundStyle(.white.opacity(0.6))
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.trailing, 10).frame(height: NotchMetrics.tabHeight)
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+            .reveal(0.08)
         case .compact where !m.compactFits:
             Color.clear.frame(height: m.band) // gap too small: the collapsed pill only
         case .compact:
