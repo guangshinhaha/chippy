@@ -117,7 +117,7 @@ public final class NotchModel: ObservableObject {
     }
 
     /// A PermissionRequest hook is waiting on `conn`. Main thread only.
-    /// AskUserQuestion is answerable only when every question is single-select; otherwise no reply, so the terminal handles it.
+    /// AskUserQuestion is answerable when every question parses (single or multi-select); otherwise no reply, so the terminal handles it.
     public func receiveApproval(_ payload: HookPayload, _ conn: Connection) {
         var req = PendingRequest(payload: payload)
         if payload.toolName == "AskUserQuestion" {
@@ -163,11 +163,24 @@ public final class NotchModel: ObservableObject {
 
     /// Answer a question request with one chosen option label per question (keyed by question text).
     public func answer(_ id: String, _ answers: [String: String], now: Date = Date()) {
+        answer(id, selections: answers.mapValues { [$0] }, now: now)
+    }
+
+    /// Answer with a set of labels per question. Single-select needs exactly one; multi-select at least one.
+    /// Multi-select labels are joined in the question's option order with ", " (the documented answer format;
+    /// not yet verified in a live Claude Code session). Anything incomplete goes back to the terminal.
+    public func answer(_ id: String, selections: [String: Set<String>], now: Date = Date()) {
         guard let i = pending.firstIndex(where: { $0.id == id }), let conn = connections.removeValue(forKey: id),
               var input = questionInputs.removeValue(forKey: id) else { return }
         let req = pending.remove(at: i)
+        var answers: [String: String] = [:]
+        for q in req.questions ?? [] {
+            guard let chosen = selections[q.question], !chosen.isEmpty, chosen.isSubset(of: Set(q.options.map(\.label))),
+                  q.multiSelect || chosen.count == 1 else { answers = [:]; break }
+            answers[q.question] = q.options.map(\.label).filter(chosen.contains).joined(separator: ", ")
+        }
         // A complete set of real option labels, or nothing: a partial answer would run the tool with a wrong one.
-        let valid = req.questions?.allSatisfy { q in answers[q.question].map { a in q.options.contains { $0.label == a } } ?? false } ?? false
+        let valid = !answers.isEmpty && answers.count == req.questions?.count
         if conn.peerGone || !valid { conn.respond(nil); record(req, channel: .terminal, decision: "none", now: now); refresh(); return }
         input["answers"] = answers
         let reply: [String: Any] = ["behavior": "allow", "updatedInput": input]

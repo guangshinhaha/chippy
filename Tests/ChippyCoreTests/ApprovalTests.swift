@@ -93,11 +93,61 @@ final class ApprovalTests: XCTestCase {
                                           "options": [["label": "A", "description": "a"], ["label": "B", "description": "b"]]]]]]))!
     }
 
-    func testMultiSelectQuestionIsLeftToTheTerminal() {
+    func multiPayload(_ qs: [[String: Any]]) -> HookPayload {
+        HookPayload(json: try! JSONSerialization.data(withJSONObject: [
+            "session_id": "s", "cwd": "/w/api", "hook_event_name": "PermissionRequest", "tool_name": "AskUserQuestion",
+            "tool_input": ["questions": qs]]))!
+    }
+    func mq(_ text: String, multi: Bool, _ labels: [String] = ["A", "B", "C"]) -> [String: Any] {
+        ["question": text, "header": "H", "multiSelect": multi, "options": labels.map { ["label": $0, "description": ""] }]
+    }
+
+    func testParseAcceptsMultiSelectAndMixedSets() throws {
+        let one = try XCTUnwrap(AskQuestion.parse(["questions": [mq("Q1", multi: true)]]))
+        XCTAssertEqual(one.map(\.multiSelect), [true])
+        let mixed = try XCTUnwrap(AskQuestion.parse(["questions": [mq("Q1", multi: false), mq("Q2", multi: true)]]))
+        XCTAssertEqual(mixed.map(\.multiSelect), [false, true])
+    }
+
+    func testParseStillRejectsUnsupportedShapes() {
+        XCTAssertNil(AskQuestion.parse(["questions": [mq("Q", multi: true, [])]]))          // no options
+        XCTAssertNil(AskQuestion.parse(["questions": [mq("Q", multi: true, ["A", "A"])]])) // duplicate labels
+        XCTAssertNil(AskQuestion.parse(["questions": [mq("Q", multi: true), mq("Q", multi: false)]])) // duplicate text
+    }
+
+    func testMalformedMultiSelectFallsBackToTheTerminal() {
         let m = model(); let (c, f) = pair()
-        m.receiveApproval(question(multi: true), c)
+        m.receiveApproval(multiPayload([mq("Q", multi: true, [])]), c)
         XCTAssertTrue(m.pending.isEmpty)
         XCTAssertNil(reply(f))                            // closed, no decision written
+    }
+
+    func testMultiSelectAnswerJoinsInOptionOrder() throws {
+        let m = model(); let (c, f) = pair()
+        m.receiveApproval(multiPayload([mq("Q", multi: true)]), c)
+        XCTAssertEqual(m.pending.count, 1)
+        m.answer(m.pending[0].id, selections: ["Q": ["C", "A"]]) // set order is irrelevant
+        let input = try XCTUnwrap(reply(f)?["updatedInput"] as? [String: Any])
+        XCTAssertEqual((input["answers"] as? [String: String])?["Q"], "A, C")
+        XCTAssertNotNil(input["questions"])
+    }
+
+    func testMixedSetAnswersEachInItsOwnFormat() throws {
+        let m = model(); let (c, f) = pair()
+        m.receiveApproval(multiPayload([mq("S", multi: false), mq("M", multi: true)]), c)
+        m.answer(m.pending[0].id, selections: ["S": ["B"], "M": ["B", "A"]])
+        let input = try XCTUnwrap(reply(f)?["updatedInput"] as? [String: Any])
+        XCTAssertEqual(input["answers"] as? [String: String], ["S": "B", "M": "A, B"])
+    }
+
+    func testEmptyOrOversizedSelectionIsRejected() {
+        for sel: [String: Set<String>] in [["M": []], ["M": ["nope"]], ["S": ["A", "B"], "M": ["A"]], ["M": ["A"]]] {
+            let m = model(); let (c, f) = pair()
+            m.receiveApproval(multiPayload([mq("S", multi: false), mq("M", multi: true)]), c)
+            m.answer(m.pending[0].id, selections: sel)
+            XCTAssertNil(reply(f))                        // terminal handles it, nothing written
+            XCTAssertTrue(m.pending.isEmpty)
+        }
     }
 
     func testSingleSelectQuestionIsAnsweredFromTheNotch() throws {

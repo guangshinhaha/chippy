@@ -11,24 +11,25 @@ public enum Decision: Equatable {
     }
 }
 
-/// One of Claude's own multiple-choice questions (AskUserQuestion). Only single-select ones are answerable from the notch.
+/// One of Claude's own multiple-choice questions (AskUserQuestion). Single- and multi-select are answerable from the notch.
 public struct AskQuestion: Equatable {
     public struct Option: Equatable { public let label: String; public let description: String }
     public let question: String
     public let header: String
     public let options: [Option]
+    public let multiSelect: Bool
 
-    /// nil unless every question is single-select with at least one option, so anything else goes to the terminal.
+    /// nil unless every question is well-formed (text, unique non-empty option labels, at least one option), so anything else goes to the terminal.
     static func parse(_ input: [String: Any]) -> [AskQuestion]? {
         guard let qs = input["questions"] as? [[String: Any]], !qs.isEmpty else { return nil }
         var out: [AskQuestion] = []
         for q in qs {
-            guard q["multiSelect"] as? Bool != true, let text = q["question"] as? String,
+            guard let text = q["question"] as? String,
                   let opts = q["options"] as? [[String: Any]], !opts.isEmpty else { return nil }
             let options = opts.compactMap { o in (o["label"] as? String).map { Option(label: $0, description: o["description"] as? String ?? "") } }
             guard options.count == opts.count, Set(options.map(\.label)).count == options.count,
                   !options.contains(where: { $0.label.isEmpty }) else { return nil }
-            out.append(AskQuestion(question: text, header: q["header"] as? String ?? "", options: options))
+            out.append(AskQuestion(question: text, header: q["header"] as? String ?? "", options: options, multiSelect: q["multiSelect"] as? Bool == true))
         }
         guard Set(out.map(\.question)).count == out.count else { return nil } // answers are keyed by question text
         return out

@@ -116,14 +116,15 @@ enum Gallery {
         model.apply(HookPayload(json: Data(#"{"session_id":"demo-a","hook_event_name":"UserPromptSubmit","cwd":"/demo/api-server","chippy_branch":"fix/login-timeout","prompt":"Set up the login page"}"#.utf8))!)
         let json: [String: Any] = ["session_id": "demo-a", "hook_event_name": "PermissionRequest", "cwd": "/demo/api-server", "chippy_branch": "fix/login-timeout",
             "tool_name": "AskUserQuestion", "chippy_lead_in": "Before I wire up the login page I need to pick how people sign in. The school has an identity provider, but it is not set up for this app yet, and a plain password form would mean storing credentials.",
-            "tool_input": ["questions": [["question": "Which auth method should the login page use?", "header": "Auth", "multiSelect": false, "options": [
+            "tool_input": ["questions": [["question": "Which sign-in methods should the login page offer?", "header": "Auth", "multiSelect": true, "options": [
                 ["label": "Email + password", "description": "Classic form, simplest to ship. We would store salted hashes and need a reset flow, rate limiting and a lockout policy before launch."],
                 ["label": "Magic link", "description": "No passwords to store"],
                 ["label": "SSO", "description": "Use the school's identity provider"]]]]]]
         model.receiveApproval(HookPayload(json: try! JSONSerialization.data(withJSONObject: json))!, Connection.detached())
         let m = NotchMetrics(width: 185, height: 32)
         let sz = m.size(for: .expanded, tall: model.tall)
-        let r = ImageRenderer(content: NotchView(model: model, box: box(m)).frame(width: sz.width, height: 560).background(Color(white: 0.25)))
+        let qbox = box(m); qbox.contentHeight = 540 // the app measures this; a static render must be told
+        let r = ImageRenderer(content: NotchView(model: model, box: qbox).frame(width: sz.width, height: 560).background(Color(white: 0.25)))
         r.scale = 2
         guard let img = r.nsImage, let tiff = img.tiffRepresentation,
               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }

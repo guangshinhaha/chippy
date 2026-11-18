@@ -209,7 +209,7 @@ struct NotchView: View {
                 .reveal(0.08)
                 if let req = model.pending.first {
                     if req.questions != nil {
-                        QuestionCard(req: req, send: { model.answer(req.id, $0) }, handBack: { model.handBack(req.id) }).id(req.id).reveal(0.12)
+                        QuestionCard(req: req, send: { model.answer(req.id, selections: $0) }, handBack: { model.handBack(req.id) }).id(req.id).reveal(0.12)
                     } else {
                         ApprovalCard(req: req) { model.resolve(req.id, $0) }.reveal(0.12)
                     }
@@ -274,6 +274,7 @@ struct ChipButton: View {
     let title: String
     var hint: String? = nil
     let kind: Kind
+    var disabled = false
     let action: () -> Void
     @State private var hover = false
 
@@ -284,7 +285,9 @@ struct ChipButton: View {
                 if let hint { Text(hint).font(.caption2).opacity(0.5) }
             }
         }
-            .buttonStyle(ChipStyle(kind: kind, hover: hover))
+            .buttonStyle(ChipStyle(kind: kind, hover: hover && !disabled))
+            .disabled(disabled)
+            .opacity(disabled ? 0.4 : 1)
             .onHover { hover = $0 }
     }
 }
@@ -330,10 +333,12 @@ private struct QuestionBodyHeight: PreferenceKey {
 
 struct QuestionCard: View {
     let req: PendingRequest
-    let send: ([String: String]) -> Void
+    let send: ([String: Set<String>]) -> Void
     let handBack: () -> Void
     @State private var step = 0
-    @State private var answers: [String: String] = [:]
+    /// Chosen labels per question text; survives moving between questions.
+    @State private var answers: [String: Set<String>] = [:]
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var sent = false
     @State private var leadExpanded = false
     @State private var bodyHeight: CGFloat = 0
@@ -352,7 +357,12 @@ struct QuestionCard: View {
                 .font(.caption2).foregroundStyle(.white.opacity(0.6))
             Text(q.question).font(.caption.bold()).foregroundStyle(.white).lineLimit(3)
             ForEach(Array(q.options.enumerated()), id: \.offset) { i, o in
+                let on = q.multiSelect && answers[q.question]?.contains(o.label) == true
                 HStack(alignment: .top, spacing: 8) {
+                    if q.multiSelect {
+                        Image(systemName: on ? "checkmark.square.fill" : "square").font(.caption)
+                            .foregroundStyle(on ? Color.accentColor : .white.opacity(0.5)).padding(.top, 1)
+                    }
                     if i < 9 { Text("\(i + 1)").font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.4)).padding(.top, 1) }
                     VStack(alignment: .leading, spacing: 1) {
                         Text(o.label).font(.caption.bold()).foregroundStyle(.white)
@@ -361,9 +371,18 @@ struct QuestionCard: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10).padding(.vertical, 5)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: 0.18)))
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: on ? 0.26 : 0.18)))
+                .animation(.easeOut(duration: reduceMotion ? 0.01 : 0.12), value: on)
                 .contentShape(Rectangle())
                 .onTapGesture { pick(i) }
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+            if q.multiSelect {
+                HStack {
+                    Text("Pick one or more").font(.caption2).foregroundStyle(.white.opacity(0.5))
+                    Spacer()
+                    ChipButton(title: step + 1 >= count ? "Done" : "Next", kind: .primary, disabled: (answers[q.question] ?? []).isEmpty) { advance() }
+                }
             }
         }
     }
@@ -401,12 +420,28 @@ struct QuestionCard: View {
     }
 
     /// The one answer path for taps and keys: the `sent` guard and multi-question stepping live here.
+    /// Single-select picks and moves on; multi-select toggles and waits for Done/Next.
     private func pick(_ index: Int) {
         let qs = req.questions ?? []
         guard !sent, !qs.isEmpty else { return } // a double-click or key repeat must not answer the next question too
         let q = qs[min(step, qs.count - 1)]
         guard q.options.indices.contains(index) else { return }
-        answers[q.question] = q.options[index].label
+        let label = q.options[index].label
+        if q.multiSelect {
+            var set = answers[q.question] ?? []
+            if !set.insert(label).inserted { set.remove(label) }
+            answers[q.question] = set
+        } else {
+            answers[q.question] = [label]
+            advance()
+        }
+    }
+
+    private func advance() {
+        let qs = req.questions ?? []
+        guard !sent, !qs.isEmpty else { return }
+        let q = qs[min(step, qs.count - 1)]
+        guard !(answers[q.question] ?? []).isEmpty else { return } // multi-select needs at least one
         if step + 1 < qs.count { step += 1 } else { sent = true; send(answers) }
     }
 }
