@@ -30,7 +30,7 @@ final class NotchModelTests: XCTestCase {
     func testHiddenWhileSessionsJustRun() {
         let m = model()
         m.apply(ev("SessionStart")); m.apply(ev("UserPromptSubmit"))
-        XCTAssertFalse(m.visible)
+        XCTAssertTrue(m.resting)
         XCTAssertEqual(m.state, ChippyState.working)
     }
 
@@ -38,18 +38,18 @@ final class NotchModelTests: XCTestCase {
         let m = model(); let t = Date()
         m.apply(ev("UserPromptSubmit"), now: t)
         m.apply(ev("Stop"), now: t)
-        XCTAssertTrue(m.visible); XCTAssertEqual(m.density, Density.compact)
+        XCTAssertFalse(m.resting); XCTAssertEqual(m.density, Density.compact)
         m.sweep(now: t.addingTimeInterval(120))                 // well past the old 6s toast
-        XCTAssertTrue(m.visible)
+        XCTAssertFalse(m.resting)
         m.dismissDone()
-        XCTAssertFalse(m.visible)
+        XCTAssertTrue(m.resting)
     }
 
     func testFinishedChipAgesOutAfterTenMinutes() {
         let m = model(); let t = Date()
         m.apply(ev("Stop"), now: t)
         m.sweep(now: t.addingTimeInterval(NotchModel.doneSeconds + 1))
-        XCTAssertFalse(m.visible)
+        XCTAssertTrue(m.resting)
     }
 
     func testClickingTheChipOpensDetailAndAgainGoesBack() {
@@ -58,7 +58,7 @@ final class NotchModelTests: XCTestCase {
         m.toggleOpen(); XCTAssertEqual(m.density, Density.expanded); XCTAssertTrue(m.doneOpen)
         m.toggleOpen(); XCTAssertEqual(m.density, Density.collapsed)
         m.toggleOpen(); m.dismissDone()
-        XCTAssertFalse(m.visible)
+        XCTAssertTrue(m.resting)
     }
 
     func testThreadResumingWithoutAPromptClearsItsChipAndShowsWorking() {
@@ -74,14 +74,14 @@ final class NotchModelTests: XCTestCase {
         let m = model(); let t = Date()
         m.apply(ev("Stop"), now: t)
         m.apply(ev("UserPromptSubmit"), now: t)
-        XCTAssertFalse(m.visible)
+        XCTAssertTrue(m.resting)
     }
 
     func testAnotherThreadsPromptDoesNotDismissMyChip() {
         let m = model(); let t = Date()
         m.apply(ev("Stop", "a"), now: t)
         m.apply(ev("UserPromptSubmit", "b"), now: t)
-        XCTAssertTrue(m.visible)
+        XCTAssertFalse(m.resting)
     }
 
     func testAgentWorktreeIsLabelledByRepoAndNeverShowsAChip() {
@@ -90,21 +90,21 @@ final class NotchModelTests: XCTestCase {
         XCTAssertEqual(p.project, "shinstack")
         let m = model()
         m.apply(p)
-        XCTAssertFalse(m.visible)
+        XCTAssertTrue(m.resting)
     }
 
     func testClickPeeksSessionListAndSecondClickHidesIt() {
         let m = model()
         m.apply(ev("SessionStart"))
-        m.toggleOpen(); XCTAssertTrue(m.visible); XCTAssertEqual(m.density, Density.expanded)
-        m.toggleOpen(); XCTAssertFalse(m.visible)
+        m.toggleOpen(); XCTAssertFalse(m.resting); XCTAssertEqual(m.density, Density.expanded)
+        m.toggleOpen(); XCTAssertTrue(m.resting)
     }
 
-    func testClickWithNoSessionsStaysCollapsed() {
+    func testClickWithNoSessionsOpensTheRestPanel() {
         let m = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("chippy-test-\(UUID()).jsonl")))
         m.toggleOpen()
-        XCTAssertEqual(m.density, Density.collapsed)
-        XCTAssertFalse(m.pinnedOpen)
+        XCTAssertEqual(m.density, Density.expanded)
+        XCTAssertFalse(m.pinnedOpen); XCTAssertTrue(m.restOpen)
     }
 
     func testApprovalCardCarriesFullCommandBranchAndPrompt() {

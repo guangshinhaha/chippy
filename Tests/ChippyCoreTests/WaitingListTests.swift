@@ -164,7 +164,7 @@ final class WaitingListTests: XCTestCase {
         m.openList()
         m.dismissDone("d")
         XCTAssertFalse(m.listOpen)
-        XCTAssertFalse(m.visible)
+        XCTAssertTrue(m.resting)
     }
 
     func testSelectionFollowsWhenTheHighlightedItemDisappears() {

@@ -32,9 +32,9 @@ final class ApprovalTests: XCTestCase {
         m.receiveApproval(payload(), c)
         XCTAssertEqual(m.pending.first?.ask, "Bash: npm install")
         XCTAssertEqual(m.state, .needsYou)
-        XCTAssertTrue(m.visible)                          // an approval is what brings the notch up
+        XCTAssertFalse(m.resting)                          // an approval is what brings the notch up
         m.resolve(m.pending[0].id, .allow)
-        XCTAssertFalse(m.visible)                         // and answering it sends the notch away again
+        XCTAssertTrue(m.resting)                         // and answering it returns the notch to rest
     }
 
     func testAllowAndDenyReplyToTheExactRequest() {

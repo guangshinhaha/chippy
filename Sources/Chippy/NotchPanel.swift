@@ -64,6 +64,8 @@ final class MetricsBox: ObservableObject {
     @Published var contentHeight: CGFloat = 0
     /// Pointer is over the island (set by the panel's pointer tracking).
     @Published var hover = false
+    /// Opens the shared status-item menu at the pointer (the header gear). Set by the panel.
+    var openMenu: () -> Void = {}
 }
 
 /// Borderless panel docked top-center of the screen, over the notch.
@@ -80,6 +82,8 @@ final class NotchPanel: NSPanel {
     private let probeQueue = DispatchQueue(label: "chippy.menubar-probe", qos: .utility)
     private var probeGen = 0
     private var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
+    /// Pops the app's one NSMenu (the status item's) at a screen point; `centered` puts it under the notch.
+    var onMenu: ((_ at: NSPoint, _ centered: Bool) -> Void)?
 
     init(model: NotchModel) {
         self.model = model
@@ -92,6 +96,7 @@ final class NotchPanel: NSPanel {
         isOpaque = false
         hasShadow = false
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        metrics.openMenu = { [weak self] in self?.onMenu?(NSEvent.mouseLocation, false) }
         let host = NSHostingView(rootView: NotchView(model: model, box: metrics))
         host.sizingOptions = [] // the window is fixed; SwiftUI must not resize it
         contentView = host
@@ -111,11 +116,14 @@ final class NotchPanel: NSPanel {
             self.makeKey() // only on the open transition
         }.store(in: &bag)
         model.$tall.dropFirst().receive(on: RunLoop.main).sink { [weak self] _ in self?.dock(self?.model.density ?? .collapsed) }.store(in: &bag)
-        model.$visible.receive(on: RunLoop.main).sink { [weak self] v in
+        // Never hidden (#85). Resting costs nothing: no wings are drawn, so the gap is not measured and its timer is off.
+        model.$resting.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] resting in
             guard let self else { return }
-            if v { self.dock(self.model.density); self.orderFrontRegardless(); self.remeasure(); self.startGapTimer() } else { self.orderOut(nil); self.gapTimer?.invalidate(); self.gapTimer = nil }
+            self.dock(self.model.density)
+            if resting { self.gapTimer?.invalidate(); self.gapTimer = nil } else { self.remeasure(); self.startGapTimer() }
         }.store(in: &bag)
         dock(model.density)
+        orderFrontRegardless()
         let nc = NSWorkspace.shared.notificationCenter
         nc.publisher(for: NSWorkspace.activeSpaceDidChangeNotification).receive(on: RunLoop.main).sink { [weak self] _ in self?.remeasureIfVisible() }.store(in: &bag)
         nc.publisher(for: NSWorkspace.didActivateApplicationNotification).receive(on: RunLoop.main).sink { [weak self] _ in
@@ -123,7 +131,7 @@ final class NotchPanel: NSPanel {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self?.remeasureIfVisible() } // the new app's menus may not be readable yet
         }.store(in: &bag)
         remeasure()
-        if model.visible { startGapTimer() }
+        if !model.resting { startGapTimer() }
         NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
             .receive(on: RunLoop.main).sink { [weak self] _ in
                 guard let self else { return }
@@ -139,7 +147,7 @@ final class NotchPanel: NSPanel {
 
     /// Re-read the menu bar gap off the main thread. A change must hold for 0.4s before it counts, so quick app
     /// switching does not make the pill spring repeatedly.
-    private func remeasureIfVisible() { if model.visible { remeasure() } }
+    private func remeasureIfVisible() { if !model.resting { remeasure() } }
 
     private func remeasure() {
         guard let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }),
@@ -184,6 +192,17 @@ final class NotchPanel: NSPanel {
     }
 
     override var canBecomeKey: Bool { true }
+
+    /// Right-click or ctrl-click on the collapsed island opens the shared menu under the notch. Only reached while the
+    /// pointer is over the shape (elsewhere the window ignores mouse events). The expanded card keeps its own clicks.
+    override func sendEvent(_ event: NSEvent) {
+        let secondary = event.type == .rightMouseDown || (event.type == .leftMouseDown && event.modifierFlags.contains(.control))
+        if secondary, model.density != .expanded {
+            onMenu?(NSPoint(x: frame.midX, y: hitRect.minY + 8), true) // the shape's bottom edge (the hit rect adds an 8pt margin)
+            return
+        }
+        super.sendEvent(event)
+    }
 
     /// Esc (when the notch has focus) folds an open detail.
     override func cancelOperation(_ sender: Any?) { model.closeDetail() }
@@ -272,8 +291,10 @@ final class NotchPanel: NSPanel {
         let f = screen.frame
         let frame = CGRect(x: f.midX - box.width / 2, y: f.maxY - box.height, width: box.width, height: box.height)
         if self.frame != frame { setFrame(frame, display: true) }
-        // No notch: a collapsed island would sit over the menu bar, so it takes no clicks at all.
-        let size = m.size(for: density, tall: model.tall, contentHeight: metrics.contentHeight)
-        setHitRect(size, screen: screen, active: !(density == .collapsed && !m.hasNotch))
+        // No notch: a collapsed island (with a chip) would sit over the menu bar, so it takes no clicks. The resting
+        // pill is the exception: a small fixed-width pill at top-centre, so Recent and the menu stay reachable.
+        let resting = model.resting
+        let size = m.size(for: density, resting: resting, tall: model.tall, contentHeight: metrics.contentHeight)
+        setHitRect(size, screen: screen, active: resting || !(density == .collapsed && !m.hasNotch))
     }
 }

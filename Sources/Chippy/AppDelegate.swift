@@ -7,6 +7,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let model = NotchModel()
     private var panel: NotchPanel?
     private var statusItem: NSStatusItem?
+    /// The one menu: the status item shows it, and so do the notch's right-click and gear (never rebuilt).
+    private var mainMenu: NSMenu?
     private let todayItem = NSMenuItem(), weekItem = NSMenuItem()
     private var server: SocketServer?
     private var sweeper: Timer?
@@ -25,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         panel = NotchPanel(model: model)
+        panel?.onMenu = { [weak self] at, centered in self?.popMenu(at: at, centered: centered) }
         model.onSound = { [weak self] kind, id, host in self?.sounds.handle(kind, sessionId: id, host: host) }
         model.onSessionEnd = { [weak self] id in self?.sounds.sessionEnded(id) }
         buildMenu()
@@ -163,7 +166,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit Chippy", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         item.menu = menu
+        mainMenu = menu
         statusItem = item
+    }
+
+    /// Show the shared menu at a screen point: under the notch (centred) for right-click, at the pointer for the gear.
+    /// It is the status item's own menu (same items and delegate), so both entry points always agree.
+    private func popMenu(at p: NSPoint, centered: Bool) {
+        guard let menu = mainMenu else { return }
+        menu.popUp(positioning: nil, at: NSPoint(x: centered ? p.x - menu.size.width / 2 : p.x, y: p.y), in: nil)
     }
 
     func menuWillOpen(_ menu: NSMenu) {

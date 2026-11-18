@@ -57,6 +57,8 @@ final class SleepPolicyTests: XCTestCase {
         m.sweep(now: t0.addingTimeInterval(301))
         XCTAssertTrue(m.asleep)
         m.setHover(true, now: t0.addingTimeInterval(302))
+        XCTAssertTrue(m.asleep) // hover alone never wakes (#85): the sleeping pose must stay visible
+        m.toggleOpen(now: t0.addingTimeInterval(302)) // a click does
         XCTAssertFalse(m.asleep)
         m.sweep(now: t0.addingTimeInterval(500))
         XCTAssertFalse(m.asleep)

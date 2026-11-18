@@ -22,7 +22,7 @@ final class TerminalChipTests: XCTestCase {
         XCTAssertTrue(m.pending.isEmpty)
         XCTAssertEqual(m.terminalItems.count, 1)
         XCTAssertEqual(m.terminalItems[0].glance, "api-server · asked in terminal")
-        XCTAssertEqual(m.density, .compact); XCTAssertTrue(m.visible); XCTAssertEqual(m.state, .needsYou)
+        XCTAssertEqual(m.density, .compact); XCTAssertFalse(m.resting); XCTAssertEqual(m.state, .needsYou)
     }
 
     func testChipHoldsNoContent() {
@@ -106,7 +106,7 @@ final class TerminalChipTests: XCTestCase {
         XCTAssertEqual(m.terminalItems.count, 1)
         m.sweep(now: t0.addingTimeInterval(NotchModel.doneSeconds + 5))
         XCTAssertTrue(m.terminalItems.isEmpty)
-        XCTAssertFalse(m.visible)
+        XCTAssertTrue(m.resting)
     }
 
     func testRepeatReplacesAndDismissClears() {

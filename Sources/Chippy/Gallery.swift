@@ -51,8 +51,10 @@ enum Gallery {
                 HStack(alignment: .top, spacing: 12) {
                     ForEach(ChippyState.allCases, id: \.self) { s in
                         VStack(spacing: 4) {
-                            NotchView(model: NotchModel(state: s, density: d), box: box(m))
-                                .frame(width: m.size(for: d).width, height: m.size(for: d).height)
+                            let cell = NotchModel(state: s, density: d)
+                            let cs = m.size(for: d, resting: cell.resting)
+                            NotchView(model: cell, box: box(m))
+                                .frame(width: cs.width, height: cs.height)
                             Text("\(s.title) / \(d.title)").font(.caption2).foregroundStyle(.secondary)
                         }
                     }
@@ -253,6 +255,61 @@ enum Gallery {
                 Text("Collapsed + badge: tap opens the list").font(.caption2).foregroundStyle(.secondary)
             }
         }.padding(16).background(Color(white: 0.25))
+        let r = ImageRenderer(content: all)
+        r.scale = 2
+        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
+              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
+        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
+    }
+
+    /// `Chippy --render-resting out.png` (#85): the resting tab on three screens (awake, asleep) and the panel a click opens
+    /// (Recent list with the gear, then the empty case). Sample repo names only.
+    @MainActor
+    static func renderResting(to path: String) {
+        let log = tempLog()
+        defer { try? FileManager.default.removeItem(at: log) }
+        func fresh() -> NotchModel { NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: log)) }
+        func recentModel() -> NotchModel {
+            let now = Date()
+            let m = fresh()
+            for (i, repo) in ["docs-site", "billing-api", "mobile-app", "login-page", "api-server", "old-one"].enumerated() {
+                m.apply(HookPayload(json: Data(#"{"session_id":"r\#(i)","hook_event_name":"Stop","cwd":"/demo/\#(repo)","last_assistant_message":"REPLY-TEXT-MUST-NOT-SHOW"}"#.utf8))!, now: now.addingTimeInterval(Double(i - 7) * 240))
+                m.dismissDone("r\(i)")
+            }
+            m.toggleOpen()
+            return m
+        }
+        let devices: [(String, NotchMetrics)] = [("14\" notch", .sample14), ("16\" notch", NotchMetrics(width: 200, height: 38)), ("no notch", .none)]
+        let tabs = HStack(alignment: .top, spacing: 16) {
+            ForEach(devices, id: \.0) { name, m in
+                ForEach([false, true], id: \.self) { asleep in
+                    let model = fresh()
+                    let _ = { if asleep { model.sweep(now: Date().addingTimeInterval(400)) } }()
+                    VStack(alignment: .leading, spacing: 4) {
+                        ZStack(alignment: .top) {
+                            Color(white: 0.8).frame(width: 240, height: 80) // stand-in for the menu bar / a window
+                            NotchView(model: model, box: box(m)).frame(width: 240, height: 80)
+                        }.frame(width: 240, height: 80, alignment: .top).clipped()
+                        Text("\(name) · resting \(asleep ? "asleep" : "awake")").font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        let m = NotchMetrics.sample14
+        let sz = m.size(for: .expanded)
+        let panels = HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                NotchView(model: recentModel(), box: box(m)).frame(width: sz.width, height: 430)
+                Text("Click: Recent (5 max, repo + age + Open) and the gear").font(.caption2).foregroundStyle(.secondary)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                let empty = fresh()
+                let _ = empty.toggleOpen()
+                NotchView(model: empty, box: box(m)).frame(width: sz.width, height: 180)
+                Text("Click with nothing recent").font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        let all = VStack(alignment: .leading, spacing: 16) { tabs; panels }.padding(16).background(Color(white: 0.25))
         let r = ImageRenderer(content: all)
         r.scale = 2
         guard let img = r.nsImage, let tiff = img.tiffRepresentation,
