@@ -416,7 +416,7 @@ struct DoneCard: View {
                     .font(.caption2).foregroundStyle(.white.opacity(0.6))
                 Spacer()
                 if TerminalJump.available(item.host) {
-                    OpenTerminalButton(host: item.host)
+                    OpenTerminalButton(host: item.host, onOpened: dismiss)
                 }
                 ChipButton(title: "Dismiss", kind: .neutral, action: dismiss)
             }
@@ -428,6 +428,7 @@ struct DoneCard: View {
 /// instead of appearing to do nothing.
 struct OpenTerminalButton: View {
     let host: HostInfo?
+    var onOpened: () -> Void = {}
     @State private var failed = false
     @State private var busy = false
     @State private var token = 0
@@ -448,6 +449,7 @@ struct OpenTerminalButton: View {
             TerminalJump.open(host) { ok in
                 busy = false
                 failed = !ok
+                if ok { onOpened() }
                 if !ok { DispatchQueue.main.asyncAfter(deadline: .now() + 4) { if token == mine { failed = false } } }
             }
         }

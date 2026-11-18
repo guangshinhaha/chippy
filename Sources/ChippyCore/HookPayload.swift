@@ -32,7 +32,7 @@ public struct HookPayload {
         lastMessage = o["last_assistant_message"] as? String
         let hp = (o["chippy_host_pid"] as? NSNumber)?.int32Value
         let hb = o["chippy_host_bundle"] as? String, tty = o["chippy_tty"] as? String
-        host = (hp != nil || hb != nil || tty != nil) ? HostInfo(pid: hp, bundle: hb, tty: tty) : nil
+        host = (hp != nil || hb != nil || tty != nil) ? HostInfo(pid: hp, bundle: hb, tty: tty, cwd: cwd.isEmpty ? nil : cwd) : nil
         leadIn = (o["chippy_lead_in"] as? String).map { TranscriptTail.truncate($0, to: TranscriptTail.maxChars) }
         transcriptPath = o["transcript_path"] as? String
         branchOverride = o["chippy_branch"] as? String // only the demo command sets this

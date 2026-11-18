@@ -85,10 +85,30 @@ enum TerminalJump {
         }
     }
 
+    /// Orca: after it is frontmost, ask its CLI to select the session's workspace (it has no AppleScript).
+    static func selectOrcaWorkspace(_ cwd: String) {
+        let cli = "/Applications/Orca.app/Contents/Resources/bin/orca"
+        guard FileManager.default.isExecutableFile(atPath: cli) else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: cli)
+            p.arguments = ["worktree", "activate", "--worktree", "path:" + cwd]
+            p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+            guard (try? p.run()) != nil else { return }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 5) { if p.isRunning { p.terminate() } }
+            p.waitUntilExit()
+        }
+    }
+
     /// `completion(true)` when the host app is frontmost afterwards, false when it could not be brought forward.
     static func open(_ host: HostInfo?, completion: @escaping (Bool) -> Void = { _ in }) {
         guard available(host), let h = host, let pid = h.pid, let bundle = h.bundle else { completion(false); return }
-        let activate = { bringForward(pid: pid, completion: completion) }
+        let activate = {
+            bringForward(pid: pid) { ok in
+                if ok, bundle == "com.stablyai.orca", let cwd = h.cwd { selectOrcaWorkspace(cwd) }
+                completion(ok)
+            }
+        }
         guard let src = script(bundle: bundle, tty: h.tty ?? "") else { activate(); return }
         // osascript off the main thread: the first run may sit on the Automation permission prompt.
         DispatchQueue.global(qos: .userInitiated).async {
