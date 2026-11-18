@@ -149,11 +149,11 @@ final class WaitingListTests: XCTestCase {
         let m = model()
         question(m, "q"); approval(m, "a")
         let q = m.pending[0]
-        m.savePartial(q.id, step: 1, answers: ["Q1?": "x"])
+        m.savePartial(q.id, step: 1, answers: ["Q1?": ["x"]])
         m.openList(); m.activate(m.waitingItems[1].target) // go look at the approval
         XCTAssertEqual(m.shownPending?.sessionId, "a")
         m.openList(); m.activate(.pending(q.id))           // and back
-        XCTAssertEqual(m.partials[q.id], PartialAnswers(step: 1, answers: ["Q1?": "x"]))
+        XCTAssertEqual(m.partials[q.id], PartialAnswers(step: 1, answers: ["Q1?": ["x"]]))
         m.handBack(q.id)
         XCTAssertNil(m.partials[q.id])
     }
@@ -245,12 +245,27 @@ final class WaitingListTests: XCTestCase {
         let m = model()
         question(m, "q", two: false)
         let id = m.pending[0].id
-        m.savePartial(id, step: 0, answers: ["Q1?": "x"])
+        m.savePartial(id, step: 0, answers: ["Q1?": ["x"]])
         XCTAssertNotNil(m.partials[id])
-        m.answer(id, ["Q1?": "x"])
+        m.answer(id, selections: ["Q1?": ["x"]])
         XCTAssertNil(m.partials[id])
-        m.savePartial(id, step: 0, answers: ["Q1?": "x"]) // a late save for a gone request is ignored
+        m.savePartial(id, step: 0, answers: ["Q1?": ["x"]]) // a late save for a gone request is ignored
         XCTAssertNil(m.partials[id])
+    }
+
+    func testTerminalFallbackListedAfterBlockingBeforeDoneAndOpensTheSharedDetail() {
+        let m = model()
+        stop(m, "d")
+        // An AskUserQuestion Chippy can't render falls back to the terminal and leaves a chip.
+        m.receiveApproval(HookPayload(json: Data(#"{"session_id":"t","hook_event_name":"PermissionRequest","cwd":"/w/term","tool_name":"AskUserQuestion","tool_input":{}}"#.utf8))!, conn())
+        approval(m, "a")
+        XCTAssertEqual(m.waitingItems.map(\.kind), [.approval, .terminal, .done])
+        XCTAssertEqual(m.waitingItems[1].repo, "term")
+        m.openList()
+        m.activate(.terminal("t"))
+        XCTAssertFalse(m.listOpen)
+        XCTAssertNil(m.focus)
+        XCTAssertTrue(m.doneOpen)
     }
 
     func testWaitingItemsStayCurrentAfterEveryChange() {

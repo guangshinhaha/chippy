@@ -4,12 +4,13 @@ import Foundation
 public enum WaitingTarget: Hashable {
     case pending(String)   // PendingRequest.id (approval or question)
     case done(String)      // DoneItem.sessionId
+    case terminal(String)  // TerminalItem.sessionId: asked in the terminal
 }
 
 /// One row of the waiting list (#53). Deliberately carries no question or command text (PDPA #30):
 /// only the repo, the kind and when it started waiting.
 public struct WaitingItem: Identifiable, Equatable {
-    public enum Kind: String { case approval, question, done }
+    public enum Kind: String { case approval, question, done, terminal }
     public let target: WaitingTarget
     public let kind: Kind
     public let repo: String
@@ -30,16 +31,20 @@ public enum WaitingList {
     }
 
     /// Approvals and questions first, because they block an agent (oldest first: the order they queued),
-    /// then finished chips, newest first.
-    public static func items(pending: [PendingRequest], done: [DoneItem]) -> [WaitingItem] {
+    /// then terminal fallbacks (oldest first), then finished chips, newest first.
+    public static func items(pending: [PendingRequest], done: [DoneItem], terminal: [TerminalItem] = []) -> [WaitingItem] {
         let blocking = pending.enumerated().sorted { ($0.element.createdAt, $0.offset) < ($1.element.createdAt, $1.offset) }.map { _, r in
             WaitingItem(target: .pending(r.id), kind: r.questions != nil ? .question : .approval,
                         repo: repoName(cwd: r.cwd), at: r.createdAt)
         }
+        // A request that fell back to the terminal is still waiting on you: it sorts with the blocking ones, after the live cards.
+        let inTerminal = terminal.enumerated().sorted { ($0.element.at, $0.offset) < ($1.element.at, $1.offset) }.map { _, t in
+            WaitingItem(target: .terminal(t.sessionId), kind: .terminal, repo: t.project.isEmpty ? "unknown" : t.project, at: t.at)
+        }
         let finished = done.enumerated().sorted { ($0.element.at, $0.offset) > ($1.element.at, $1.offset) }.map { _, d in
             WaitingItem(target: .done(d.sessionId), kind: .done, repo: d.project.isEmpty ? "unknown" : d.project, at: d.at)
         }
-        return blocking + finished
+        return blocking + inTerminal + finished
     }
 
     /// Arrow-key movement: clamps at both ends (no wrap, so the user always knows where the edge is).
@@ -73,6 +78,6 @@ public enum WaitingList {
 /// item) does not lose them. In memory only; dropped when the request is resolved.
 public struct PartialAnswers: Equatable {
     public var step = 0
-    public var answers: [String: String] = [:]
-    public init(step: Int = 0, answers: [String: String] = [:]) { self.step = step; self.answers = answers }
+    public var answers: [String: Set<String>] = [:]
+    public init(step: Int = 0, answers: [String: Set<String>] = [:]) { self.step = step; self.answers = answers }
 }

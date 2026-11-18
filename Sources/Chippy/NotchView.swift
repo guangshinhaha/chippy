@@ -5,9 +5,10 @@ import SwiftUI
 struct StateIcon: View {
     let state: ChippyState
     var size: CGFloat = 18
+    var sleeping = false
 
     var body: some View {
-        ChipmunkView(state: state).frame(width: size * 1.4, height: size * 1.4)
+        ChipmunkView(state: state, sleeping: sleeping).frame(width: size * 1.4, height: size * 1.4)
     }
 }
 
@@ -106,7 +107,7 @@ struct NotchView: View {
         let big: CGFloat = 28 * 1.4
         let small = NotchMetrics.glanceIcon
         let open = model.density == .expanded
-        return ChipmunkView(state: model.state).frame(width: big, height: big)
+        return ChipmunkView(state: model.state, sleeping: model.asleep).frame(width: big, height: big)
             .scaleEffect(open ? 1 : small / big, anchor: .topLeading)
             .offset(x: iconX(open: open, small: small, size: size), y: open ? m.height + 2 : m.isTab ? m.band + (NotchMetrics.tabHeight - small) / 2 : (m.band - small) / 2)
             .frame(width: size.width, height: size.height, alignment: .topLeading)
@@ -131,6 +132,8 @@ struct NotchView: View {
 
     /// Glance text: who finished (repo · branch), so several threads can be told apart.
     private var compactText: String {
+        // Only when the icon says "needs you" too: live work (icon: working) wins over the chip text.
+        if model.state == .needsYou, let t = model.terminalItems.last, model.pending.isEmpty, t.at >= (model.doneItems.last?.at ?? .distantPast) { return t.glance }
         guard let d = model.doneItems.last else { return model.state.title }
         return d.glance(showReply: model.showReplyInGlance)
     }
@@ -142,6 +145,21 @@ struct NotchView: View {
         let n = model.pending.count
         let at = model.shownPending.flatMap { r in model.pending.firstIndex { $0.id == r.id } } ?? 0
         return n > 1 ? "Needs you · \(at + 1) of \(n)" : "Needs you"
+    }
+
+    static let terminalCardCap = 2
+
+    /// Terminal chips as cards (at most `terminalCardCap`, then a "N more" row, so the panel's measured height stays within its cap beside done cards).
+    @ViewBuilder private var terminalCards: some View {
+        ForEach(model.terminalItems.reversed().prefix(Self.terminalCardCap)) { t in TerminalCard(item: t) { model.dismissTerminal(t.sessionId) }.reveal(0.12) }
+        let hidden = model.terminalItems.count - Self.terminalCardCap
+        if hidden > 0 {
+            Text("\(hidden) more asked in terminal").font(.caption2).foregroundStyle(.white.opacity(0.6)).reveal(0.12)
+        }
+    }
+
+    @ViewBuilder private func doneCards(limit: Int, full: Bool = false) -> some View {
+        ForEach(model.doneItems.reversed().prefix(limit)) { d in DoneCard(item: d, full: full) { model.dismissDone(d.sessionId) }.reveal(0.12) }
     }
 
     /// Content beside the camera: icon in the left wing, text in the right wing, nothing under the cutout.
@@ -181,8 +199,8 @@ struct NotchView: View {
                 HStack(spacing: 6) {
                     Color.clear.frame(width: NotchMetrics.glanceIcon + 12)
                     Text(compactText).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.tail)
-                    if model.doneItems.count > 1 {
-                        Text("+\(model.doneItems.count - 1)").font(.caption2).foregroundStyle(.white.opacity(0.6))
+                    if model.doneItems.count + model.terminalItems.count > 1 {
+                        Text("+\(model.doneItems.count + model.terminalItems.count - 1)").font(.caption2).foregroundStyle(.white.opacity(0.6))
                     }
                     Spacer(minLength: 0)
                 }
@@ -201,8 +219,8 @@ struct NotchView: View {
                     Text(compactText)
                         .font(.caption.bold()).foregroundStyle(.white)
                         .lineLimit(1).truncationMode(.tail)
-                    if model.doneItems.count > 1 {
-                        Text("+\(model.doneItems.count - 1)").font(.caption2).foregroundStyle(.white.opacity(0.6))
+                    if model.doneItems.count + model.terminalItems.count > 1 {
+                        Text("+\(model.doneItems.count + model.terminalItems.count - 1)").font(.caption2).foregroundStyle(.white.opacity(0.6))
                     }
                     Spacer(minLength: 0)
                 }
@@ -230,14 +248,15 @@ struct NotchView: View {
                     if req.questions != nil {
                         QuestionCard(req: req, initial: model.partials[req.id] ?? PartialAnswers(),
                                      progress: { model.savePartial(req.id, step: $0, answers: $1) },
-                                     send: { model.answer(req.id, $0) }, handBack: { model.handBack(req.id) }).id(req.id).reveal(0.12)
+                                     send: { model.answer(req.id, selections: $0) }, handBack: { model.handBack(req.id) }).id(req.id).reveal(0.12)
                     } else {
                         ApprovalCard(req: req) { model.resolve(req.id, $0) }.reveal(0.12)
                     }
                 } else if let d = model.shownDone {
                     DoneCard(item: d, full: true) { model.dismissDone(d.sessionId) }.reveal(0.12)
                 } else if model.pinnedOpen {
-                    ForEach(model.doneItems.reversed().prefix(3)) { d in DoneCard(item: d) { model.dismissDone(d.sessionId) }.reveal(0.12) }
+                    terminalCards
+                    doneCards(limit: 3)
                     if model.sessions.isEmpty { Text("No agent sessions.").font(.caption).foregroundStyle(.white.opacity(0.6)) }
                     ForEach(model.sessions) { row in
                         VStack(alignment: .leading, spacing: 1) {
@@ -246,7 +265,8 @@ struct NotchView: View {
                         }
                     }
                 } else {
-                    ForEach(model.doneItems.reversed().prefix(model.tall ? 1 : 3)) { d in DoneCard(item: d, full: model.tall) { model.dismissDone(d.sessionId) }.reveal(0.12) }
+                    terminalCards
+                    doneCards(limit: model.tall ? 1 : 3, full: model.tall)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -307,6 +327,8 @@ struct ChipButton: View {
     let title: String
     var hint: String? = nil
     let kind: Kind
+    var disabled = false
+    var isDefault = false // Return triggers it
     let action: () -> Void
     @State private var hover = false
 
@@ -317,7 +339,10 @@ struct ChipButton: View {
                 if let hint { Text(hint).font(.caption2).opacity(0.5) }
             }
         }
-            .buttonStyle(ChipStyle(kind: kind, hover: hover))
+            .buttonStyle(ChipStyle(kind: kind, hover: hover && !disabled))
+            .disabled(disabled)
+            .keyboardShortcut(isDefault ? .defaultAction : nil)
+            .opacity(disabled ? 0.4 : 1)
             .onHover { hover = $0 }
     }
 }
@@ -364,18 +389,22 @@ private struct QuestionBodyHeight: PreferenceKey {
 struct QuestionCard: View {
     let req: PendingRequest
     /// Progress kept by the model, so leaving this card (to the list) and coming back resumes it.
-    let progress: (Int, [String: String]) -> Void
-    let send: ([String: String]) -> Void
+    let progress: (Int, [String: Set<String>]) -> Void
+    /// The card stays up only for `.refused`.
+    let send: ([String: Set<String>]) -> NotchModel.Answered
     let handBack: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var step: Int
-    @State private var answers: [String: String]
+    /// Chosen labels per question text.
+    @State private var answers: [String: Set<String>]
+    @State private var lastToggle: (index: Int, at: Date)?
     @State private var sent = false
     @State private var leadExpanded = false
     @State private var bodyHeight: CGFloat = 0
     private static let maxBodyHeight: CGFloat = 330
 
-    init(req: PendingRequest, initial: PartialAnswers = PartialAnswers(), progress: @escaping (Int, [String: String]) -> Void = { _, _ in },
-         send: @escaping ([String: String]) -> Void, handBack: @escaping () -> Void) {
+    init(req: PendingRequest, initial: PartialAnswers = PartialAnswers(), progress: @escaping (Int, [String: Set<String>]) -> Void = { _, _ in },
+         send: @escaping ([String: Set<String>]) -> NotchModel.Answered, handBack: @escaping () -> Void) {
         self.req = req; self.progress = progress; self.send = send; self.handBack = handBack
         _step = State(initialValue: min(initial.step, max((req.questions?.count ?? 1) - 1, 0)))
         _answers = State(initialValue: initial.answers)
@@ -394,7 +423,12 @@ struct QuestionCard: View {
                 .font(.caption2).foregroundStyle(.white.opacity(0.6))
             Text(q.question).font(.caption.bold()).foregroundStyle(.white).lineLimit(3)
             ForEach(Array(q.options.enumerated()), id: \.offset) { i, o in
+                let on = q.multiSelect && answers[q.question]?.contains(o.label) == true
                 HStack(alignment: .top, spacing: 8) {
+                    if q.multiSelect {
+                        Image(systemName: on ? "checkmark.square.fill" : "square").font(.caption)
+                            .foregroundStyle(on ? Color.accentColor : .white.opacity(0.5)).padding(.top, 1)
+                    }
                     if i < 9 { Text("\(i + 1)").font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.4)).padding(.top, 1) }
                     VStack(alignment: .leading, spacing: 1) {
                         Text(o.label).font(.caption.bold()).foregroundStyle(.white)
@@ -403,10 +437,23 @@ struct QuestionCard: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10).padding(.vertical, 5)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: 0.18)))
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: on ? 0.26 : 0.18)))
+                .animation(.easeOut(duration: reduceMotion ? 0.01 : 0.12), value: on)
                 .contentShape(Rectangle())
                 .onTapGesture { pick(i) }
+                .accessibilityAddTraits(on ? .isSelected : [])
             }
+        }
+    }
+
+    /// Pinned below the scrolling options so it never scrolls away.
+    @ViewBuilder private func multiFooter(_ q: AskQuestion, _ count: Int) -> some View {
+        let empty = (answers[q.question] ?? []).isEmpty
+        HStack {
+            Text("Pick one or more").font(.caption2).foregroundStyle(.white.opacity(0.5))
+            Spacer()
+            ChipButton(title: step + 1 >= count ? "Done" : "Next", kind: .primary, disabled: empty, isDefault: true) { advance() }
+                .accessibilityHint(empty ? "Choose at least one option" : "")
         }
     }
 
@@ -430,10 +477,12 @@ struct QuestionCard: View {
                 if bodyHeight > Self.maxBodyHeight { ScrollView { content }.frame(height: Self.maxBodyHeight) } else { content }
             }
             .onPreferenceChange(QuestionBodyHeight.self) { bodyHeight = $0 }
+            if q.multiSelect { multiFooter(q, qs.count) }
             ChipButton(title: "Answer in terminal", kind: .quiet) { if !sent { sent = true; handBack() } }
             TourCaption(sessionId: req.sessionId, step: .question)
         }
-        .onChange(of: step) { leadExpanded = false; ShortcutBus.steps.send((req.id, $0)) }
+        .onChange(of: step) { leadExpanded = false; lastToggle = nil; ShortcutBus.steps.send((req.id, $0)); progress($0, answers) }
+        .onChange(of: answers) { progress(step, $0) } // every selection, multi-select toggles included, is saved at once
         .onDisappear { if !sent { progress(step, answers) } } // leaving the card keeps what was answered
         .onAppear { if step > 0 { ShortcutBus.steps.send((req.id, step)) } }
         .onReceive(ShortcutBus.events) { e in
@@ -445,13 +494,32 @@ struct QuestionCard: View {
     }
 
     /// The one answer path for taps and keys: the `sent` guard and multi-question stepping live here.
+    /// Single-select picks and moves on; multi-select toggles and waits for Done/Next.
     private func pick(_ index: Int) {
         let qs = req.questions ?? []
         guard !sent, !qs.isEmpty else { return } // a double-click or key repeat must not answer the next question too
         let q = qs[min(step, qs.count - 1)]
         guard q.options.indices.contains(index) else { return }
-        answers[q.question] = q.options[index].label
-        if step + 1 < qs.count { step += 1; progress(step, answers) } else { sent = true; send(answers) } // each pick is saved at once
+        let label = q.options[index].label
+        if q.multiSelect {
+            // A double-click or a stuck key must not toggle the same option on and straight back off.
+            if let l = lastToggle, l.index == index, Date().timeIntervalSince(l.at) < 0.25 { return }
+            lastToggle = (index, Date())
+            var set = answers[q.question] ?? []
+            if !set.insert(label).inserted { set.remove(label) }
+            answers[q.question] = set
+        } else {
+            answers[q.question] = [label]
+            advance()
+        }
+    }
+
+    private func advance() {
+        let qs = req.questions ?? []
+        guard !sent, !qs.isEmpty else { return }
+        let q = qs[min(step, qs.count - 1)]
+        guard !(answers[q.question] ?? []).isEmpty else { return } // multi-select needs at least one
+        if step + 1 < qs.count { step += 1 } else { sent = true; if send(answers) == .refused { sent = false } }
     }
 }
 
@@ -500,6 +568,24 @@ struct DoneCard: View {
                 if TerminalJump.available(item.host) {
                     OpenTerminalButton(host: item.host, onOpened: dismiss)
                 }
+                ChipButton(title: "Dismiss", kind: .neutral, action: dismiss)
+            }
+        }
+    }
+}
+
+/// A question or approval that went to the terminal. Repo name only, never the question or command (PDPA, #30).
+struct TerminalCard: View {
+    let item: TerminalItem
+    let dismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(item.glance).font(.caption.bold()).foregroundStyle(.white.opacity(0.85))
+            HStack {
+                Text("Claude is waiting for you there").font(.caption2).foregroundStyle(.white.opacity(0.6))
+                Spacer()
+                if TerminalJump.available(item.host) { OpenTerminalButton(host: item.host, onOpened: dismiss) }
                 ChipButton(title: "Dismiss", kind: .neutral, action: dismiss)
             }
         }
@@ -593,6 +679,7 @@ struct WaitingRow: View {
         case .approval: return "hand.raised.fill"
         case .question: return "questionmark.bubble.fill"
         case .done: return "checkmark.circle.fill"
+        case .terminal: return "terminal.fill"
         }
     }
     private var tint: Color {
@@ -600,9 +687,10 @@ struct WaitingRow: View {
         case .approval: return .orange
         case .question: return .cyan
         case .done: return .green
+        case .terminal: return .purple
         }
     }
-    private var kindName: String { item.kind == .done ? "finished" : item.kind == .question ? "question" : "approval" }
+    private var kindName: String { item.kind == .done ? "finished" : item.kind == .terminal ? "asked in terminal" : item.kind == .question ? "question" : "approval" }
 
     var body: some View {
         HStack(spacing: 10) {
