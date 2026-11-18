@@ -30,8 +30,8 @@ enum MenuBarProbe {
     }
 
     /// Frames (global CG space) of the frontmost app's menu bar items, or nil when they cannot be read.
-    static func appMenuFrames(pid: pid_t) -> [CGRect]? {
-        guard AXIsProcessTrusted(), pid != ProcessInfo.processInfo.processIdentifier else { return nil }
+    static func appMenuFrames(pid: pid_t, trusted: Bool) -> [CGRect]? {
+        guard trusted, pid != ProcessInfo.processInfo.processIdentifier else { return nil }
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.25)
         var bar: CFTypeRef?
@@ -53,7 +53,8 @@ enum MenuBarProbe {
 
     /// Raw frames, off the main thread. `app` is nil when Accessibility is untrusted or the read came back empty.
     static func read(frontPID: pid_t?, screenWidth: CGFloat) -> (windows: [CGRect], app: [CGRect]?, trusted: Bool) {
-        (windowFrames(screenWidth: screenWidth), frontPID.flatMap(appMenuFrames(pid:)), AXIsProcessTrusted())
+        let trusted = AXIsProcessTrusted() // once per probe
+        return (windowFrames(screenWidth: screenWidth), frontPID.flatMap { appMenuFrames(pid: $0, trusted: trusted) }, trusted)
     }
 }
 
@@ -75,7 +76,9 @@ final class NotchPanel: NSPanel {
     private var gaps: (CGFloat, CGFloat) = (.infinity, .infinity)
     private var gapTimer: Timer?
     /// Last good read of the frontmost app's menus; an empty or stale read right after activation keeps it.
-    private var lastAppMenus: [CGRect]?
+    private var appMenus = AppMenuCache()
+    private let probeQueue = DispatchQueue(label: "chippy.menubar-probe", qos: .utility)
+    private var probeGen = 0
     private var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
 
     init(model: NotchModel) {
@@ -108,10 +111,10 @@ final class NotchPanel: NSPanel {
         }.store(in: &bag)
         dock(model.density)
         let nc = NSWorkspace.shared.notificationCenter
-        nc.publisher(for: NSWorkspace.activeSpaceDidChangeNotification).receive(on: RunLoop.main).sink { [weak self] _ in self?.remeasure() }.store(in: &bag)
+        nc.publisher(for: NSWorkspace.activeSpaceDidChangeNotification).receive(on: RunLoop.main).sink { [weak self] _ in self?.remeasureIfVisible() }.store(in: &bag)
         nc.publisher(for: NSWorkspace.didActivateApplicationNotification).receive(on: RunLoop.main).sink { [weak self] _ in
-            self?.remeasure()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self?.remeasure() } // the new app's menus may not be readable yet
+            self?.remeasureIfVisible()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self?.remeasureIfVisible() } // the new app's menus may not be readable yet
         }.store(in: &bag)
         remeasure()
         if model.visible { startGapTimer() }
@@ -130,25 +133,32 @@ final class NotchPanel: NSPanel {
 
     /// Re-read the menu bar gap off the main thread. A change must hold for 0.4s before it counts, so quick app
     /// switching does not make the pill spring repeatedly.
+    private func remeasureIfVisible() { if model.visible { remeasure() } }
+
     private func remeasure() {
         guard let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }),
               let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID else { return }
         let m = NotchMetrics.detect(screen)
         let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
         let bounds = CGDisplayBounds(id) // this screen's own frame in CG space, wherever it sits
-        DispatchQueue.global(qos: .utility).async { [weak self] in
+        probeGen += 1
+        let gen = probeGen
+        probeQueue.async { [weak self] in
             let r = MenuBarProbe.read(frontPID: front, screenWidth: bounds.width)
-            DispatchQueue.main.async { self?.consider(r, bounds: bounds, metrics: m) }
+            DispatchQueue.main.async {
+                guard let self, gen == self.probeGen else { return } // a newer probe superseded this one
+                self.consider(r, pid: front, bounds: bounds, metrics: m)
+            }
         }
     }
 
-    private func consider(_ r: (windows: [CGRect], app: [CGRect]?, trusted: Bool), bounds: CGRect, metrics m: NotchMetrics) {
-        // An empty or failed AX read keeps the last good one; only losing trust drops it (then the left is capped).
-        if !r.trusted { lastAppMenus = nil } else if let a = r.app, !a.isEmpty { lastAppMenus = a }
+    private func consider(_ r: (windows: [CGRect], app: [CGRect]?, trusted: Bool), pid: pid_t?, bounds: CGRect, metrics m: NotchMetrics) {
+        // An empty or failed AX read keeps the last good one for the same app only (then the left is capped).
+        let appMenus = self.appMenus.update(pid: pid, read: r.app, trusted: r.trusted)
         let barHeight = max(m.height, 24) + 2
-        let items = MenuBarGap.plausible(r.windows + (lastAppMenus ?? []), screen: bounds, menuBarHeight: barHeight)
+        let items = MenuBarGap.plausible(r.windows + (appMenus ?? []), screen: bounds, menuBarHeight: barHeight)
         let notch = MenuBarGap.notchRect(screen: bounds, width: m.width, height: m.height)
-        let g = MenuBarGap.wings(items: items, notch: notch, screen: bounds, leftMeasured: lastAppMenus != nil)
+        let g = MenuBarGap.wings(items: items, notch: notch, screen: bounds, leftMeasured: appMenus != nil)
         if let a = gate.observe((g.left, g.right), now: now) { apply(a) }
         if gate.hasPending { schedulePoll(after: 0.45) }
     }
