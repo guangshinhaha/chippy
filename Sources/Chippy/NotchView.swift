@@ -619,7 +619,7 @@ struct DoneCard: View {
     let dismiss: () -> Void
 
     private var replyText: AttributedString {
-        let r = item.reply ?? ""
+        let r = (full && item.decision != nil) ? item.replyWithoutDecision : (item.reply ?? "")
         return (try? AttributedString(markdown: r, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(r)
     }
 
@@ -635,7 +635,11 @@ struct DoneCard: View {
             if full, let p = item.prompt, !p.isEmpty {
                 Text("You asked: \(p)").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
             }
-            if let r = item.reply, !r.isEmpty {
+            if full, let d = item.decision {
+                Text("Needs your call: \(d)").font(.caption.bold()).foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+            }
+            if let r = item.reply, !r.isEmpty, !(full && item.decision != nil && item.replyWithoutDecision.isEmpty) {
                 if full {
                     // Short reply: just the text (the card hugs it). Long reply: scrolls inside a capped area.
                     // The scroll fallback has a FIXED height: a flexible one fills whatever the panel offers,
