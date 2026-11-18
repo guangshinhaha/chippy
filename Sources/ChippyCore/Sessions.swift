@@ -15,7 +15,17 @@ public struct SessionRow: Identifiable, Equatable {
     public var added = 0
     public var removed = 0
     public var host: HostInfo?
+    /// Live glance (#90): one allowlisted word from the tool name only (see `LiveGlance`). nil unless working.
+    public var activity: String?
+    /// When `activity` was last set by an event; the word goes stale after `LiveGlance.staleAfter`.
+    public var activityAt: Date?
     public var updatedAt: Date
+
+    /// The glance word if still fresh at `now`; nil when absent or older than `LiveGlance.staleAfter` (Esc/crash: no Stop came).
+    public func liveActivity(now: Date) -> String? {
+        guard let a = activity, let at = activityAt, now.timeIntervalSince(at) <= LiveGlance.staleAfter else { return nil }
+        return a
+    }
 
     /// One-line live status, e.g. "Claude Code · editing 3 files".
     public var headline: String {
@@ -43,6 +53,13 @@ public struct SessionStore {
         rows[i].updatedAt = now
         // Latest wins, but a tty-only report must not erase a known host app.
         if let h = p.host, h.hasHost || rows[i].host == nil { rows[i].host = h }
+        // A late PostToolUse after Stop (parallel or subagent call) must not bring "Thinking" back on a finished session.
+        // A new prompt is a real new turn, so it still does.
+        let lateTool = p.event == "PostToolUse" && rows[i].status == .done
+        if LiveGlance.touchesActivity(p.event) && !lateTool {
+            rows[i].activity = LiveGlance.activity(after: p.event, tool: p.toolName, current: rows[i].activity)
+            rows[i].activityAt = rows[i].activity == nil ? nil : now
+        }
         switch p.event {
         case "SessionStart":
             rows[i].status = .idle; rows[i].detail = "Session started"
@@ -74,6 +91,21 @@ public struct SessionStore {
         case "Read": return "Reading \(file ?? "file")"
         case "Bash": return "Running " + String((p.toolInput["command"] as? String ?? "command").prefix(40))
         default: return "Using \(tool)"
+        }
+    }
+
+    /// Every session in glance order at `now`: needs-you first, then a FRESH live word, then working-but-stale, then the rest;
+    /// newest first inside a group, ties broken by id so it is deterministic. Cheap (a handful of rows), so call it at read time.
+    public func glanceOrder(now: Date = Date(), needsYou: Set<String> = []) -> [SessionRow] {
+        func rank(_ r: SessionRow) -> Int {
+            if needsYou.contains(r.id) { return 0 }
+            if r.liveActivity(now: now) != nil { return 1 }
+            return r.status == .working ? 2 : 3
+        }
+        return rows.sorted { a, b in
+            let ra = rank(a), rb = rank(b)
+            if ra != rb { return ra < rb }
+            return a.updatedAt != b.updatedAt ? a.updatedAt > b.updatedAt : a.id < b.id
         }
     }
 
