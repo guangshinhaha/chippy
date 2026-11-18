@@ -416,11 +416,44 @@ struct DoneCard: View {
                     .font(.caption2).foregroundStyle(.white.opacity(0.6))
                 Spacer()
                 if TerminalJump.available(item.host) {
-                    ChipButton(title: "Open terminal", kind: .neutral) { TerminalJump.open(item.host) }
+                    OpenTerminalButton(host: item.host, onOpened: dismiss)
                 }
                 ChipButton(title: "Dismiss", kind: .neutral, action: dismiss)
             }
         }
+    }
+}
+
+/// "Open terminal" with visible feedback: if the host app can't be brought forward the button says so
+/// instead of appearing to do nothing.
+struct OpenTerminalButton: View {
+    let host: HostInfo?
+    var onOpened: () -> Void = {}
+    @State private var failed = false
+    @State private var busy = false
+    @State private var token = 0
+
+    /// The source app's real name ("Orca", "Terminal", "iTerm2"); "terminal" when unknown.
+    private var appName: String {
+        guard let pid = host?.pid, let app = NSRunningApplication(processIdentifier: pid),
+              let name = app.localizedName, !name.isEmpty else { return "terminal" }
+        return name
+    }
+
+    var body: some View {
+        ChipButton(title: failed ? "Couldn't open" : "Open \(appName)",
+                   hint: failed ? "switch to it yourself" : nil, kind: .neutral) {
+            guard !busy else { return }
+            busy = true; failed = false; token += 1
+            let mine = token
+            TerminalJump.open(host) { ok in
+                busy = false
+                failed = !ok
+                if ok { onOpened() }
+                if !ok { DispatchQueue.main.asyncAfter(deadline: .now() + 4) { if token == mine { failed = false } } }
+            }
+        }
+        .help(failed ? "Chippy couldn't bring the app forward. Switch to it from the Dock or Cmd-Tab." : "")
     }
 }
 

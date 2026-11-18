@@ -56,9 +56,59 @@ enum TerminalJump {
         }
     }
 
-    static func open(_ host: HostInfo?) {
-        guard available(host), let h = host, let pid = h.pid, let bundle = h.bundle else { return }
-        let activate = { _ = NSRunningApplication(processIdentifier: pid)?.activate(options: []) }
+    /// Brings `pid`'s app forward and reports whether it ended up frontmost.
+    /// Plain `activate` can be a no-op (app hidden, windows minimised, or focus not yielded to it), so:
+    /// unhide, yield activation to the target (macOS 14+), activate, then check; if still not frontmost,
+    /// ask LaunchServices to open it (activates and sends the reopen event that un-minimises a window).
+    static func bringForward(pid: Int32, completion: @escaping (Bool) -> Void) {
+        guard let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else { completion(false); return }
+        func isFront() -> Bool {
+            let front = NSWorkspace.shared.frontmostApplication
+            // Same app counts even if the frontmost pid differs (multi-process hosts).
+            return ActivationOutcome.isFrontmost(frontmostPid: front?.processIdentifier, target: pid)
+                || (app.bundleIdentifier != nil && front?.bundleIdentifier == app.bundleIdentifier)
+        }
+        if app.isHidden { app.unhide() }
+        if #available(macOS 14.0, *) { NSApp.yieldActivation(to: app) }
+        _ = app.activate(options: [])
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            if isFront() { completion(true); return }
+            guard let url = app.bundleURL else { completion(false); return }
+            let cfg = NSWorkspace.OpenConfiguration(); cfg.activates = true
+            NSWorkspace.shared.openApplication(at: url, configuration: cfg) { _, err in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    let ok = isFront()
+                    if !ok { NSLog("Chippy: open terminal failed for pid %d (%@): %@", pid, app.bundleIdentifier ?? "?", String(describing: err)) }
+                    completion(ok)
+                }
+            }
+        }
+    }
+
+    /// Orca: after it is frontmost, ask its CLI to select the session's workspace (it has no AppleScript).
+    static func selectOrcaWorkspace(_ cwd: String) {
+        let cli = "/Applications/Orca.app/Contents/Resources/bin/orca"
+        guard FileManager.default.isExecutableFile(atPath: cli) else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: cli)
+            p.arguments = ["worktree", "activate", "--worktree", "path:" + cwd]
+            p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+            guard (try? p.run()) != nil else { return }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 5) { if p.isRunning { p.terminate() } }
+            p.waitUntilExit()
+        }
+    }
+
+    /// `completion(true)` when the host app is frontmost afterwards, false when it could not be brought forward.
+    static func open(_ host: HostInfo?, completion: @escaping (Bool) -> Void = { _ in }) {
+        guard available(host), let h = host, let pid = h.pid, let bundle = h.bundle else { completion(false); return }
+        let activate = {
+            bringForward(pid: pid) { ok in
+                if ok, bundle == "com.stablyai.orca", let cwd = h.cwd { selectOrcaWorkspace(cwd) }
+                completion(ok)
+            }
+        }
         guard let src = script(bundle: bundle, tty: h.tty ?? "") else { activate(); return }
         // osascript off the main thread: the first run may sit on the Automation permission prompt.
         DispatchQueue.global(qos: .userInitiated).async {
