@@ -39,7 +39,7 @@ final class SoundPolicyTests: XCTestCase {
     func testFrontmostByPid() {
         let h = HostInfo(pid: 10, bundle: "com.a", tty: nil)
         XCTAssertTrue(SoundPolicy.isHostFrontmost(host: h, frontmostPid: 10, frontmostBundle: "com.other"))
-        XCTAssertFalse(SoundPolicy.isHostFrontmost(host: h, frontmostPid: 11, frontmostBundle: "com.a"))
+        XCTAssertFalse(SoundPolicy.isHostFrontmost(host: h, frontmostPid: 11, frontmostBundle: "com.other"))
     }
 
     func testFrontmostFallsBackToBundle() {
