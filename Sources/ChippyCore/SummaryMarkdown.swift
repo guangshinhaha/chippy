@@ -1,7 +1,9 @@
 import Foundation
 
 /// Light markdown for the finished-card summary (#98b). Pure and on-device; nothing is logged or sent (PDPA).
-/// Supports bold, inline code, bullets, headings (as bold lines), fenced code and links (label only). Every raw marker is dropped.
+/// Conservative: when unsure, text stays literal. Supports bold (** or __, only with a closer in the same paragraph),
+/// inline code, bullets, headings (as bold lines), fenced code, and links (rendered "label (url)"). Unmatched ** and `
+/// stay literal. Italics are not rendered: single * and _ always stay literal (globs, _app.tsx, char*).
 public enum SummaryMarkdown {
     public enum Run: Equatable {
         case text(String), bold(String), code(String)
@@ -61,14 +63,6 @@ public enum SummaryMarkdown {
         case .heading, .code: return nil
         }
     }
-    /// A block of the same kind (so bullet and ordered markers survive a split) holding `runs`.
-    private static func like(_ b: Block, _ runs: [Run]) -> Block {
-        switch b {
-        case .bullet: return .bullet(runs)
-        case .ordered(let n, _): return .ordered(n, runs)
-        default: return .paragraph(runs)
-        }
-    }
 
     /// Outcome = the first non-heading text block, cut at its first sentence (else a word boundary) when long; the
     /// remainder follows in the details. Headings stay in the details.
@@ -78,7 +72,7 @@ public enum SummaryMarkdown {
         if let idx = blocks.firstIndex(where: { textRuns($0) != nil }) {
             let b = blocks.remove(at: idx)
             let (head, tail) = splitOutcome(textRuns(b) ?? [])
-            if let tail { blocks.insert(like(b, tail), at: idx) }
+            if let tail { blocks.insert(.paragraph(tail), at: idx) } // plain: no repeated bullet or number
             return Doc(outcome: head, details: blocks)
         }
         // No prose: the outcome is the first code line (clipped). Code the outcome already shows is not repeated.
@@ -100,7 +94,7 @@ public enum SummaryMarkdown {
         return nil
     }
 
-    private static let abbreviations: Set<String> = ["e.g", "i.e", "vs", "etc", "approx", "cf", "incl"]
+    private static let abbreviations: Set<String> = ["e.g", "i.e", "vs", "etc", "approx", "cf", "incl", "dr", "mr", "mrs", "ms", "no", "fig", "a.m", "p.m"]
 
     /// True when the "." at `i` ends an abbreviation or a version ("v2.") rather than a sentence.
     private static func isAbbreviationDot(_ chars: [Character], _ i: Int) -> Bool {
@@ -253,8 +247,8 @@ public enum SummaryMarkdown {
         return String(l.dropFirst(hashes.count + 1))
     }
 
-    /// Bold (** or __), inline code, links ("label (url)"), images (alt kept). An unmatched ** or ` is dropped, not shown.
-    /// `__` bolds only at word boundaries, so __init__ and FOO__BAR stay literal.
+    /// Bold (** or __), inline code, links ("label (url)"), images (alt kept). Unmatched ** and ` stay literal, as do
+    /// single * and _ and runs of three or more markers. `__` bolds only at word boundaries, so __init__ and FOO__BAR stay literal.
     static func inline(_ s: String) -> [Run] {
         let c = Array(s)
         var runs: [Run] = []
@@ -278,18 +272,21 @@ public enum SummaryMarkdown {
         }
         // Identifier-like = all-lowercase word characters (__init__); __Important__ is not.
         func isIdentifier(_ t: String) -> Bool { !t.isEmpty && t.allSatisfy { ($0.isLetter && !$0.isUppercase) || $0.isNumber || $0 == "_" } }
-        // Closer for a single * or _: no neighbouring marker, not preceded by space; _ also not followed by a word char.
-        func findSingle(_ ch: Character, from: Int) -> Int? {
-            find("1" + String(ch), from: from) { j in
-                guard c[j] == ch, j > 0, !c[j - 1].isWhitespace, c[j - 1] != ch, !(j + 1 < c.count && c[j + 1] == ch) else { return false }
-                return ch == "*" || !isWord(j + 1)
+        // The ")" matching an already-open "(": inner balanced pairs (Foo_(bar)) are skipped. Bounded scan.
+        func closingParen(from: Int) -> Int? {
+            var depth = 0, k = from
+            while k < c.count, k < from + 2048 {
+                if c[k] == "(" { depth += 1 }
+                else if c[k] == ")" { if depth == 0 { return k }; depth -= 1 }
+                k += 1
             }
+            return nil
         }
         // "[label](url)" starting at the "[" at `start`. "](" must follow with no "[" or "]" in between.
         func link(from start: Int) -> (String, String, Int)? {
             var j = start + 1
             while j < c.count, c[j] != "[", c[j] != "]" { j += 1 }
-            guard j + 1 < c.count, c[j] == "]", c[j + 1] == "(", let end = findChar(")", from: j + 2) else { return nil }
+            guard j + 1 < c.count, c[j] == "]", c[j + 1] == "(", let end = closingParen(from: j + 2) else { return nil }
             let raw = String(c[(j + 2)..<end]).trimmingCharacters(in: .whitespaces)
             let url = raw.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? ""
             return (String(c[(start + 1)..<j]), url, end + 1)
@@ -303,10 +300,14 @@ public enum SummaryMarkdown {
                     let t = String(c[(i + 1)..<e]).trimmingCharacters(in: .whitespaces)
                     if !t.isEmpty { runs.append(.code(t)) }
                     i = e + 1
-                } else { i += 1 }
+                } else { buf.append(ch); i += 1 }
                 continue
             }
             if (ch == "*" || ch == "_"), i + 1 < c.count, c[i + 1] == ch {
+                // Exactly two markers make bold; a longer run (***) stays literal.
+                var n = 2
+                while i + n < c.count, c[i + n] == ch { n += 1 }
+                if n != 2 { buf += String(repeating: ch, count: n); i += n; continue }
                 if ch == "_" {
                     // Opening __ must start a word; the closer is found by findPair (ends a word, no space before).
                     if !isWord(i - 1), i + 2 < c.count, !c[i + 2].isWhitespace, let e = findPair("_", from: i + 2), e > i + 2 {
@@ -325,7 +326,7 @@ public enum SummaryMarkdown {
                     let t = inline(String(c[(i + 2)..<e])).map(\.string).joined()
                     if !t.isEmpty { runs.append(.bold(t)) }
                     i = e + 2
-                } else { i += 2 }
+                } else { buf += "**"; i += 2 }
                 continue
             }
             if ch == "!" || ch == "[" {
@@ -338,19 +339,6 @@ public enum SummaryMarkdown {
                     i = next
                 } else { buf.append(ch); i += 1 }
                 continue
-            }
-            if ch == "*" || ch == "_" {
-                // Single marker: stripped only with a matching closer in this paragraph; else it stays literal
-                // (_app.tsx, char*, foo_, 2*3).
-                let opens = i + 1 < c.count && !c[i + 1].isWhitespace
-                    && (ch == "_" ? !isWord(i - 1) : !(isWord(i - 1) && isWord(i + 1)))
-                if opens, let e = findSingle(ch, from: i + 1), e > i + 1 {
-                    for r in inline(String(c[(i + 1)..<e])) {
-                        if case .text(let t) = r { buf += t } else { text(); runs.append(r) }
-                    }
-                    i = e + 1
-                    continue
-                }
             }
             buf.append(ch); i += 1
         }

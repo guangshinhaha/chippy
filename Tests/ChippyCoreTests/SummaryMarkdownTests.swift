@@ -8,9 +8,22 @@ final class SummaryMarkdownTests: XCTestCase {
     func testUnderscoreBold() { XCTAssertEqual(SummaryMarkdown.inline("a __two words__ c"), [.text("a "), .bold("two words"), .text(" c")]) }
     func testSnakeCaseKept() { XCTAssertEqual(SummaryMarkdown.inline("set SESSION_TTL_MINUTES here"), [.text("set SESSION_TTL_MINUTES here")]) }
     func testMathStarKept() { XCTAssertEqual(SummaryMarkdown.inline("2*3 is 6"), [.text("2*3 is 6")]) }
-    func testSingleEmphasisDropped() { XCTAssertEqual(SummaryMarkdown.inline("a *b* and _c_ d"), [.text("a b and c d")]) }
-    func testUnmatchedMarkersDropped() {
-        XCTAssertEqual(SummaryMarkdown.inline("**oops and `tick"), [.text("oops and tick")])
+    func testSingleEmphasisStaysLiteral() {
+        for s in ["a *b* and _c_ d", "src/*.swift and **/*.ts", "***x***", "a *b c* d"] { XCTAssertEqual(SummaryMarkdown.inline(s), [.text(s)], s) }
+    }
+    func testUnmatchedMarkersStayLiteral() {
+        XCTAssertEqual(SummaryMarkdown.inline("**oops and `tick"), [.text("**oops and `tick")])
+    }
+    func testLinkParensBalanced() {
+        XCTAssertEqual(SummaryMarkdown.inline("[w](https://x/Foo_(bar)) ok"), [.text("w (https://x/Foo_(bar)) ok")])
+    }
+    func testSplitTailIsPlainParagraph() {
+        let d = SummaryMarkdown.doc("1. " + (1...60).map { "word\($0)" }.joined(separator: " "))!
+        guard case .paragraph = d.details[0] else { return XCTFail("tail should be a paragraph") }
+    }
+    func testMoreAbbreviations() {
+        let d = SummaryMarkdown.doc("Asked Dr. Smith and Mr. Jones about the rollout plan, which they approved at 9 a.m. today after a long review of the details. Next.")!
+        XCTAssertTrue(d.outcomePlain.hasSuffix("long review of the details."), d.outcomePlain)
     }
     func testLinkKeepsLabelAndUrl() {
         XCTAssertEqual(SummaryMarkdown.inline("see [the PR](https://x.com/a?b=1) now"), [.text("see the PR (https://x.com/a?b=1) now")])
@@ -135,7 +148,6 @@ final class SummaryMarkdownTests: XCTestCase {
         for s in ["_app.tsx", "char*", "foo_", "see _app.tsx and _other", "2*3 and 4*5"] {
             XCTAssertEqual(SummaryMarkdown.inline(s), [.text(s)], s)
         }
-        XCTAssertEqual(SummaryMarkdown.inline("a *b c* d"), [.text("a b c d")])
     }
     func testSingleWordDunderBold() {
         XCTAssertEqual(SummaryMarkdown.inline("__Important__ now"), [.bold("Important"), .text(" now")])
@@ -151,7 +163,7 @@ final class SummaryMarkdownTests: XCTestCase {
         XCTAssertTrue(d.outcomePlain.hasSuffix("…"))
         let head = String(d.outcomePlain.dropLast())
         XCTAssertFalse(head.hasSuffix(" "))
-        guard case .bullet(let r) = d.details[0] else { return XCTFail("tail should stay a bullet") }
+        guard case .paragraph(let r) = d.details[0] else { return XCTFail("tail should be a plain paragraph") }
         let tail = r.map(\.string).joined()
         XCTAssertEqual(head + " " + tail, words)
         XCTAssertTrue(tail.hasPrefix("word"))

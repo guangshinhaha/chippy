@@ -756,9 +756,9 @@ struct DoneCard: View {
             if full, let p = item.prompt, !p.isEmpty {
                 Text("You asked: \(p)").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
             }
-            SummaryView(reply: full && item.decision != nil ? item.replyWithoutDecision : item.reply,
-                        decision: full ? item.decision : nil, compact: !full)
-                .id(full && item.decision != nil ? item.replyWithoutDecision : item.reply)
+            let reply = full && item.decision != nil ? item.replyWithoutDecision : item.reply
+            SummaryView(reply: reply, decision: full ? item.decision : nil, compact: !full)
+                .id(reply)
             TourCaption(sessionId: item.sessionId, step: .done)
             HStack {
                 Text(item.files == 0 ? "No file edits" : "\(item.files) file\(item.files == 1 ? "" : "s") · +\(item.added) −\(item.removed)")
@@ -782,11 +782,15 @@ struct SummaryView: View {
     var compact = false
     /// From SummaryMarkdown's 16-entry reply cache, so re-created views do not re-parse.
     private let doc: SummaryMarkdown.Doc?
+    /// Shown when the parser yields no doc (e.g. "---", an empty fence, a table): the raw text, clipped, never blank.
+    private let fallback: String?
     @State private var open = false
 
     init(reply: String?, decision: String? = nil, compact: Bool = false) {
         self.decision = decision; self.compact = compact
         self.doc = SummaryMarkdown.doc(reply)
+        let t = reply?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.fallback = t.isEmpty ? nil : String(t.prefix(600)) + (t.count > 600 ? "…" : "")
     }
 
     private func text(_ runs: [SummaryMarkdown.Run], size: Font = .caption, bold: Bool = false) -> Text {
@@ -831,6 +835,12 @@ struct SummaryView: View {
     var body: some View {
         let d = doc
         VStack(alignment: .leading, spacing: 6) {
+            if d == nil, let raw = fallback {
+                Text(raw).font(.caption).foregroundColor(.white.opacity(0.95))
+                    .lineLimit(compact ? 6 : nil)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+            }
             if let d, !d.outcome.isEmpty {
                 text(d.outcome).foregroundColor(.white.opacity(0.95))
                     .lineLimit(compact ? 3 : nil)
