@@ -38,8 +38,8 @@ public struct HookPayload {
         leadIn = (o["chippy_lead_in"] as? String).map { TranscriptTail.truncate($0, to: TranscriptTail.maxChars) }
         transcriptPath = o["transcript_path"] as? String
         branchOverride = o["chippy_branch"] as? String // only the demo command sets this
-        // A real number only (a JSON boolean is an NSNumber too), within what the relay can send: approval <= 120s, question <= 300s.
-        let cap: Double = toolName == "AskUserQuestion" ? 300 : 120
+        // A real number only (a JSON boolean is an NSNumber too), within what the relay can send: approval and question caps live in SettingsInstaller.
+        let cap: Double = Double(toolName == "AskUserQuestion" ? SettingsInstaller.maxQuestionTimeout : SettingsInstaller.maxApprovalTimeout)
         waitSeconds = (o["chippy_wait"] as? NSNumber).flatMap { n in
             CFGetTypeID(n) == CFBooleanGetTypeID() ? nil : n.doubleValue
         }.flatMap { $0 >= 1 && $0 <= cap ? $0 : nil }

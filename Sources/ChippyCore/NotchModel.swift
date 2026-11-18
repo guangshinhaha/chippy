@@ -65,8 +65,6 @@ public final class NotchModel: ObservableObject {
     @Published public private(set) var folded = false
     /// One timer per request, so a later request never restarts an earlier one's fold (the oldest decides).
     private var folds: [String: NeedsMeFold] = [:]
-    /// Requests the user opened by hand (click, list jump, key, a panel already open on arrival) never fold.
-    private var userOpened = Set<String>()
     /// Last pointer state from the panel, kept even while expanded so a new peek can start from it.
     private var hovering = false
     private let clock: () -> TimeInterval
@@ -106,7 +104,6 @@ public final class NotchModel: ObservableObject {
         if doneItems.isEmpty { peek.cancel() }
         if folds.keys.contains(where: { !pendingIds.contains($0) }) {
             folds = folds.filter { pendingIds.contains($0.key) }
-            userOpened.formIntersection(pendingIds)
         }
         if pending.isEmpty { if folded { folded = false } }
         else if !folded, foldDue(now: clock()) { folded = true }
@@ -150,7 +147,7 @@ public final class NotchModel: ObservableObject {
     /// Open the waiting list (badge tap, or the header while several wait).
     public func openList() {
         guard !waitingItems.isEmpty else { return }
-        if !folded { open(ids: pending.map(\.id)) } // reading a card: opening the list must not let it fold behind the user's back
+        // No pin: folding just pauses while the list is open (foldDue), and closeList gives unpinned cards a fresh timer.
         listOpen = true
         listSelection = WaitingList.reconcile(listSelection, in: waitingItems)
         refresh()
@@ -159,6 +156,7 @@ public final class NotchModel: ObservableObject {
     public func closeList() {
         guard listOpen else { return }
         listOpen = false
+        for id in Array(folds.keys) { folds[id]?.arrive(now: clock(), hovering: hovering, engaged: false) } // pinned ones stay pinned
         refresh()
     }
 
@@ -193,7 +191,7 @@ public final class NotchModel: ObservableObject {
     public func savePartial(_ id: String, step: Int, answers: [String: Set<String>], byUser: Bool = true) {
         guard pending.contains(where: { $0.id == id }) else { return }
         let new = PartialAnswers(step: step, answers: answers)
-        if byUser { userOpened.insert(id); folds[id]?.pin() } // any real interaction (step, pick, toggle, clear) means the user is engaged
+        if byUser { folds[id]?.pin() } // any real interaction (step, pick, toggle, clear) means the user is engaged
         if partials[id] != new { partials[id] = new } // an unchanged write would still notify observers
 
     }
@@ -213,7 +211,7 @@ public final class NotchModel: ObservableObject {
 
     /// Pin these requests as opened by hand, and show the card if the notch was folded.
     private func open(ids: [String]) {
-        for id in ids where pending.contains(where: { $0.id == id }) { userOpened.insert(id); folds[id]?.pin() }
+        for id in ids where pending.contains(where: { $0.id == id }) { folds[id]?.pin() }
         if folded { folded = false }
     }
 
@@ -371,7 +369,6 @@ public final class NotchModel: ObservableObject {
         var f = NeedsMeFold()
         f.arrive(now: clock(), hovering: hovering, engaged: engaged)
         folds[req.id] = f
-        if engaged { userOpened.insert(req.id) }
         pending.append(req)
         connections[req.id] = conn
         refresh()

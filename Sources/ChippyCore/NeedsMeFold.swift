@@ -31,9 +31,6 @@ public struct NeedsMeFold: Equatable {
         gate.setHover(inside, now: now)
     }
 
-    /// Nothing is pending any more: forget the timer and the pin.
-    public mutating func reset() { armed = false; pinned = false; gate.cancel() }
-
     public var isPinned: Bool { pinned }
 
     /// True once an armed, unpinned timer has run out.

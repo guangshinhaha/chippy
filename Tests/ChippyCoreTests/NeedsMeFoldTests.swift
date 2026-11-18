@@ -44,9 +44,6 @@ final class NeedsMeFoldTests: XCTestCase {
         XCTAssertFalse(f.isDue(now: 1000))
         f.arrive(now: 5, hovering: false, engaged: false)   // a second request must not fold the card the user opened
         XCTAssertFalse(f.isDue(now: 1000))
-        f.reset()
-        f.arrive(now: 2000, hovering: false, engaged: false)
-        XCTAssertTrue(f.isDue(now: 2015))                   // reset forgot the pin
     }
 
     func testEngagedArrivalNeverFolds() {
@@ -369,15 +366,24 @@ final class NeedsMeFoldTests: XCTestCase {
         XCTAssertNil(HookPayload(json: Data(#"{"session_id":"s","hook_event_name":"PermissionRequest"}"#.utf8))!.waitSeconds)
     }
 
-    func testOpeningTheListWhileReadingPinsTheCard() {
+    func testOpeningTheListPausesFoldingAndCloseRestartsTheTimer() {
         let m = model()
         ask(m)
         advance(m, 5)
         m.openList(); XCTAssertFalse(m.folded)
         advance(m, 600); XCTAssertFalse(m.folded)            // no fold while the list is open
         m.closeList()
-        advance(m, 600)
-        XCTAssertFalse(m.folded); XCTAssertEqual(m.density, .expanded)   // and the card they were reading stays
+        XCTAssertFalse(m.folded); XCTAssertEqual(m.density, .expanded)
+        advance(m, 14.9); XCTAssertFalse(m.folded)           // a fresh full timer, not a pin
+        advance(m, 0.2); XCTAssertTrue(m.folded)
+    }
+
+    func testListRoundTripKeepsAPinnedCardPinned() {
+        let m = model()
+        ask(m)
+        m.savePartial(m.pending[0].id, step: 0, answers: [:])  // a real interaction pins
+        m.openList(); m.closeList()
+        advance(m, 600); XCTAssertFalse(m.folded)
     }
 
     func testListOpenedFromTheBadgeReturnsToTheBadge() {

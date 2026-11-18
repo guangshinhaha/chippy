@@ -73,7 +73,7 @@ enum Gallery {
             final class Tick { var t: TimeInterval = 0 }
             let tick = Tick()
             let fm = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: tempLog()), clock: { tick.t })
-            fm.receiveApproval(HookPayload(json: Data(long.replacingOccurrences(of: "PreToolUse", with: "PermissionRequest").utf8))!, Connection.detached(),
+            fm.receiveApproval(HookPayload(json: Data(long.replacingOccurrences(of: "PreToolUse", with: "PermissionRequest").replacingOccurrences(of: #""session_id":"s""#, with: #""session_id":"s","chippy_wait":20"#).utf8))!, Connection.detached(),
                                now: Date().addingTimeInterval(-15))
             tick.t = 16; fm.sweep()
             return (name, m, fm)

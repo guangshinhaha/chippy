@@ -539,7 +539,7 @@ struct QuestionCard: View {
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: on ? 0.26 : 0.18)))
                 .animation(.easeOut(duration: reduceMotion ? 0.01 : 0.12), value: on)
                 .contentShape(Rectangle())
-                .onTapGesture { pick(i); progress(step, answers, true) } // a tap is an interaction even when the pick does not change
+                .onTapGesture { pick(i) }
                 .accessibilityAddTraits(on ? .isSelected : [])
             }
         }
@@ -581,7 +581,7 @@ struct QuestionCard: View {
             TourCaption(sessionId: req.sessionId, step: .question)
         }
         .onChange(of: step) { leadExpanded = false; lastToggle = nil; ShortcutBus.steps.send((req.id, $0)); progress($0, answers, true) }
-        .onChange(of: answers) { progress(step, $0, true) } // every selection, multi-select toggles included, is saved at once
+        .onChange(of: answers) { progress(step, $0, false) } // every selection is saved at once; pinning is pick()'s job, so a re-seed never pins
         .onDisappear { if !sent { progress(step, answers, false) } } // leaving the card keeps what was answered
         .onAppear { if step > 0 { ShortcutBus.steps.send((req.id, step)) } }
         .onReceive(ShortcutBus.events) { e in
@@ -600,6 +600,7 @@ struct QuestionCard: View {
         let q = qs[min(step, qs.count - 1)]
         guard q.options.indices.contains(index) else { return }
         let label = q.options[index].label
+        progress(step, answers, true) // a tap or key is an interaction (it pins the card) even when the pick changes nothing
         if q.multiSelect {
             // A double-click or a stuck key must not toggle the same option on and straight back off.
             if let l = lastToggle, l.index == index, Date().timeIntervalSince(l.at) < 0.25 { return }
