@@ -387,22 +387,27 @@ struct NotchView: View {
                 } else if let d = model.shownDone {
                     DoneCard(item: d, repo: model.repoLabel(cwd: d.cwd, project: d.project).text, mark: model.identity(cwd: d.cwd, project: d.project), full: true) { model.dismissDone(d.sessionId) }.reveal(0.12)
                 } else if model.restOpen, let digest = model.awayDigest {
-                    AwayDigestView(model: model, digest: digest).reveal(0.12) // #92: on top; it covers its own chips and Recent
-                    // Everything the digest does not cover stays reachable below, compact.
-                    let covered = Set(digest.rows.map(\.sessionId))
-                    ForEach(model.terminalItems.reversed().filter { !covered.contains($0.sessionId) }.prefix(2)) { t in
-                        TerminalCard(item: t, repo: model.repoLabel(cwd: t.cwd, project: t.project).text, mark: model.identity(cwd: t.cwd, project: t.project)) { model.dismissTerminal(t.sessionId) }.reveal(0.12)
+                    // Digest rows and what is below them scroll together once taller than the room left under the header.
+                    ScrollWhenTall(maxHeight: NotchMetrics.maxExpandedHeight - NotchMetrics.shapePadding - NotchMetrics.cameraInset - box.metrics.height - NotchMetrics.cardHeaderHeight - 2 * NotchMetrics.cardSpacing) {
+                        VStack(alignment: .leading, spacing: NotchMetrics.cardSpacing) {
+                        AwayDigestView(model: model, digest: digest).reveal(0.12) // #92: on top; it covers its own chips and Recent
+                        // Everything the digest does not cover stays reachable below, compact.
+                        let covered = Set(digest.rows.map(\.sessionId))
+                        ForEach(model.terminalItems.reversed().filter { !covered.contains($0.sessionId) }.prefix(2)) { t in
+                            TerminalCard(item: t, repo: model.repoLabel(cwd: t.cwd, project: t.project).text, mark: model.identity(cwd: t.cwd, project: t.project)) { model.dismissTerminal(t.sessionId) }.reveal(0.12)
+                        }
+                        ForEach(model.doneItems.reversed().filter { !covered.contains($0.sessionId) }.prefix(1)) { d in
+                            DoneCard(item: d, repo: model.repoLabel(cwd: d.cwd, project: d.project).text, mark: model.identity(cwd: d.cwd, project: d.project), full: false) { model.dismissDone(d.sessionId) }.reveal(0.12)
+                        }
+                        // Recent entries the digest rows do not already show, compact.
+                        let recentLeft = model.recent.items.filter { !covered.contains($0.sessionId) }
+                        if !recentLeft.isEmpty {
+                            RecentListView(items: Array(recentLeft.prefix(3)), label: { model.repoLabel(cwd: $0.cwd, project: $0.project).text },
+                                           mark: { model.identity(cwd: $0.cwd, project: $0.project) }).reveal(0.12)
+                        }
+                            glanceRows
+                        }
                     }
-                    ForEach(model.doneItems.reversed().filter { !covered.contains($0.sessionId) }.prefix(1)) { d in
-                        DoneCard(item: d, repo: model.repoLabel(cwd: d.cwd, project: d.project).text, mark: model.identity(cwd: d.cwd, project: d.project), full: false) { model.dismissDone(d.sessionId) }.reveal(0.12)
-                    }
-                    // Recent entries the digest rows do not already show, compact.
-                    let recentLeft = model.recent.items.filter { !covered.contains($0.sessionId) }
-                    if !recentLeft.isEmpty {
-                        RecentListView(items: Array(recentLeft.prefix(3)), label: { model.repoLabel(cwd: $0.cwd, project: $0.project).text },
-                                       mark: { model.identity(cwd: $0.cwd, project: $0.project) }).reveal(0.12)
-                    }
-                    glanceRows
                 } else if model.restOpen {
                     terminalCards
                     doneCards(limit: 3)
@@ -423,6 +428,21 @@ struct NotchView: View {
             .padding(.horizontal, 16)
             .background(GeometryReader { g in Color.clear.onAppear { report(g.size.height) }.onChange(of: g.size.height) { report($0) } })
         }
+    }
+}
+
+/// Measured like QuestionCard: natural height until it would exceed `maxHeight`, then a scroll region of exactly that height.
+struct ScrollWhenTall<Content: View>: View {
+    let maxHeight: CGFloat
+    @ViewBuilder let content: () -> Content
+    @State private var h: CGFloat = 0
+    var body: some View {
+        let inner = content().frame(maxWidth: .infinity, alignment: .leading)
+            .background(GeometryReader { g in Color.clear.preference(key: QuestionBodyHeight.self, value: g.size.height) })
+        Group {
+            if h > maxHeight { ScrollView { inner }.frame(height: maxHeight) } else { inner }
+        }
+        .onPreferenceChange(QuestionBodyHeight.self) { h = $0 }
     }
 }
 
