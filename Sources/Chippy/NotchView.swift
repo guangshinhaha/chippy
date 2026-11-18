@@ -404,9 +404,7 @@ struct ApprovalCard: View {
                 ChipButton(title: "Allow", hint: "\(ShortcutKeys.prefix)Y", kind: .primary) { decide(.allow) }
                 ChipButton(title: "Deny", hint: "\(ShortcutKeys.prefix)N", kind: .destructive) { decide(.deny) }
                 Spacer(minLength: 0)
-                if !req.isPlanApproval { // a standing yes would approve plans nobody read; the generic fallback for a plan has none
-                    ChipButton(title: "Always allow this", hint: "\(ShortcutKeys.prefix)A", kind: .quiet) { decide(.always) }
-                }
+                ChipButton(title: "Always allow this", hint: "\(ShortcutKeys.prefix)A", kind: .quiet) { decide(.always) }
             }
             .padding(.top, 2)
         }
@@ -421,6 +419,9 @@ struct PlanCard: View {
     let expand: (Bool) -> Void
     let decide: (Decision) -> Void
     @State private var expanded: Bool
+    @State private var bodyHeight: CGFloat = 0
+    /// Chrome around the rows (header, captions, buttons) is about 250pt; the rest of the panel is the rows' budget.
+    static let maxBodyHeight: CGFloat = NotchMetrics.maxExpandedHeight - 250
 
     init(req: PendingRequest, plan: PlanProposal, startExpanded: Bool = false, expand: @escaping (Bool) -> Void, decide: @escaping (Decision) -> Void) {
         self.req = req; self.plan = plan; self.expand = expand; self.decide = decide
@@ -436,11 +437,11 @@ struct PlanCard: View {
                 Text("“\(p)”").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
             }
             Text("Claude says (unverified):").font(.caption2).foregroundStyle(.white.opacity(0.45))
-            VStack(alignment: .leading, spacing: 3) {
-                Text(plan.title ?? "Proposed plan").font(.callout.weight(.semibold)).foregroundStyle(.white).lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+            let rows = VStack(alignment: .leading, spacing: 3) {
+                Text(plan.title ?? "Proposed plan").font(.callout.weight(.semibold)).foregroundStyle(.white)
+                    .fixedSize(horizontal: false, vertical: true) // no line limit: rows are capped in core, so nothing is ellipsized silently
                 ForEach(Array(v.shown.enumerated()), id: \.offset) { _, line in
-                    Text(line).font(.caption).foregroundStyle(.white.opacity(0.78)).lineLimit(2)
+                    Text(line).font(.caption).foregroundStyle(.white.opacity(0.78))
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if plan.truncated || v.hidden > 0 {
@@ -453,23 +454,31 @@ struct PlanCard: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .background(GeometryReader { g in Color.clear.preference(key: QuestionBodyHeight.self, value: g.size.height) })
+            // Measured like QuestionCard: scrolls at a fixed height once taller, so the buttons never leave the panel.
+            Group {
+                if bodyHeight > Self.maxBodyHeight { ScrollView { rows }.frame(height: Self.maxBodyHeight) } else { rows }
+            }
+            .onPreferenceChange(QuestionBodyHeight.self) { bodyHeight = $0 }
             HStack(spacing: 6) {
                 if plan.stepCount > 0 { Text("\(plan.stepCount) step\(plan.stepCount == 1 ? "" : "s")").font(.caption2).foregroundStyle(.white.opacity(0.5)) }
                 if let f = plan.fileName { Text(f).font(.caption2).foregroundStyle(.white.opacity(0.4)).lineLimit(1).truncationMode(.middle) }
             }
             Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.4)).lineLimit(1).truncationMode(.head)
             HStack(spacing: 8) {
-                ChipButton(title: plan.truncated ? "Approve (partly shown)" : "Approve", hint: "\(ShortcutKeys.prefix)Y", kind: .primary) { decide(.allow) }
-                ChipButton(title: "Keep planning", hint: "\(ShortcutKeys.prefix)N", kind: .destructive) { decide(.deny) }
+                ChipButton(title: plan.truncated ? "Approve (partly shown)" : "Approve", kind: .primary) { decide(.allow) }
+                    .help("Approve (\(ShortcutKeys.prefix)Y)")
+                ChipButton(title: "Keep planning", kind: .destructive) { decide(.deny) }
+                    .help("Keep planning (\(ShortcutKeys.prefix)N)")
                 Spacer(minLength: 0)
-                if plan.canExpand {
-                    ChipButton(title: expanded ? "Show less" : "Show more", kind: .quiet) {
-                        expand(!expanded) // reading is engagement: pins so the card cannot fold away mid-read; the hotkey needs it
-                        withAnimation(.easeOut(duration: 0.18)) { expanded.toggle() }
-                    }
-                }
             }
             .padding(.top, 2)
+            if plan.canExpand {
+                ChipButton(title: expanded ? "Show less" : "Show more", kind: .quiet) {
+                    expand(!expanded) // reading is engagement: pins so the card cannot fold away mid-read; the hotkey needs it
+                    withAnimation(.easeOut(duration: 0.18)) { expanded.toggle() }
+                }
+            }
         }
     }
 }

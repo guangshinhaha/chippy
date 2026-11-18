@@ -32,7 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         model.onSound = { [weak self] kind, id, host, quiet in self?.sounds.handle(kind, sessionId: id, host: host, quiet: quiet) }
         model.silence = { [weak self] in self?.sounds.silenceState() ?? SilenceState() }
         model.onSessionEnd = { [weak self] id in self?.sounds.sessionEnded(id) }
-        model.planCardEnabled = UserDefaults.standard.bool(forKey: "planCard") // experimental (#91), default off
+        model.planCardEnabled = UserDefaults.standard.bool(forKey: Self.planCardKey) // experimental (#91), default off
         buildMenu()
         startServer()
         startShortcuts()
@@ -85,8 +85,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .receive(on: DispatchQueue.main).sink { [weak self] in self?.syncShortcuts() }
     }
 
+    private var planKeyState: (id: String, mayApprove: Bool)?
+
     private func syncShortcuts() {
-        guard let req = model.shownPending else { shortcutCard = nil; hotKeys.unregister(); return }
+        guard let req = model.shownPending else { shortcutCard = nil; planKeyState = nil; hotKeys.unregister(); return }
         let seed = min(model.partials[req.id]?.step ?? 0, max((req.questions?.count ?? 1) - 1, 0)) // re-seeded on every sync, step 0 included; never past the last question
         if shortcutCard?.id == req.id { // same card: keep keys and its shownAt
             if req.questions != nil, questionStep != seed { questionStep = seed; registerQuestionKeys(req) }
@@ -94,6 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         shortcutCard = (req.id, Date())
+        planKeyState = nil
         questionStep = seed
         if req.questions != nil {
             registerQuestionKeys(req)
@@ -106,9 +109,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// A plan has no "always" key, and approves by key only once the reader has the whole card open.
     private func registerPlanKeys(_ req: PendingRequest) {
+        let mayApprove = model.hotkeyMayApprove(req)
+        if planKeyState?.id == req.id, planKeyState?.mayApprove == mayApprove { return } // only a change of card or of the gate re-registers
+        planKeyState = (req.id, mayApprove)
         let keys = ShortcutKeys.approval.filter { k in
             switch k.action {
-            case .allow: return model.hotkeyMayApprove(req)
+            case .allow: return mayApprove
             case .always: return false
             default: return true
             }
@@ -129,7 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         switch action {
         case .allow where req.questions == nil && model.hotkeyMayApprove(req): model.resolve(req.id, .allow)
         case .deny where req.questions == nil: model.resolve(req.id, .deny)
-        case .always where req.questions == nil && !req.isPlanApproval: model.resolve(req.id, .always)
+        case .always where req.questions == nil: model.resolve(req.id, .always) // plans have no always key, and resolve refuses it anyway
         case .option where req.questions != nil: ShortcutBus.events.send(ShortcutEvent(requestId: req.id, action: action))
         default: break
         }

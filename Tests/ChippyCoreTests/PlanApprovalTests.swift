@@ -205,8 +205,21 @@ final class PlanApprovalTests: XCTestCase {
         let m = h.model(clock: { t })
         let (c, _) = h.pair()
         m.receiveApproval(req(), c)
-        m.pinRequest(m.pending[0].id)
+        m.setPlanExpanded(m.pending[0].id, true)
         t = 100; m.sweep()
         XCTAssertFalse(m.folded)
+    }
+    func testExpandedPlanPrunedWhenResolved() {
+        let m = h.model(); let (c, _) = h.pair(); let (c2, _) = h.pair()
+        m.receiveApproval(req(), c); m.receiveApproval(req(), c2)
+        let id = m.pending[0].id
+        m.setPlanExpanded(id, true)
+        XCTAssertTrue(m.expandedPlans.contains(id))
+        m.resolve(id, .deny)
+        XCTAssertTrue(m.expandedPlans.isEmpty)
+    }
+    func testIsStepAsciiDigitsOnly() {
+        XCTAssertTrue(PlanProposal.isStep("1. a")); XCTAssertTrue(PlanProposal.isStep("12) a"))
+        XCTAssertFalse(PlanProposal.isStep("\u{BD}. a")); XCTAssertFalse(PlanProposal.isStep("\u{2460} a")); XCTAssertFalse(PlanProposal.isStep("\u{661}. a"))
     }
 }

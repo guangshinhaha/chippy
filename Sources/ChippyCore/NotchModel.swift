@@ -114,9 +114,8 @@ public final class NotchModel: ObservableObject {
         if !quietFolded.isEmpty { quietFolded.formIntersection(pendingIds) }
         if folds.keys.contains(where: { !pendingIds.contains($0) }) {
             folds = folds.filter { pendingIds.contains($0.key) }
-            let stale = expandedPlans.filter { !pendingIds.contains($0) }
-            if !stale.isEmpty { expandedPlans.subtract(stale) }
         }
+        if !expandedPlans.isSubset(of: pendingIds) { expandedPlans.formIntersection(pendingIds) }
         if pending.isEmpty { if folded { folded = false } }
         else if !folded, foldDue(now: clock()) { folded = true }
         // The visible card is sticky: rank only picks one when nothing is on screen (first show, after an answer, after a fold).
@@ -244,12 +243,6 @@ public final class NotchModel: ObservableObject {
         if byUser { folds[id]?.pin() } // any real interaction (step, pick, toggle, clear) means the user is engaged
         if partials[id] != new { partials[id] = new } // an unchanged write would still notify observers
 
-    }
-
-    /// The user expanded a plan to read it (#91): that is real engagement, so the card stays (pinned, never folds).
-    public func pinRequest(_ id: String) {
-        guard pending.contains(where: { $0.id == id }) else { return }
-        folds[id]?.pin()
     }
 
     /// Plan cards the user has expanded (#91). The hotkey approves a plan only from an expanded card, unless it is short enough

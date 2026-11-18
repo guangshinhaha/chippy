@@ -69,7 +69,7 @@ public struct PlanProposal: Equatable {
 
     static func isStep(_ line: String) -> Bool {
         if line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("+ ") { return true }
-        let digits = line.prefix(while: \.isNumber)
+        let digits = line.prefix(while: { $0 >= "0" && $0 <= "9" })
         guard !digits.isEmpty, digits.count <= 3 else { return false }
         let rest = line.dropFirst(digits.count)
         return rest.hasPrefix(". ") || rest.hasPrefix(") ")
