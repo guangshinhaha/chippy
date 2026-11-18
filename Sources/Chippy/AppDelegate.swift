@@ -71,7 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.registerQuestionKeys(req) // the next question may have fewer options
         }
         pendingWatch = Publishers.MergeMany([model.$pending.map { _ in () }.eraseToAnyPublisher(), model.$listOpen.map { _ in () }.eraseToAnyPublisher(),
-                                      model.$focus.map { _ in () }.eraseToAnyPublisher(), model.$partials.map { _ in () }.eraseToAnyPublisher()])
+                                      model.$focus.map { _ in () }.eraseToAnyPublisher(), model.$folded.map { _ in () }.eraseToAnyPublisher(), model.$partials.map { _ in () }.eraseToAnyPublisher()])
             .receive(on: DispatchQueue.main).sink { [weak self] in self?.syncShortcuts() }
     }
 

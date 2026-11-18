@@ -13,9 +13,9 @@ func debug(_ s: String) {
 
 func relay(_ args: [String]) -> Never {
     var timeout = SettingsInstaller.defaultApprovalTimeout
-    if let i = args.firstIndex(of: "--timeout"), i + 1 < args.count, let t = Int(args[i + 1]) { timeout = min(max(t, 1), 120) }
+    if let i = args.firstIndex(of: "--timeout"), i + 1 < args.count, let t = Int(args[i + 1]) { timeout = min(max(t, 1), SettingsInstaller.maxApprovalTimeout) }
     var questionTimeout = SettingsInstaller.defaultQuestionTimeout
-    if let i = args.firstIndex(of: "--question-timeout"), i + 1 < args.count, let t = Int(args[i + 1]) { questionTimeout = min(max(t, 1), 300) }
+    if let i = args.firstIndex(of: "--question-timeout"), i + 1 < args.count, let t = Int(args[i + 1]) { questionTimeout = min(max(t, 1), SettingsInstaller.maxQuestionTimeout) }
     let start = DispatchTime.now()
     func ms() -> String { String(format: "%.1fms", Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1e6) }
     let input = FileHandle.standardInput.readDataToEndOfFile()
@@ -39,6 +39,11 @@ func relay(_ args: [String]) -> Never {
     if var d = obj as? [String: Any], d["hook_event_name"] as? String == "PermissionRequest", d["tool_name"] as? String == "AskUserQuestion",
        let tp = d["transcript_path"] as? String, let lead = TranscriptTail.leadIn(path: tp) {
         d["chippy_lead_in"] = lead
+        obj = d
+    }
+    // Tell Chippy how long this hook will wait, so the card's countdown and the sweep use the real (possibly custom) value.
+    if var d = obj as? [String: Any], d["hook_event_name"] as? String == "PermissionRequest" {
+        d["chippy_wait"] = d["tool_name"] as? String == "AskUserQuestion" ? questionTimeout : timeout
         obj = d
     }
     guard let line = try? JSONSerialization.data(withJSONObject: obj) else {
@@ -74,8 +79,8 @@ func install(_ args: [String]) -> Never {
     var i = 0
     while i < args.count {
         if args[i] == "--yes" { yes = true }
-        else if args[i] == "--timeout", i + 1 < args.count, let t = Int(args[i + 1]) { timeout = min(max(t, 1), 120); i += 1 }
-        else if args[i] == "--question-timeout", i + 1 < args.count, let t = Int(args[i + 1]) { questionTimeout = min(max(t, 1), 300); i += 1 }
+        else if args[i] == "--timeout", i + 1 < args.count, let t = Int(args[i + 1]) { timeout = min(max(t, 1), SettingsInstaller.maxApprovalTimeout); i += 1 }
+        else if args[i] == "--question-timeout", i + 1 < args.count, let t = Int(args[i + 1]) { questionTimeout = min(max(t, 1), SettingsInstaller.maxQuestionTimeout); i += 1 }
         else if args[i] == "--settings", i + 1 < args.count { settingsPath = args[i + 1]; i += 1 }
         i += 1
     }

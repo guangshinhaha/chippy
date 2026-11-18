@@ -9,6 +9,10 @@ public enum SettingsInstaller {
     /// Claude's questions (AskUserQuestion) get longer than approvals: a person has to read the options.
     public static let defaultQuestionTimeout = 120
 
+    /// The longest wait the relay will take (`--timeout`, `--question-timeout`), also the cap for a reported `chippy_wait`.
+    public static let maxApprovalTimeout = 120
+    public static let maxQuestionTimeout = 300
+
     public static func command(for binary: String, approvalTimeout: Int? = nil, questionTimeout: Int? = nil) -> String {
         "\"\(binary)\" relay" + (approvalTimeout.map { " --timeout \($0)" } ?? "")
             + (questionTimeout.map { " --question-timeout \($0)" } ?? "")

@@ -61,6 +61,8 @@ public struct PendingRequest: Identifiable, Equatable {
     public let leadIn: String?
     /// Set for an answerable AskUserQuestion; the card shows options instead of Allow/Deny.
     public let questions: [AskQuestion]?
+    /// How long the hook waits for an answer, as the relay reported it; nil falls back to the model's defaults.
+    public let waitSeconds: TimeInterval?
     /// SHA-256 of the full tool input, so "Always" on an Edit can't cover other content in the same file.
     let inputDigest: String
 
@@ -73,6 +75,7 @@ public struct PendingRequest: Identifiable, Equatable {
         ask = Self.oneLine(tool: p.toolName ?? "tool", input: p.toolInput)
         intent = p.toolName == "AskUserQuestion" ? nil : ApprovalIntent.make(tool: p.toolName ?? "tool", input: p.toolInput)
         createdAt = now
+        waitSeconds = p.waitSeconds
         leadIn = p.toolName == "AskUserQuestion" ? p.leadIn : nil
         branch = p.branch
         host = p.host

@@ -17,6 +17,8 @@ public struct HookPayload {
     public let leadIn: String?
     /// Claude Code's transcript file (all events carry it). Read only by the relay; not stored.
     public let transcriptPath: String?
+    /// How long the relay waits for an answer (PermissionRequest only), as the hook was installed. nil from an older relay.
+    public let waitSeconds: TimeInterval?
     private let branchOverride: String?
 
     public init?(json: Data) {
@@ -36,6 +38,11 @@ public struct HookPayload {
         leadIn = (o["chippy_lead_in"] as? String).map { TranscriptTail.truncate($0, to: TranscriptTail.maxChars) }
         transcriptPath = o["transcript_path"] as? String
         branchOverride = o["chippy_branch"] as? String // only the demo command sets this
+        // A real number only (a JSON boolean is an NSNumber too), within what the relay can send: approval and question caps live in SettingsInstaller.
+        let cap: Double = Double(toolName == "AskUserQuestion" ? SettingsInstaller.maxQuestionTimeout : SettingsInstaller.maxApprovalTimeout)
+        waitSeconds = (o["chippy_wait"] as? NSNumber).flatMap { n in
+            CFGetTypeID(n) == CFBooleanGetTypeID() ? nil : n.doubleValue
+        }.flatMap { $0 >= 1 && $0 <= cap ? $0 : nil }
     }
 
     /// Repo name for the session. A Claude worktree (`<repo>/.claude/worktrees/agent-xyz`) is labelled by its repo,

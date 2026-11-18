@@ -68,6 +68,16 @@ enum Gallery {
                                                  ("no notch", .none)]
         let long = #"{"session_id":"s","hook_event_name":"PreToolUse","cwd":"/x/chippy","tool_name":"Bash","tool_input":{"command":"sleep 15; cat /tmp/chippy-trial.out | head -5; ls -la /tmp"}}"#
         let badged = devices.filter { $0.1.hasNotch }.map { ($0.0, $0.1, seededModel(count: 3, density: .collapsed, cwd: "/x/chippy")) }
+        // Folded needs-you badge (#86): an approval opened, 16s passed with no hover, so it folded. 5s of the 20s are left (ring).
+        let folded: [(String, NotchMetrics, NotchModel)] = devices.filter { $0.1.hasNotch }.map { name, m in
+            final class Tick { var t: TimeInterval = 0 }
+            let tick = Tick()
+            let fm = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: tempLog()), clock: { tick.t })
+            fm.receiveApproval(HookPayload(json: Data(long.replacingOccurrences(of: "PreToolUse", with: "PermissionRequest").replacingOccurrences(of: #""session_id":"s""#, with: #""session_id":"s","chippy_wait":20"#).utf8))!, Connection.detached(),
+                               now: Date().addingTimeInterval(-15))
+            tick.t = 16; fm.sweep()
+            return (name, m, fm)
+        }
         let variants = VStack(alignment: .leading, spacing: 10) {
             ForEach(devices, id: \.0) { name, m in
                 HStack(alignment: .top, spacing: 12) {
@@ -95,6 +105,14 @@ enum Gallery {
                     VStack(alignment: .leading, spacing: 4) {
                         NotchView(model: model, box: box(m)).frame(width: m.size(for: .collapsed).width, height: m.size(for: .collapsed).height)
                         Text("\(name) / Collapsed + badge (3)").font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            HStack(alignment: .top, spacing: 12) { // folded approval: orange pulsing badge with a draining ring
+                ForEach(folded, id: \.0) { name, m, model in
+                    VStack(alignment: .leading, spacing: 4) {
+                        NotchView(model: model, box: box(m)).frame(width: m.size(for: .collapsed).width, height: m.size(for: .collapsed).height)
+                        Text("\(name) / Folded needs-you badge (folded=\(String(model.folded)), pending=\(model.pending.count))").font(.caption2).foregroundStyle(.secondary)
                     }
                 }
             }

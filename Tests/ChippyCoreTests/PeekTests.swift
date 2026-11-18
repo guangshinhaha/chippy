@@ -169,12 +169,13 @@ final class PeekTests: XCTestCase {
         XCTAssertEqual(m.badge, "2")
     }
 
-    func testApprovalsNeverAutoCollapse() {
+    func testApprovalsFoldToTheBadgeButStayPending() { // #86 supersedes "approvals never auto-collapse"
         let m = model()
         let c = Connection.detached()
         m.receiveApproval(ev("PermissionRequest", extra: #","tool_name":"Bash","tool_input":{"command":"ls"}"#), c)
+        t = 14; m.sweep(); XCTAssertEqual(m.density, .expanded)
         t = 1000; m.sweep(); m.sweep(now: Date())
-        XCTAssertEqual(m.density, .expanded)
+        XCTAssertEqual(m.density, .collapsed); XCTAssertTrue(m.folded)
         XCTAssertEqual(m.pending.count, 1)
     }
 
@@ -183,7 +184,7 @@ final class PeekTests: XCTestCase {
         m.apply(ev("Stop", "a"), now: Date())
         let c = Connection.detached()
         m.receiveApproval(ev("PermissionRequest", "b", extra: #","tool_name":"Bash","tool_input":{"command":"ls"}"#), c)
-        t = 30; m.sweep(); XCTAssertEqual(m.density, .expanded)
+        t = 12; m.sweep(); XCTAssertEqual(m.density, .expanded)
         m.resolve(m.pending[0].id, .deny)
         XCTAssertEqual(m.density, .collapsed)          // the peek ran out meanwhile; the chip waits behind the badge
         XCTAssertEqual(m.badge, "1")
