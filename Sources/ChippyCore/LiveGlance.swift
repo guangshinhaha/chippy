@@ -44,13 +44,17 @@ public enum LiveGlance {
     }
 
     /// The text for a session's glance line and whether it is live. Evaluated at read time, so a stale word falls back to the state.
-    /// Order: blocked (approval/question: "Needs you"; terminal ask: "Waiting for you"), fresh word, Finished, else Idle.
+    /// Order: blocked (approval/question: "Needs you"; terminal ask: "Waiting for you"), fresh word, Finished, Working (stale word, still running), else Idle.
     /// The session model has no error state, so none is shown.
     public static func line(for row: SessionRow, now: Date, needsYou: Bool = false, waitingTerminal: Bool = false) -> (text: String, live: Bool) {
         if needsYou { return ("Needs you", false) }
         if waitingTerminal { return ("Waiting for you", false) }
         if let w = row.liveActivity(now: now) { return (w, true) }
-        return (row.status == .done ? "Finished" : "Idle", false)
+        switch row.status {
+        case .done: return ("Finished", false)
+        case .working: return (fallback, false) // a long tool run (>90s) is still running, not idle
+        case .idle: return ("Idle", false)
+        }
     }
 }
 

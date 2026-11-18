@@ -58,7 +58,7 @@ final class LiveGlanceTests: XCTestCase {
         XCTAssertNil(s.rows[0].activity)
         s.apply(tool("a", "PreToolUse", "Edit"))
         s.apply(payload(["session_id": "a", "hook_event_name": "SessionEnd"]))
-        XCTAssertTrue(s.rows.isEmpty); XCTAssertTrue(s.glanceOrder.isEmpty)
+        XCTAssertTrue(s.rows.isEmpty); XCTAssertTrue(s.glanceOrder().isEmpty)
     }
 
     func testOneLinePerRunningSessionNewestFirst() {
@@ -68,8 +68,9 @@ final class LiveGlanceTests: XCTestCase {
         s.apply(tool("b", "PreToolUse", "Grep"), now: t0.addingTimeInterval(5))
         s.apply(tool("c", "PreToolUse", "Bash"), now: t0.addingTimeInterval(9))
         s.apply(payload(["session_id": "c", "hook_event_name": "Stop"]), now: t0.addingTimeInterval(10))
-        XCTAssertEqual(s.glanceOrder.map(\.id), ["b", "a", "c"])
-        XCTAssertEqual(s.glanceOrder.map(\.activity), ["Searching", "Editing", nil])
+        let now = t0.addingTimeInterval(11)
+        XCTAssertEqual(s.glanceOrder(now: now).map(\.id), ["b", "a", "c"])
+        XCTAssertEqual(s.glanceOrder(now: now).map(\.activity), ["Searching", "Editing", nil])
     }
 
     /// Privacy: no tool input (path, command, prompt) reaches the glance word.
@@ -77,7 +78,7 @@ final class LiveGlanceTests: XCTestCase {
         var s = SessionStore()
         s.apply(tool("a", "PreToolUse", "Bash", input: ["command": "curl https://secret.example/token"]))
         s.apply(tool("b", "PreToolUse", "Edit", input: ["file_path": "/Users/me/students/Marks.xlsx"]))
-        for r in s.glanceOrder {
+        for r in s.glanceOrder() {
             let a = r.activity ?? ""
             XCTAssertFalse(a.contains("secret") || a.contains("Marks") || a.contains("/") || a.contains("curl"))
         }
@@ -89,18 +90,20 @@ final class LiveGlanceTests: XCTestCase {
         m.apply(payload(["session_id": "idle", "cwd": "/w/a", "hook_event_name": "SessionStart"]), now: t0.addingTimeInterval(20))
         m.apply(tool("old", "PreToolUse", "Read"), now: t0)
         m.apply(tool("new", "PreToolUse", "Bash"), now: t0.addingTimeInterval(5))
-        XCTAssertEqual(m.glanceSessions.map(\.id), ["new", "old", "idle"])
-        XCTAssertNil(m.glanceSessions.last?.activity)
+        let o = m.glanceSessions(now: t0.addingTimeInterval(30))
+        XCTAssertEqual(o.map(\.id), ["new", "old", "idle"])
+        XCTAssertNil(o.last?.activity)
     }
 
     @MainActor func testPanelOrderIsStoredAndTiesBreakOnId() {
         let m = NotchModel()
         let t = Date(timeIntervalSince1970: 3000)
         for id in ["c", "a", "b"] { m.apply(tool(id, "PreToolUse", "Read"), now: t) }
-        XCTAssertEqual(m.glanceSessions.map(\.id), ["a", "b", "c"])
+        let n = t.addingTimeInterval(1)
+        XCTAssertEqual(m.glanceSessions(now: n).map(\.id), ["a", "b", "c"])
         var s = SessionStore()
         for id in ["c", "a", "b"] { s.apply(tool(id, "PreToolUse", "Read"), now: t) }
-        XCTAssertEqual(m.glanceSessions.map(\.id), s.glanceOrder.map(\.id)) // one ordering
+        XCTAssertEqual(m.glanceSessions(now: n).map(\.id), s.glanceOrder(now: n).map(\.id)) // one ordering
     }
 
     // Item 1: which events touch the word
@@ -128,7 +131,9 @@ final class LiveGlanceTests: XCTestCase {
         XCTAssertNil(row.liveActivity(now: t0.addingTimeInterval(91)))
         XCTAssertEqual(LiveGlance.line(for: row, now: t0.addingTimeInterval(30)).text, "Running")
         let stale = LiveGlance.line(for: row, now: t0.addingTimeInterval(120))
-        XCTAssertEqual(stale.text, "Idle"); XCTAssertFalse(stale.live)
+        XCTAssertEqual(stale.text, "Working"); XCTAssertFalse(stale.live) // still working: a long tool run is not idle
+        var idleRow = row; idleRow.status = .idle
+        XCTAssertEqual(LiveGlance.line(for: idleRow, now: t0.addingTimeInterval(120)).text, "Idle")
         s.apply(tool("a", "PostToolUse", "Bash"), now: t0.addingTimeInterval(100)) // a new event revives it
         XCTAssertEqual(LiveGlance.line(for: s.rows[0], now: t0.addingTimeInterval(120)).text, "Thinking")
     }
@@ -141,11 +146,11 @@ final class LiveGlanceTests: XCTestCase {
         m.apply(tool("fin", "PreToolUse", "Edit"), now: t)
         m.apply(payload(["session_id": "fin", "cwd": "/w/b", "hook_event_name": "Stop"]), now: t)
         m.apply(tool("run", "PreToolUse", "Grep"), now: t)
-        func line(_ id: String) -> String { m.glanceLine(for: m.glanceSessions.first { $0.id == id }!, now: t.addingTimeInterval(5)).text }
+        func line(_ id: String) -> String { m.glanceLine(for: m.sessions.first { $0.id == id }!, now: t.addingTimeInterval(5)).text }
         XCTAssertEqual(line("idle"), "Idle")
         XCTAssertEqual(line("fin"), "Finished")
         XCTAssertEqual(line("run"), "Searching")
-        let row = m.glanceSessions.first { $0.id == "run" }!
+        let row = m.sessions.first { $0.id == "run" }!
         XCTAssertEqual(LiveGlance.line(for: row, now: t, needsYou: true).text, "Needs you")
         XCTAssertEqual(LiveGlance.line(for: row, now: t, waitingTerminal: true).text, "Waiting for you")
         XCTAssertFalse(LiveGlance.line(for: row, now: t, needsYou: true).live)
@@ -170,5 +175,47 @@ final class LiveGlanceTests: XCTestCase {
         m.apply(tool("a", "PostToolUse", "Edit"))
         XCTAssertEqual(m.density, .collapsed)
         XCTAssertEqual(sounds, 0)
+    }
+
+    func testThreeMinuteToolRunStaysWorking() {
+        var s = SessionStore()
+        let t0 = Date(timeIntervalSince1970: 1000)
+        s.apply(tool("a", "PreToolUse", "Bash"), now: t0)
+        let l = LiveGlance.line(for: s.rows[0], now: t0.addingTimeInterval(180))
+        XCTAssertEqual(l.text, "Working"); XCTAssertFalse(l.live)
+    }
+
+    func testLatePostToolUseAfterStopDoesNotSetThinking() {
+        var s = SessionStore()
+        let t0 = Date(timeIntervalSince1970: 1000)
+        s.apply(tool("a", "PreToolUse", "Bash"), now: t0)
+        s.apply(payload(["session_id": "a", "hook_event_name": "Stop"]), now: t0.addingTimeInterval(1))
+        s.apply(tool("a", "PostToolUse", "Bash"), now: t0.addingTimeInterval(2))
+        XCTAssertNil(s.rows[0].activity); XCTAssertNil(s.rows[0].activityAt)
+        s.apply(payload(["session_id": "a", "hook_event_name": "UserPromptSubmit", "prompt": "next"]), now: t0.addingTimeInterval(3))
+        XCTAssertEqual(s.rows[0].activity, "Thinking") // a new prompt is a real new turn
+    }
+
+    func testFreshWordOutranksStaleWorkingAndNeedsYouIsFirst() {
+        var s = SessionStore()
+        let t0 = Date(timeIntervalSince1970: 1000)
+        for id in ["r1", "r2", "r3", "blocked"] { s.apply(tool(id, "PreToolUse", "Bash"), now: t0.addingTimeInterval(100)) }
+        s.apply(tool("s", "PreToolUse", "Bash"), now: t0) // word is 150s old at `now`
+        s.apply(payload(["session_id": "s", "hook_event_name": "Notification"]), now: t0.addingTimeInterval(120)) // newest updatedAt, stale word
+        let o = s.glanceOrder(now: t0.addingTimeInterval(150), needsYou: ["blocked"]).map(\.id)
+        XCTAssertEqual(o, ["blocked", "r1", "r2", "r3", "s"])
+    }
+
+    @MainActor func testBlockedSessionAmongFourRunningIsInVisibleRows() {
+        let m = NotchModel()
+        let t = Date(timeIntervalSince1970: 5000)
+        m.apply(payload(["session_id": "z", "cwd": "/w/z", "hook_event_name": "PreToolUse", "tool_name": "Bash"]), now: t) // oldest
+        for id in ["a", "b", "c", "d"] { m.apply(tool(id, "PreToolUse", "Edit"), now: t.addingTimeInterval(10)) }
+        m.receiveApproval(payload(["session_id": "z", "cwd": "/w/z", "hook_event_name": "PermissionRequest",
+                                   "tool_name": "Bash", "tool_input": ["command": "ls"]]), Connection(fd: -1), now: t.addingTimeInterval(11))
+        let ids = m.glanceSessions(now: t.addingTimeInterval(20)).map(\.id)
+        XCTAssertEqual(ids.count, 5)
+        XCTAssertEqual(ids.first, "z")
+        XCTAssertLessThan(ids.firstIndex(of: "z")!, GlanceMetrics.rowCap)
     }
 }

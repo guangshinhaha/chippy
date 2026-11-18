@@ -383,13 +383,14 @@ struct NotchView: View {
                     // Live glance (#90): one line per session, working first. The word is the tool's category only, never its input.
                     // One timeline for the rows: a word with no new event for 90s (Esc, crash) falls back to the state at read time.
                     TimelineView(.periodic(from: .now, by: 15)) { ctx in
-                        ForEach(model.glanceSessions.prefix(Self.sessionRowCap)) { row in
+                        let ordered = model.glanceSessions(now: ctx.date) // re-ranked every tick, needs-you always first
+                        ForEach(ordered.prefix(Self.sessionRowCap)) { row in
                             let line = model.glanceLine(for: row, now: ctx.date)
                             GlanceRow(label: model.repoLabel(cwd: row.cwd, project: row.project), mark: model.identity(cwd: row.cwd, project: row.project), text: line.text, live: line.live)
                         }
-                    }
-                    if model.glanceSessions.count > Self.sessionRowCap {
-                        Text("\(model.glanceSessions.count - Self.sessionRowCap) more sessions").font(.caption2).foregroundStyle(.white.opacity(0.6))
+                        if ordered.count > Self.sessionRowCap {
+                            Text("\(ordered.count - Self.sessionRowCap) more sessions").font(.caption2).foregroundStyle(.white.opacity(0.6))
+                        }
                     }
                 } else {
                     terminalCards

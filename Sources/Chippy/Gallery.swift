@@ -174,11 +174,11 @@ enum Gallery {
         model.toggleOpen()
         let m = NotchMetrics.sample14
         // Header and padding around the rows, plus the rows themselves from their count (not a magic number).
-        let h = 110 + GlanceMetrics.height(rows: model.glanceSessions.count)
+        let h = 110 + GlanceMetrics.height(rows: model.glanceSessions().count)
         let sz = m.size(for: .expanded, contentHeight: h)
         let b = box(m); b.contentHeight = h
         let r = ImageRenderer(content: NotchView(model: model, box: b).frame(width: sz.width, height: sz.height).background(Color(white: 0.25)))
-        writePNG(r, to: path, note: "restOpen=\(model.restOpen) lines=\(model.glanceSessions.map { model.glanceLine(for: $0).text })")
+        writePNG(r, to: path, note: "restOpen=\(model.restOpen) lines=\(model.glanceSessions().map { model.glanceLine(for: $0).text })")
     }
 
     /// Render one notch view at `size` to a 2x PNG and print the note.

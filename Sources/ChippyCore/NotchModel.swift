@@ -128,9 +128,12 @@ public final class NotchModel: ObservableObject {
         }
     }
 
-    /// Session lines for the open panel (#90), in `SessionStore.glanceOrder`, sorted once per `apply` (not per render).
+    /// Session lines for the open panel (#90), in `SessionStore.glanceOrder` at `now`. Derived from the store at read time
+    /// (no second published copy), so freshness and needs-you are always current; the view reads it on its 15s tick.
     /// Read-only, so a glance never changes density, pending, folds or sounds.
-    @Published public private(set) var glanceSessions: [SessionRow] = []
+    public func glanceSessions(now: Date = Date()) -> [SessionRow] {
+        store.glanceOrder(now: now, needsYou: Set(pending.map(\.sessionId) + terminalItems.map(\.sessionId)))
+    }
 
     /// The glance line for a row at `now`: the fresh word, or the real state (Needs you, Waiting for you, Finished, Idle).
     public func glanceLine(for row: SessionRow, now: Date = Date()) -> (text: String, live: Bool) {
@@ -703,7 +706,6 @@ public final class NotchModel: ObservableObject {
         idleClock.noteEvent(now: now)
         store.apply(payload, now: now)
         sessions = store.rows
-        glanceSessions = store.glanceOrder
         // Conservative: tool events are shared with parallel/subagent calls, so only a turn boundary (prompt, Stop, end)
         // clears a terminal chip, or the PostToolUse of the same tool 2s+ after it (the ask was answered). Others stay.
         terminalItems.removeAll { t in

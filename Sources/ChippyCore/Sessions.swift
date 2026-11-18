@@ -53,7 +53,10 @@ public struct SessionStore {
         rows[i].updatedAt = now
         // Latest wins, but a tty-only report must not erase a known host app.
         if let h = p.host, h.hasHost || rows[i].host == nil { rows[i].host = h }
-        if LiveGlance.touchesActivity(p.event) {
+        // A late PostToolUse after Stop (parallel or subagent call) must not bring "Thinking" back on a finished session.
+        // A new prompt is a real new turn, so it still does.
+        let lateTool = p.event == "PostToolUse" && rows[i].status == .done
+        if LiveGlance.touchesActivity(p.event) && !lateTool {
             rows[i].activity = LiveGlance.activity(after: p.event, tool: p.toolName, current: rows[i].activity)
             rows[i].activityAt = rows[i].activity == nil ? nil : now
         }
@@ -91,11 +94,17 @@ public struct SessionStore {
         }
     }
 
-    /// Every session in glance order: those with a word first, then newest first, ties broken by id so it is deterministic.
-    public var glanceOrder: [SessionRow] {
-        rows.sorted { a, b in
-            let ra = a.activity != nil, rb = b.activity != nil
-            if ra != rb { return ra }
+    /// Every session in glance order at `now`: needs-you first, then a FRESH live word, then working-but-stale, then the rest;
+    /// newest first inside a group, ties broken by id so it is deterministic. Cheap (a handful of rows), so call it at read time.
+    public func glanceOrder(now: Date = Date(), needsYou: Set<String> = []) -> [SessionRow] {
+        func rank(_ r: SessionRow) -> Int {
+            if needsYou.contains(r.id) { return 0 }
+            if r.liveActivity(now: now) != nil { return 1 }
+            return r.status == .working ? 2 : 3
+        }
+        return rows.sorted { a, b in
+            let ra = rank(a), rb = rank(b)
+            if ra != rb { return ra < rb }
             return a.updatedAt != b.updatedAt ? a.updatedAt > b.updatedAt : a.id < b.id
         }
     }
