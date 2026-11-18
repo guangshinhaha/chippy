@@ -6,7 +6,8 @@ public enum SettingsInstaller {
     public static let hookEvents = ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "SessionEnd", "PermissionRequest"]
     public static let defaultApprovalTimeout = 60
 
-    /// The default before #99; an install with this value and no `--question-timeout` is an untouched old default.
+    /// The default before #99. An exact `--timeout 20` is treated as that old default, with or without `--question-timeout`
+    /// (the previous release wrote `--timeout 20 --question-timeout 120`); any other value is the user's own and kept.
     public static let legacyApprovalTimeout = 20
 
     /// Claude's questions (AskUserQuestion) get longer than approvals: a person has to read the options.
@@ -32,7 +33,7 @@ public enum SettingsInstaller {
     }
 
     /// Why a chippy hook in `settings` is stale, empty when it is fine or absent.
-    public enum Staleness: Equatable { case missingQuestionFlag, timeoutTooShort, missingPermissionRequest }
+    public enum Staleness: Equatable { case missingQuestionFlag, legacyApprovalTimeout, timeoutTooShort, missingPermissionRequest }
 
     public static func staleness(_ settings: [String: Any]) -> [Staleness] {
         let hooks = settings["hooks"] as? [String: Any] ?? [:]
@@ -54,10 +55,14 @@ public enum SettingsInstaller {
         }
         for hook in mine {
             let cmd = hook["command"] as? String ?? ""
-            let q = flagValue("--question-timeout", in: cmd)
+            let qRaw = flagValue("--question-timeout", in: cmd)
+            let aRaw = flagValue("--timeout", in: cmd)
             // No --timeout means the relay uses its current default, not the legacy one.
-            let a = flagValue("--timeout", in: cmd) ?? defaultApprovalTimeout
-            if q == nil, !out.contains(.missingQuestionFlag) { out.append(.missingQuestionFlag) }
+            // Compare what the relay will actually wait: it clamps both values.
+            let a = min(max(aRaw ?? defaultApprovalTimeout, 1), maxApprovalTimeout)
+            let q = qRaw.map { min(max($0, 1), maxQuestionTimeout) }
+            if qRaw == nil, !out.contains(.missingQuestionFlag) { out.append(.missingQuestionFlag) }
+            if aRaw == legacyApprovalTimeout, !out.contains(.legacyApprovalTimeout) { out.append(.legacyApprovalTimeout) }
             let need = hookTimeout(approvalTimeout: a, questionTimeout: q ?? 0)
             // NSNumber so 130.0 (a JSON double) counts as an int.
             let have = (hook["timeout"] as? NSNumber)?.intValue ?? 0
@@ -66,11 +71,11 @@ public enum SettingsInstaller {
         return out
     }
 
-    /// True when `path` will not exist later: a translocated, mounted-volume or temp-dir copy. build/ is fine.
+    /// True when `path` will not exist later: a translocated or temp-dir copy. build/ is fine.
     public static func isTransientPath(_ path: String, tempDir: String = NSTemporaryDirectory()) -> Bool {
         let p = (path as NSString).standardizingPath
         let t = (tempDir as NSString).standardizingPath
-        if p.contains("/AppTranslocation/") || p.hasPrefix("/Volumes/") { return true }
+        if p.contains("/AppTranslocation/") { return true }
         for root in [t, "/tmp", "/private/tmp", "/var/folders", "/private/var/folders"] where !root.isEmpty && root != "/" {
             if p == root || p.hasPrefix(root + "/") { return true }
         }
@@ -99,8 +104,8 @@ public enum SettingsInstaller {
                             let old = hook["command"] as? String ?? ""
                             let qOld = flagValue("--question-timeout", in: old)
                             var a = flagValue("--timeout", in: old) ?? approvalTimeout
-                            // Old default (20, written before the question flag existed) moves to the new default.
-                            if qOld == nil, a == legacyApprovalTimeout { a = approvalTimeout }
+                            // Old default (an exact 20, with or without the question flag) moves to the new default.
+                            if a == legacyApprovalTimeout { a = approvalTimeout }
                             let q = qOld ?? questionTimeout
                             hook["command"] = command(for: binary, approvalTimeout: a, questionTimeout: q)
                             hook["timeout"] = hookTimeout(approvalTimeout: a, questionTimeout: q)

@@ -33,9 +33,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         buildMenu()
         startServer()
         startShortcuts()
+        // The repair alert is modal: on first launch it waits until the tour is over.
+        if tour.willRunOnFirstLaunch {
+            tour.onFinish = { [weak self] in self?.offerHookRepair() }
+        } else {
+            DispatchQueue.main.async { [weak self] in self?.offerHookRepair() }
+        }
         tour.runOnFirstLaunch()
         keepAwake.start()
-        DispatchQueue.main.async { [weak self] in self?.offerHookRepair(atLaunch: true) }
         // Clicks in any other app are "outside the notch": fold the detail back to its glance.
         // Esc in any app folds the detail. Global key events need Accessibility permission; without it only clicks work.
         escKey = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] e in
@@ -199,22 +204,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func repairReason(_ s: [SettingsInstaller.Staleness]) -> String {
         if s.contains(.missingPermissionRequest) { return "Claude's hook for Chippy has no approval relay, so approvals and questions will not reach the notch." }
+        if s.contains(.legacyApprovalTimeout) { return "Claude's hook for Chippy still uses the old 20 second approval wait. A timeout of 20 will become 60; a custom value other than 20 is kept." }
         if s.contains(.missingQuestionFlag) { return "Claude's hook for Chippy predates the longer question wait, so questions can be cut off early." }
         return "Claude's hook timeout for Chippy is shorter than its wait, so Claude can cut off a question or approval early."
     }
 
     private func repairMenuTitle(_ s: [SettingsInstaller.Staleness]) -> String {
         if s.contains(.missingPermissionRequest) { return "Repair Claude hook (approvals missing)…" }
+        if s.contains(.legacyApprovalTimeout) { return "Repair Claude hook (old 20s wait)…" }
         if s.contains(.missingQuestionFlag) { return "Repair Claude hook (no question flag)…" }
         return "Repair Claude hook (timeout too short)…"
     }
 
-    private func offerHookRepair(atLaunch: Bool) {
+    private func offerHookRepair() {
         let s = hookStaleness()
         guard !s.isEmpty else { return }
         // "Later" holds for this session and, keyed to the reason, across launches until the reason changes.
         let key = s.map { "\($0)" }.joined(separator: ",")
-        guard !(atLaunch && (offeredRepair || UserDefaults.standard.string(forKey: repairDismissedKey) == key)) else { return }
+        guard !offeredRepair, UserDefaults.standard.string(forKey: repairDismissedKey) != key else { return }
         offeredRepair = true
         NSApp.activate(ignoringOtherApps: true)
         let a = NSAlert()
@@ -244,7 +251,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let q = "'" + exe.path.replacingOccurrences(of: "'", with: "'\\''") + "'"
         let script = FileManager.default.temporaryDirectory.appendingPathComponent("chippy-repair-hook-\(UUID().uuidString).command")
         do {
-            try "#!/bin/zsh\n\(q) install\necho\nread -k 1 '?Press any key to close.'\nrm -f -- \"$0\"\n".write(to: script, atomically: true, encoding: .utf8)
+            // trap removes the script however Terminal ends it: normal exit, Ctrl-C, or closing the window.
+            let qs = "'" + script.path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+            try "#!/bin/zsh\ntrap \"rm -f -- \(qs)\" EXIT HUP INT TERM\n\(q) install\necho\nread -k 1 '?Press any key to close.'\n".write(to: script, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
         } catch {
             return repairFailed("Couldn't write the repair script: \(error.localizedDescription)")

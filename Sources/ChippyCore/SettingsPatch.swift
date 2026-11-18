@@ -50,7 +50,7 @@ extension SettingsInstaller {
         return (eventValue as? [Any] ?? []).allSatisfy { entry in
             ((entry as? [String: Any])?["hooks"] as? [Any] ?? []).allSatisfy { h in
                 guard let hook = h as? [String: Any], (hook["command"] as? String)?.contains("chippy-hook") == true else { return true }
-                return hook["command"] as? String == cmd && hook["timeout"] as? Int == timeout
+                return hook["command"] as? String == cmd && (hook["timeout"] as? NSNumber)?.intValue == timeout
             }
         }
     }

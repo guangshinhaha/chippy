@@ -28,7 +28,7 @@ final class StaleHookFollowUpTests: XCTestCase {
     func testTransientPaths() {
         let t = "/var/folders/ab/T/"
         XCTAssertTrue(SettingsInstaller.isTransientPath("/private/var/folders/ab/AppTranslocation/X/d/Chippy.app/Contents/MacOS/chippy-hook", tempDir: t))
-        XCTAssertTrue(SettingsInstaller.isTransientPath("/Volumes/Chippy/Chippy.app/Contents/MacOS/chippy-hook", tempDir: t))
+        XCTAssertFalse(SettingsInstaller.isTransientPath("/Volumes/Work/Chippy.app/Contents/MacOS/chippy-hook", tempDir: t))
         XCTAssertTrue(SettingsInstaller.isTransientPath("/var/folders/ab/T/x/chippy-hook", tempDir: t))
         XCTAssertTrue(SettingsInstaller.isTransientPath("/tmp/x/chippy-hook", tempDir: t))
         XCTAssertFalse(SettingsInstaller.isTransientPath("/Applications/Chippy.app/Contents/MacOS/chippy-hook", tempDir: t))
