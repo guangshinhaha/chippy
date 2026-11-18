@@ -4,7 +4,10 @@ import Foundation
 public enum SettingsInstaller {
     /// Events relayed to the notch. PermissionRequest runs before the permission prompt and may answer it.
     public static let hookEvents = ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "SessionEnd", "PermissionRequest"]
-    public static let defaultApprovalTimeout = 20
+    public static let defaultApprovalTimeout = 60
+
+    /// The default before #99; an install with this value and no `--question-timeout` is an untouched old default.
+    public static let legacyApprovalTimeout = 20
 
     /// Claude's questions (AskUserQuestion) get longer than approvals: a person has to read the options.
     public static let defaultQuestionTimeout = 120
@@ -28,6 +31,25 @@ public enum SettingsInstaller {
         return Int(parts[i + 1])
     }
 
+    /// Why a chippy PermissionRequest hook in `settings` is stale, empty when it is fine or absent.
+    public enum Staleness: Equatable { case missingQuestionFlag, timeoutTooShort }
+
+    public static func staleness(_ settings: [String: Any]) -> [Staleness] {
+        let entries = (settings["hooks"] as? [String: Any])?["PermissionRequest"] as? [Any] ?? []
+        var out: [Staleness] = []
+        for entry in entries {
+            for h in (entry as? [String: Any])?["hooks"] as? [Any] ?? [] {
+                guard let hook = h as? [String: Any], let cmd = hook["command"] as? String, cmd.contains("chippy-hook") else { continue }
+                let q = flagValue("--question-timeout", in: cmd)
+                let a = flagValue("--timeout", in: cmd) ?? legacyApprovalTimeout
+                if q == nil, !out.contains(.missingQuestionFlag) { out.append(.missingQuestionFlag) }
+                let need = hookTimeout(approvalTimeout: a, questionTimeout: q ?? 0)
+                if (hook["timeout"] as? Int ?? 0) < need, !out.contains(.timeoutTooShort) { out.append(.timeoutTooShort) }
+            }
+        }
+        return out
+    }
+
     public static func merged(_ settings: [String: Any], binary: String, events: [String] = hookEvents,
                               approvalTimeout: Int = defaultApprovalTimeout,
                               questionTimeout: Int = defaultQuestionTimeout) -> [String: Any] {
@@ -48,8 +70,11 @@ public enum SettingsInstaller {
                             guard var hook = h as? [String: Any], (hook["command"] as? String)?.contains("chippy-hook") == true else { return h }
                             // Keep the user's own --timeout / --question-timeout; defaults only fill missing flags.
                             let old = hook["command"] as? String ?? ""
-                            let a = flagValue("--timeout", in: old) ?? approvalTimeout
-                            let q = flagValue("--question-timeout", in: old) ?? questionTimeout
+                            let qOld = flagValue("--question-timeout", in: old)
+                            var a = flagValue("--timeout", in: old) ?? approvalTimeout
+                            // Old default (20, written before the question flag existed) moves to the new default.
+                            if qOld == nil, a == legacyApprovalTimeout { a = approvalTimeout }
+                            let q = qOld ?? questionTimeout
                             hook["command"] = command(for: binary, approvalTimeout: a, questionTimeout: q)
                             hook["timeout"] = hookTimeout(approvalTimeout: a, questionTimeout: q)
                             return hook

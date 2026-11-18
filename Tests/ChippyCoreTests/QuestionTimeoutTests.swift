@@ -16,7 +16,7 @@ final class QuestionTimeoutTests: XCTestCase {
     func testFreshInstallWritesBothFlagsAndTimeout130() {
         let out = SettingsInstaller.merged([:], binary: bin)
         let hook = (permissionEntries(out)[0]["hooks"] as! [[String: Any]])[0]
-        XCTAssertEqual(hook["command"] as? String, "\"/App/chippy-hook\" relay --timeout 20 --question-timeout 120")
+        XCTAssertEqual(hook["command"] as? String, "\"/App/chippy-hook\" relay --timeout 60 --question-timeout 120")
         XCTAssertEqual(hook["timeout"] as? Int, 130)
         XCTAssertTrue(NSDictionary(dictionary: SettingsInstaller.merged(out, binary: bin)).isEqual(to: out)) // "Already installed"
     }
@@ -34,7 +34,7 @@ final class QuestionTimeoutTests: XCTestCase {
         let entries = permissionEntries(up)
         let hooks = entries[0]["hooks"] as! [[String: Any]]
         XCTAssertTrue(same(hooks[0], theirs))                                          // their hook in the same array: untouched
-        XCTAssertEqual(hooks[1]["command"] as? String, SettingsInstaller.command(for: bin, approvalTimeout: 20, questionTimeout: 120))
+        XCTAssertEqual(hooks[1]["command"] as? String, SettingsInstaller.command(for: bin, approvalTimeout: 60, questionTimeout: 120))
         XCTAssertEqual(hooks[1]["timeout"] as? Int, 130)
         XCTAssertTrue(same(entries[1], other))                                         // their other entry: untouched
         let h = up["hooks"] as! [String: Any]

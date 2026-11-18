@@ -35,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         startShortcuts()
         tour.runOnFirstLaunch()
         keepAwake.start()
+        DispatchQueue.main.async { [weak self] in self?.offerHookRepair(atLaunch: true) }
         // Clicks in any other app are "outside the notch": fold the detail back to its glance.
         // Esc in any app folds the detail. Global key events need Accessibility permission; without it only clicks work.
         escKey = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] e in
@@ -131,6 +132,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let tourItem = NSMenuItem(title: "Show me how it works", action: #selector(runTour), keyEquivalent: "")
         tourItem.target = self
         menu.addItem(tourItem)
+        repairItem.target = self; repairItem.isHidden = true
+        menu.addItem(repairItem)
         for i in keepAwake.menuItems() { menu.addItem(i) }
         menu.addItem(.separator())
 
@@ -180,7 +183,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.popUp(positioning: nil, at: NSPoint(x: centered ? p.x - menu.size.width / 2 : p.x, y: p.y), in: nil)
     }
 
+    // MARK: stale hook repair (#99)
+
+    private let repairItem = NSMenuItem(title: "Repair Claude hook (timeout too short)…", action: #selector(repairHook), keyEquivalent: "")
+    private var offeredRepair = false
+
+    private var claudeSettingsPath: String { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/settings.json").path }
+
+    private func hookIsStale() -> Bool {
+        guard let d = FileManager.default.contents(atPath: claudeSettingsPath),
+              let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return false }
+        return !SettingsInstaller.staleness(o).isEmpty
+    }
+
+    private func offerHookRepair(atLaunch: Bool) {
+        guard hookIsStale(), !(atLaunch && offeredRepair) else { return }
+        offeredRepair = true
+        let a = NSAlert()
+        a.messageText = "Claude's hook for Chippy is out of date"
+        a.informativeText = "Questions and approvals can be cut off at 30 seconds. Repair opens Terminal, shows the change, and asks before writing. A backup is kept."
+        a.addButton(withTitle: "Repair…"); a.addButton(withTitle: "Later")
+        if a.runModal() == .alertFirstButtonReturn { repairHook() }
+    }
+
+    /// Runs the same `chippy-hook install` as the CLI (backup + diff + confirm) in Terminal.
+    @objc private func repairHook() {
+        guard let exe = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("chippy-hook") else { return }
+        let q = "'" + exe.path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        let script = FileManager.default.temporaryDirectory.appendingPathComponent("chippy-repair-hook.command")
+        try? "#!/bin/zsh\n\(q) install\necho\nread -k 1 '?Press any key to close.'\n".write(to: script, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        NSWorkspace.shared.open(script)
+    }
+
     func menuWillOpen(_ menu: NSMenu) {
+        repairItem.isHidden = !hookIsStale()
         // The log can be large: read it off the main thread, and only when the file changed.
         // Keyed on mtime, size and today's date, so a new day recomputes.
         let url = EventLog().url
