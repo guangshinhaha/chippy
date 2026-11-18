@@ -16,6 +16,23 @@ public struct HostInfo: Equatable {
 public enum ActivationOutcome {
     /// The jump worked when the target app is frontmost afterwards (already being frontmost counts).
     public static func isFrontmost(frontmostPid: Int32?, target: Int32) -> Bool { frontmostPid == target }
+
+    public enum Verdict: Equatable {
+        case notFrontmost
+        case landed
+        /// Frontmost, but the window check cannot say (no windows found for the host pids, e.g. helper-owned windows,
+        /// or the window list was unreadable): judged by frontmost only.
+        case landedUnverified
+        /// Frontmost, but every window of the app is on another Space (or minimised).
+        case offSpace
+    }
+
+    /// `counts` is nil when the window list could not be read. Zero windows is inconclusive, never "landed".
+    public static func verdict(frontmost: Bool, counts: WindowScan.Counts?) -> Verdict {
+        guard frontmost else { return .notFrontmost }
+        guard let c = counts, c.all > 0 else { return .landedUnverified }
+        return c.onScreen > 0 ? .landed : .offSpace
+    }
 }
 
 /// Pure ancestry walk, driven by lookup closures so it can be tested with a fake process table.
@@ -40,5 +57,25 @@ public enum ProcessTree {
             pid = p
         }
         return (nil, foundTTY)
+    }
+}
+
+/// Pure parsing of CGWindowList dictionaries.
+public enum WindowScan {
+    public struct Counts: Equatable { public var all: Int; public var onScreen: Int
+        public init(all: Int, onScreen: Int) { self.all = all; self.onScreen = onScreen } }
+
+    /// Real windows of `pids`: owner in the set, layer 0, at least 100x50. `onScreen` = on the visible Space.
+    public static func counts(in list: [[String: Any]], pids: Set<Int32>) -> Counts {
+        var c = Counts(all: 0, onScreen: 0)
+        for w in list {
+            guard let owner = (w["kCGWindowOwnerPID"] as? NSNumber)?.int32Value, pids.contains(owner),
+                  (w["kCGWindowLayer"] as? NSNumber)?.intValue == 0 else { continue }
+            let b = w["kCGWindowBounds"] as? [String: Any] ?? [:]
+            guard ((b["Width"] as? NSNumber)?.doubleValue ?? 0) >= 100, ((b["Height"] as? NSNumber)?.doubleValue ?? 0) >= 50 else { continue }
+            c.all += 1
+            if (w["kCGWindowIsOnscreen"] as? NSNumber)?.boolValue == true { c.onScreen += 1 }
+        }
+        return c
     }
 }

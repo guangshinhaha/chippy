@@ -468,6 +468,7 @@ struct OpenTerminalButton: View {
     let host: HostInfo?
     var onOpened: () -> Void = {}
     @State private var failed = false
+    @State private var offSpace = false
     @State private var busy = false
     @State private var token = 0
 
@@ -479,19 +480,21 @@ struct OpenTerminalButton: View {
     }
 
     var body: some View {
-        ChipButton(title: failed ? "Couldn't open" : "Open \(appName)",
-                   hint: failed ? "switch to it yourself" : nil, kind: .neutral) {
+        ChipButton(title: offSpace ? "On another Space" : failed ? "Couldn't open" : "Open \(appName)",
+                   hint: offSpace ? "\(appName) is frontmost; switch Space" : failed ? "switch to it yourself" : nil, kind: .neutral) {
             guard !busy else { return }
-            busy = true; failed = false; token += 1
+            busy = true; failed = false; offSpace = false; token += 1
             let mine = token
-            TerminalJump.open(host) { ok in
+            TerminalJump.open(host) { v in
+                let ok = v == .landed || v == .landedUnverified
                 busy = false
-                failed = !ok
+                offSpace = v == .offSpace
+                failed = v == .notFrontmost
                 if ok { onOpened() }
-                if !ok { DispatchQueue.main.asyncAfter(deadline: .now() + 4) { if token == mine { failed = false } } }
+                if !ok { DispatchQueue.main.asyncAfter(deadline: .now() + 4) { if token == mine { failed = false; offSpace = false } } }
             }
         }
-        .help(failed ? "Chippy couldn't bring the app forward. Switch to it from the Dock or Cmd-Tab." : "")
+        .help(offSpace ? "\(appName) is frontmost but its window is on another Space. Switch Space (Ctrl-arrow) or enable System Settings > Desktop & Dock > switch to a Space with open windows." : failed ? "Chippy couldn't bring the app forward. Switch to it from the Dock or Cmd-Tab." : "")
     }
 }
 
