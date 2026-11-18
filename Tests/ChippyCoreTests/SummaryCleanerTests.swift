@@ -133,4 +133,13 @@ final class SummaryCleanerTests: XCTestCase {
         XCTAssertNotNil(d.decision)
         XCTAssertTrue(d.replyWithoutDecision.hasSuffix("sure?"))
     }
+    func testSlashCommandKeepsArgs() {
+        let raw = "<command-message>review</command-message>\n<command-name>/review</command-name>\n<command-args>fix the auth bug</command-args>"
+        let c = SummaryCleaner.cleanPrompt(raw)
+        XCTAssertNotNil(c)
+        XCTAssertEqual(c, "/review fix the auth bug")
+    }
+    func testSlashCommandWithoutArgs() {
+        XCTAssertEqual(SummaryCleaner.cleanPrompt("<command-name>/clear</command-name><command-message>clear</command-message><command-args></command-args>"), "/clear")
+    }
 }

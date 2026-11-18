@@ -8,11 +8,11 @@ public enum SummaryCleaner {
     public static let maxDecisionChars = 200
 
     /// System markup Claude Code injects into the "prompt": the block AND its content go.
-    static let systemTags = ["task-notification", "system-reminder", "command-name", "command-message", "command-args",
+    static let systemTags = ["task-notification", "system-reminder",
                              "local-command-stdout", "local-command-stderr", "local-command-caveat", "user-prompt-submit-hook"]
     /// Tags that only ever appear as system markup (children of the blocks above). Only these are stripped when stray,
     /// so `<my-component>` in a real prompt stays.
-    static let strayTags = systemTags + ["task-id", "tool-use-id", "output-file"]
+    static let strayTags = systemTags + ["command-name", "command-message", "command-args", "task-id", "tool-use-id", "output-file"]
 
     private static func alternation(_ names: [String]) -> String {
         names.map { NSRegularExpression.escapedPattern(for: $0) }.joined(separator: "|")
@@ -55,11 +55,34 @@ public enum SummaryCleaner {
         return out + ns.substring(from: cursor)
     }
 
+    private static func firstCapture(_ tag: String, in s: String) -> String? {
+        guard let re = try? NSRegularExpression(pattern: "<\\(tag)>(.*?)</\\(tag)>", options: [.caseInsensitive, .dotMatchesLineSeparators]),
+              let m = re.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)),
+              let r = Range(m.range(at: 1), in: s) else { return nil }
+        return String(s[r])
+    }
+
+    /// A slash command arrives as <command-name>/x</command-name><command-message>..</command-message><command-args>..</command-args>.
+    /// What the user typed is "/x args": rewrite the wrappers to that text (the message block only repeats the name).
+    private static func foldSlashCommand(_ s: String) -> String {
+        guard let rawName = firstCapture("command-name", in: s) else { return s }
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return s }
+        let args = (firstCapture("command-args", in: s) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        var out = s
+        for tag in ["command-message", "command-args", "command-name"] {
+            guard let re = try? NSRegularExpression(pattern: "<\\(tag)>.*?</\\(tag)>", options: [.caseInsensitive, .dotMatchesLineSeparators]) else { continue }
+            let tpl = tag == "command-name" ? NSRegularExpression.escapedTemplate(for: " " + (name.hasPrefix("/") ? name : "/" + name) + (args.isEmpty ? "" : " " + args) + " ") : " "
+            out = re.stringByReplacingMatches(in: out, range: NSRange(out.startIndex..., in: out), withTemplate: tpl)
+        }
+        return out
+    }
+
     /// The prompt without system-notification markup, whitespace collapsed; nil when nothing readable remains.
     /// Cleans the whole text (bounded at maxInput for speed); callers cap the RESULT.
     public static func cleanPrompt(_ raw: String?) -> String? {
         guard let raw else { return nil }
-        var s = stripBlocks(String(raw.prefix(maxInput)))
+        var s = stripBlocks(foldSlashCommand(String(raw.prefix(maxInput))))
         s = replace(strayRe, in: s)
         s = s.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         return s.isEmpty ? nil : s
