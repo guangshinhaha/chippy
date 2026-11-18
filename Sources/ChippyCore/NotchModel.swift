@@ -135,7 +135,16 @@ public final class NotchModel: ObservableObject {
         guard !listOpen, !folded else { return nil } // a folded card is not on screen, so no key may answer it
         if case .pending(let id)? = focus, let r = pending.first(where: { $0.id == id }) { return r }
         if case .done? = focus { return nil }
-        return pending.first
+        return rankedPending.first
+    }
+
+    /// Pending requests in rank order (approvals, then questions, each soonest-timeout first; see `WaitingList.items`).
+    /// The shown card, the "n of N" index, the fold timer and the folded ring all follow this one order.
+    public var rankedPending: [PendingRequest] {
+        let byId = Dictionary(pending.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        var out: [PendingRequest] = waitingItems.compactMap { if case .pending(let id) = $0.target { return byId[id] } else { return nil } }
+        if out.count != pending.count { let seen = Set(out.map(\.id)); out += pending.filter { !seen.contains($0.id) } } // not yet refreshed
+        return out
     }
 
     /// The finished thread the user jumped to from the list (nil otherwise).
@@ -153,7 +162,7 @@ public final class NotchModel: ObservableObject {
         refresh()
     }
 
-    /// Badge tap: open the top "needs you" item (#93); with only finished chips, the list.
+    /// Badge tap: open the top-ranked one by hand (pins only that card, like a list jump; unfold pins all) "needs you" item (#93); with only finished chips, the list.
     public func openBadge() {
         if badgeNeedsYou, let top = waitingItems.first(where: { if case .pending = $0.target { return true } else { return false } }) { activate(top.target) }
         else { openList() }
@@ -208,11 +217,11 @@ public final class NotchModel: ObservableObject {
     /// The collapsed badge is the needs-you one (pulsing) while any approval or question is folded.
     public var badgeNeedsYou: Bool { folded && !pending.isEmpty }
 
-    /// When the soonest folded request's hook gives up and the terminal takes over (the badge ring drains to it).
+    /// When the top-ranked folded request's hook gives up and the terminal takes over (the badge ring drains to it).
     public var foldedDeadline: (start: Date, end: Date)? {
         guard folded else { return nil }
-        return pending.compactMap { r in knownTimeout(for: r).map { (r.createdAt, r.createdAt.addingTimeInterval($0)) } }
-            .min { $0.1 < $1.1 }.map { (start: $0.0, end: $0.1) }
+        guard let top = rankedPending.first, let wait = knownTimeout(for: top) else { return nil }
+        return (start: top.createdAt, end: top.createdAt.addingTimeInterval(wait))
     }
 
     /// Pin these requests as opened by hand, and show the card if the notch was folded.
@@ -221,12 +230,12 @@ public final class NotchModel: ObservableObject {
         if folded { folded = false }
     }
 
-    /// The oldest request decides: it is due and the user has pinned none. A pinned card (opened by hand) is never folded
-    /// away; while one exists the panel stays on it, the older due requests wait behind it in the list, and the moment it
-    /// is answered the panel folds (the oldest is due). Never while the list is open.
+    /// The top-ranked request decides: it is due and the user has pinned none. A pinned card (opened by hand) is never folded
+    /// away; while one exists the panel stays on it, the other due requests wait behind it in the list, and the moment it
+    /// is answered the panel folds (the top-ranked is due). Never while the list is open.
     private func foldDue(now: TimeInterval) -> Bool {
-        guard !listOpen, let oldest = pending.first, !folds.values.contains(where: \.isPinned) else { return false }
-        return folds[oldest.id]?.isDue(now: now) ?? false
+        guard !listOpen, let top = rankedPending.first, !folds.values.contains(where: \.isPinned) else { return false }
+        return folds[top.id]?.isDue(now: now) ?? false
     }
 
     /// Hook-side wait for this request, so a card can show when the terminal takes over.

@@ -97,6 +97,51 @@ final class NeedsMeFoldTests: XCTestCase {
         XCTAssertEqual(m.shownPending?.id, aid) // the approval, though the question came first
     }
 
+    func testApprovalWithLongWaitStillBeforeQuestionWithShortWait() {
+        let m = model()
+        let q = #"{"session_id":"q","hook_event_name":"PermissionRequest","cwd":"/x/q","tool_name":"AskUserQuestion","chippy_wait":5,"tool_input":{"questions":[{"question":"Q?","header":"A","multiSelect":false,"options":[{"label":"x","description":""}]}]}}"#
+        var p: [Int32] = [0, 0]; socketpair(AF_UNIX, SOCK_STREAM, 0, &p); fds.append(p)
+        m.receiveApproval(HookPayload(json: Data(q.utf8))!, Connection(fd: p[0]), now: t0)
+        let aid = ask(m, wait: 100)
+        XCTAssertEqual(m.rankedPending.first?.id, aid)
+    }
+
+    func testShownCardIndexAndFallBackFollowRank() {
+        let m = model()
+        let late = ask(m, wait: 100)   // arrived first, far from timeout
+        let soon = ask(m, wait: 10)    // arrived second, closer to timeout: ranks first
+        XCTAssertEqual(m.shownPending?.id, soon)
+        XCTAssertEqual(m.rankedPending.firstIndex { $0.id == soon }, 0) // what the "1 of 2" header reads
+        XCTAssertEqual(m.rankedPending.firstIndex { $0.id == late }, 1)
+        XCTAssertEqual(m.waitingItems.first?.target, .pending(soon))
+        m.resolve(soon, .allow, now: t0)
+        XCTAssertEqual(m.shownPending?.id, late) // the next ranked shows after answering the first
+        XCTAssertEqual(m.rankedPending.map(\.id), [late])
+    }
+
+    func testFoldTimerFollowsRankedFirst() {
+        let m = model()
+        ask(m, wait: 100)
+        advance(m, 10)
+        ask(m, wait: 20) // ranks first (due at +30 vs +100); its own 15s timer restarts
+        advance(m, 14); XCTAssertFalse(m.folded)
+        advance(m, 2); XCTAssertTrue(m.folded)
+        let d = try! XCTUnwrap(m.foldedDeadline)
+        XCTAssertEqual(d.end.timeIntervalSince(d.start), 20) // the ring follows the same request
+    }
+
+    func testBadgeTapPinsOnlyTheOpenedCard() {
+        let m = model()
+        ask(m); ask(m)
+        advance(m, 16)
+        XCTAssertTrue(m.folded)
+        m.openBadge()
+        let shown = try! XCTUnwrap(m.shownPending)
+        advance(m, 100); XCTAssertFalse(m.folded) // the opened card is pinned
+        m.resolve(shown.id, .allow, now: t0)
+        XCTAssertTrue(m.folded) // the other one was never pinned: it folds as soon as the pinned one is answered
+    }
+
     func testApprovalOpensThenFoldsToBadgeAfterFifteenSeconds() {
         let m = model()
         let id = ask(m)

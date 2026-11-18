@@ -220,7 +220,7 @@ struct NotchView: View {
         if model.shownPending == nil, model.shownDone != nil { return model.pending.isEmpty ? "Done" : "Finished" }
         if model.pending.isEmpty { return model.state.title }
         let n = model.pending.count
-        let at = model.shownPending.flatMap { r in model.pending.firstIndex { $0.id == r.id } } ?? 0
+        let at = model.shownPending.flatMap { r in model.rankedPending.firstIndex { $0.id == r.id } } ?? 0
         return n > 1 ? "Needs you · \(at + 1) of \(n)" : "Needs you"
     }
 

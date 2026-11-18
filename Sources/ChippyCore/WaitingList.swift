@@ -32,11 +32,12 @@ public enum WaitingList {
 
     /// "Needs you next" (#93): approvals, then questions, each by closeness to timeout (createdAt + `timeout`, soonest first),
     /// then terminal fallbacks (oldest first), then finished chips, newest first. Ties keep arrival order (stable).
-    /// `timeout` defaults to none, which orders by age.
+    /// `timeout` is required: the caller says how long each request waits.
     public static func items(pending: [PendingRequest], done: [DoneItem], terminal: [TerminalItem] = [],
-                             timeout: (PendingRequest) -> TimeInterval = { _ in 0 }) -> [WaitingItem] {
-        func key(_ r: PendingRequest) -> (Int, Date) { (r.questions != nil ? 1 : 0, r.createdAt.addingTimeInterval(timeout(r))) }
-        let blocking = pending.enumerated().sorted { key($0.element) != key($1.element) ? key($0.element) < key($1.element) : $0.offset < $1.offset }.map { _, r in
+                             timeout: (PendingRequest) -> TimeInterval) -> [WaitingItem] {
+        // Keys computed once per request (arrival index last, so ties stay stable).
+        let keyed = pending.enumerated().map { i, r in (r: r, kind: r.questions != nil ? 1 : 0, due: r.createdAt.addingTimeInterval(timeout(r)), i: i) }
+        let blocking = keyed.sorted { ($0.kind, $0.due, $0.i) < ($1.kind, $1.due, $1.i) }.map { $0.r }.map { r in
             WaitingItem(target: .pending(r.id), kind: r.questions != nil ? .question : .approval,
                         repo: repoName(cwd: r.cwd), at: r.createdAt)
         }
