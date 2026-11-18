@@ -50,6 +50,8 @@ public final class NotchModel: ObservableObject {
     @Published public private(set) var listOpen = false
     /// Highlighted row while the list is open (arrows move it, Return opens it).
     @Published public private(set) var listSelection: WaitingTarget?
+    /// FINISHED shows every row (the "+N more" row was opened). Resets whenever the list closes.
+    @Published public private(set) var finishedExpanded = false
     /// The item the user jumped to from the list; it is shown instead of the default card until it goes away.
     @Published public private(set) var focus: WaitingTarget?
     /// Multi-question progress per request id, so leaving a card keeps what was answered.
@@ -160,15 +162,18 @@ public final class NotchModel: ObservableObject {
         let waiting = WaitingList.items(pending: pending, done: doneItems, terminal: terminalItems, timeout: timeout(for:),
                                         label: { [identities] cwd, project in identities.label(cwd: cwd, project: project) }, // computed once per refresh
                                         resolved: { [identities] in identities.isResolved(cwd: $0) })
-        if waiting != waitingItems {
+        if !listOpen, finishedExpanded { finishedExpanded = false } // the expansion lives only while the list is open
+        if waiting != waitingItems || waitingLayout.expanded != finishedExpanded {
+            let layout = WaitingList.layout(waiting, expanded: finishedExpanded)
+            if layout.expanded != finishedExpanded { finishedExpanded = layout.expanded } // nothing left to expand: back to collapsed
             waitingItems = waiting
-            waitingLayout = WaitingList.layout(waiting)
+            waitingLayout = layout
             let byId = Dictionary(pending.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
             rankedPending = waiting.compactMap { if case .pending(let id) = $0.target { return byId[id] } else { return nil } } // stored: not rebuilt per access
         }
         guard !debugLock else { resting = false; return }
         if waiting.isEmpty { listOpen = false }
-        if listOpen { let sel = WaitingList.reconcile(listSelection, in: waitingLayout.selectable); if sel != listSelection { listSelection = sel } }
+        if listOpen { let sel = WaitingList.reconcileAmong(listSelection, in: waitingLayout.selectableTargets); if sel != listSelection { listSelection = sel } }
         if let f = focus, !waiting.contains(where: { $0.target == f }) { // the jumped-to item went away
             focus = nil
             if case .done = f { doneOpen = false } // its detail was what doneOpen showed, whether or not an approval waits
@@ -259,7 +264,7 @@ public final class NotchModel: ObservableObject {
         guard !waitingItems.isEmpty else { return }
         // No pin: folding just pauses while the list is open (foldDue), and closeList gives unpinned cards a fresh timer.
         listOpen = true
-        listSelection = WaitingList.reconcile(listSelection, in: waitingLayout.selectable)
+        listSelection = WaitingList.reconcileAmong(listSelection, in: waitingLayout.selectableTargets)
         refresh()
     }
 
@@ -280,13 +285,22 @@ public final class NotchModel: ObservableObject {
     /// Arrow keys: move the highlighted row.
     public func moveSelection(_ step: Int) {
         guard listOpen else { return }
-        listSelection = WaitingList.move(listSelection, in: waitingLayout.selectable, by: step) // one flat order; "+N more" is not in it
+        listSelection = WaitingList.moveAmong(listSelection, in: waitingLayout.selectableTargets, by: step) // one flat order: every visible row, then the "+N more" row
     }
 
     /// Return: open the highlighted row.
     public func activateSelection() {
         guard listOpen, let t = listSelection else { return }
+        if t == .moreToggle { toggleFinished(); return }
         activate(t)
+    }
+
+    /// "+N more" / "Show fewer": expand FINISHED to every row, or fold it back. The selection stays on the toggle row.
+    public func toggleFinished() {
+        guard listOpen, waitingLayout.hasToggle else { return }
+        finishedExpanded.toggle()
+        listSelection = .moreToggle
+        refresh()
     }
 
     /// Jump to one waiting item: its card, or for a done chip the existing detail.
@@ -299,6 +313,7 @@ public final class NotchModel: ObservableObject {
         case .done: doneOpen = true
         case .terminal: focus = nil; doneOpen = true // the shared card view lists every terminal chip
         case .pending: doneOpen = false
+        case .moreToggle: break // unreachable: the guard above only admits real rows
         }
         refresh()
     }

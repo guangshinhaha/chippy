@@ -5,6 +5,7 @@ public enum WaitingTarget: Hashable {
     case pending(String)   // PendingRequest.id (approval or question)
     case done(String)      // DoneItem.sessionId
     case terminal(String)  // TerminalItem.sessionId: asked in the terminal
+    case moreToggle        // the "+N more" / "Show fewer" row at the end of FINISHED
 }
 
 /// One row of the waiting list (#53). Deliberately carries no question or command text (PDPA #30):
@@ -23,12 +24,15 @@ public struct WaitingItem: Identifiable, Equatable {
     public let asksYou: Bool
     /// False while `repo` is still a folder-name fallback (#89): its identity mark must not be stored yet.
     public let resolved: Bool
+    /// One-line outcome of a finished reply (#101 follow-up), memory only, never logged. Nil: show "finished".
+    public let snippet: String?
     public var id: WaitingTarget { target }
 
     /// Needs you: something the user can act on. Finished rows are FYI.
     public var needsYou: Bool { kind != .done }
 
-    public init(target: WaitingTarget, kind: Kind, repo: String, worktree: String? = nil, at: Date, label: String? = nil, asksYou: Bool = false, resolved: Bool = true) {
+    public init(target: WaitingTarget, kind: Kind, repo: String, worktree: String? = nil, at: Date, label: String? = nil, asksYou: Bool = false, resolved: Bool = true, snippet: String? = nil) {
+        self.snippet = snippet
         self.target = target; self.kind = kind; self.repo = repo; self.worktree = worktree; self.at = at; self.asksYou = asksYou; self.resolved = resolved
         self.label = label ?? WaitingList.defaultLabel(kind)
     }
@@ -44,8 +48,16 @@ public struct WaitingLayout: Equatable {
     /// Height to give the NEEDS YOU rows; when `needsScrolls`, the rows are taller than this and scroll.
     public let needsHeight: CGFloat
     public let needsScrolls: Bool
-    /// The one flat order the arrow keys walk: NEEDS YOU, then the visible FINISHED rows.
+    /// FINISHED is showing every row (the user expanded it); `finishedHeight` is then the scrolling region's height.
+    public var expanded = false
+    public var finishedHeight: CGFloat = 0
+    public var finishedScrolls = false
+    /// A "+N more" / "Show fewer" row exists: some rows are hidden, or all are shown after expanding.
+    public var hasToggle: Bool { hiddenFinished > 0 || expanded }
+    /// The rows (no toggle): NEEDS YOU, then the visible FINISHED rows.
     public var selectable: [WaitingItem] { needs + finished }
+    /// The one flat order the arrow keys walk: every visible row, then the toggle row when there is one.
+    public var selectableTargets: [WaitingTarget] { selectable.map(\.target) + (hasToggle ? [.moreToggle] : []) }
 }
 
 /// Pure ordering, selection and labels for the waiting list.
@@ -95,9 +107,20 @@ public enum WaitingList {
         let finished = done.enumerated().sorted { ($0.element.at, $0.offset) > ($1.element.at, $1.offset) }.map { _, d -> WaitingItem in
             let l = label(d.cwd, d.project)
             return WaitingItem(target: .done(d.sessionId), kind: .done, repo: l.repo, worktree: l.worktree, at: d.at,
-                               label: d.asksYou ? "Asks you" : "Finished", asksYou: d.asksYou, resolved: resolved(d.cwd))
+                               label: d.asksYou ? "Asks you" : "Finished", asksYou: d.asksYou, resolved: resolved(d.cwd),
+                               snippet: snippet(reply: d.replyWithoutDecision))
         }
         return blocking + inTerminal + finished
+    }
+
+    public static let snippetLimit = 60
+
+    /// One-line outcome for a FINISHED row: SummaryMarkdown's outcome (headings skipped, code-only gives its first line),
+    /// first line only, tail-truncated to `snippetLimit`. Nil when the reply has nothing to say. In memory only.
+    public static func snippet(reply: String?) -> String? {
+        guard let text = SummaryMarkdown.doc(reply)?.outcomePlain else { return nil }
+        guard let line = text.split(whereSeparator: \.isNewline).map({ $0.trimmingCharacters(in: .whitespaces) }).first(where: { !$0.isEmpty }) else { return nil }
+        return line.count > snippetLimit ? String(line.prefix(snippetLimit - 1)).trimmingCharacters(in: .whitespaces) + "…" : line
     }
 
     // Row heights used to decide what fits. The view draws rows at these heights, so the cap holds without measuring.
@@ -116,7 +139,9 @@ public enum WaitingList {
     /// Split into NEEDS YOU and FINISHED and fit them under `NotchMetrics.maxExpandedHeight`.
     /// NEEDS YOU keeps #93 order and is never cut. FINISHED shows at most `maxFinished` rows; when the card would pass the
     /// cap, FINISHED shrinks first (down to just its header and "+N more"), and only then does NEEDS YOU scroll.
-    public static func layout(_ items: [WaitingItem], maxFinished: Int = WaitingList.maxFinished,
+    /// `expanded` shows every FINISHED row in a scrolling region sized from what NEEDS YOU leaves (at least one row);
+    /// it only takes effect while rows are hidden when collapsed.
+    public static func layout(_ items: [WaitingItem], maxFinished: Int = WaitingList.maxFinished, expanded: Bool = false,
                               budget: CGFloat = NotchMetrics.maxExpandedHeight - WaitingList.chrome) -> WaitingLayout {
         let needs = items.filter(\.needsYou)
         let finished = items.filter { !$0.needsYou }
@@ -128,12 +153,24 @@ public enum WaitingList {
         func gap() -> CGFloat { needs.isEmpty || finished.isEmpty ? 0 : sectionGap }
         var k = min(maxFinished, finished.count)
         while k > 0, needsBlock + gap() + finishedBlock(k) > budget { k -= 1 }
+        if expanded, finished.count > k {
+            // Header + all rows in a scrolling region + the "Show fewer" row. NEEDS YOU keeps its full height unless even
+            // one FINISHED row cannot fit beside it, and then scrolls (same order as collapsed: FINISHED gives way first).
+            let g = needs.isEmpty ? 0 : sectionGap
+            let fixed = needsBlock + g + sectionHeaderHeight + moreRowHeight
+            let full = CGFloat(finished.count) * finishedRowHeight
+            let region = min(full, max(finishedRowHeight, budget - fixed))
+            let scrolls = fixed + region > budget
+            let needsHeight = scrolls ? min(needsFull, max(0, budget - g - sectionHeaderHeight - region - moreRowHeight - sectionHeaderHeight)) : needsFull
+            return WaitingLayout(needs: needs, finished: groupedByRepo(finished), hiddenFinished: 0, totalFinished: finished.count,
+                                 needsHeight: needsHeight, needsScrolls: scrolls, expanded: true, finishedHeight: region, finishedScrolls: region < full)
+        }
         let scrolls = needsBlock + gap() + finishedBlock(k) > budget
         // Clamped: the scrolling region never takes more than what the budget leaves (so the card never passes the cap).
         let needsHeight = scrolls ? min(needsFull, max(0, budget - gap() - finishedBlock(k) - sectionHeaderHeight)) : needsFull
         let visible = Array(finished.prefix(k)) // newest k, then grouped so one repo's threads sit together
         return WaitingLayout(needs: needs, finished: groupedByRepo(visible), hiddenFinished: finished.count - k, totalFinished: finished.count,
-                             needsHeight: needsHeight, needsScrolls: scrolls)
+                             needsHeight: needsHeight, needsScrolls: scrolls, finishedHeight: CGFloat(k) * finishedRowHeight)
     }
 
     /// Rows of one repo together; repos ordered by their newest row, rows keep their order inside a repo.
@@ -150,17 +187,25 @@ public enum WaitingList {
     /// Arrow-key movement: clamps at both ends (no wrap, so the user always knows where the edge is).
     /// No selection yet starts at the first row going down, the last going up. Nil when the list is empty.
     public static func move(_ selected: WaitingTarget?, in items: [WaitingItem], by step: Int) -> WaitingTarget? {
-        guard !items.isEmpty else { return nil }
-        guard let selected, let i = items.firstIndex(where: { $0.target == selected }) else {
-            return (step < 0 ? items.last : items.first)?.target
+        moveAmong(selected, in: items.map(\.target), by: step)
+    }
+
+    public static func moveAmong(_ selected: WaitingTarget?, in targets: [WaitingTarget], by step: Int) -> WaitingTarget? {
+        guard !targets.isEmpty else { return nil }
+        guard let selected, let i = targets.firstIndex(of: selected) else {
+            return step < 0 ? targets.last : targets.first
         }
-        return items[min(max(i + step, 0), items.count - 1)].target
+        return targets[min(max(i + step, 0), targets.count - 1)]
     }
 
     /// Keep a selection valid as items come and go: unchanged if still there, else the first row.
     public static func reconcile(_ selected: WaitingTarget?, in items: [WaitingItem]) -> WaitingTarget? {
-        if let selected, items.contains(where: { $0.target == selected }) { return selected }
-        return items.first?.target
+        reconcileAmong(selected, in: items.map(\.target))
+    }
+
+    public static func reconcileAmong(_ selected: WaitingTarget?, in targets: [WaitingTarget]) -> WaitingTarget? {
+        if let selected, targets.contains(selected) { return selected }
+        return targets.first
     }
 
     /// "now", "42s", "5m", "2h", "3d". Never negative.

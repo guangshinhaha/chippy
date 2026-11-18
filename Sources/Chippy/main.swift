@@ -51,6 +51,11 @@ if let i = args.firstIndex(of: "--render-needs-finished"), i + 1 < args.count {
     exit(0)
 }
 
+if let i = args.firstIndex(of: "--render-finished-overflow"), i + 1 < args.count {
+    MainActor.assumeIsolated { Gallery.renderFinishedOverflow(to: args[i + 1]) }
+    exit(0)
+}
+
 if let i = args.firstIndex(of: "--render-badge-dot"), i + 1 < args.count {
     MainActor.assumeIsolated { Gallery.renderBadgeDot(to: args[i + 1]) }
     exit(0)

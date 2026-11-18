@@ -992,6 +992,8 @@ struct RecentListView: View {
 /// The waiting list (#53, #101): NEEDS YOU on top (act on these), FINISHED below (FYI). Rows show only the repo, a worktree
 /// tag, a verb-led label and the age, never the question or command (PDPA #30). Arrows, Return and Esc are handled by the panel.
 struct WaitingListView: View {
+    /// Set by the gallery's still renders only.
+    nonisolated(unsafe) static var staticRender = false
     @ObservedObject var model: NotchModel
 
     private func section(_ title: String, count: Int, clearAll: (() -> Void)? = nil) -> some View {
@@ -1018,6 +1020,30 @@ struct WaitingListView: View {
         }
     }
 
+    private func finishedRows(_ layout: WaitingLayout) -> some View {
+        VStack(spacing: 0) {
+            ForEach(layout.finished) { item in
+                FinishedRow(item: item, mark: model.identity(item: item), selected: model.listSelection == item.target,
+                            open: { model.activate(item.target) }, dismiss: { if case .done(let sid) = item.target { model.dismissDone(sid) } })
+                    .frame(height: WaitingList.finishedRowHeight).id(item.target)
+            }
+        }
+    }
+
+    /// "+N more" (collapsed) or "Show fewer" (expanded): a real row, reachable by arrows, Return or click.
+    private func moreRow(_ layout: WaitingLayout) -> some View {
+        let selected = model.listSelection == .moreToggle
+        let text = layout.expanded ? "Show fewer" : "+\(layout.hiddenFinished) more"
+        return Text(text).font(.caption2).foregroundStyle(.white.opacity(selected ? 0.9 : 0.55))
+            .padding(.horizontal, 10).frame(maxWidth: .infinity, minHeight: WaitingList.moreRowHeight, maxHeight: WaitingList.moreRowHeight, alignment: .leading)
+            .background(rowBackground(selected: selected, hover: false))
+            .contentShape(Rectangle()).onTapGesture { model.toggleFinished() }
+            .id(WaitingTarget.moreToggle)
+            .accessibilityLabel(layout.expanded ? "Show fewer finished" : "\(layout.hiddenFinished) more finished, show all")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction(.default) { model.toggleFinished() }
+    }
+
     var body: some View {
         let layout = model.waitingLayout
         VStack(alignment: .leading, spacing: WaitingList.sectionGap) {
@@ -1035,16 +1061,15 @@ struct WaitingListView: View {
             if layout.totalFinished > 0 {
                 VStack(alignment: .leading, spacing: 0) {
                     section("FINISHED", count: layout.totalFinished, clearAll: { model.dismissDone(nil) })
-                    ForEach(layout.finished) { item in
-                        FinishedRow(item: item, mark: model.identity(item: item), selected: model.listSelection == item.target,
-                                    open: { model.activate(item.target) }, dismiss: { if case .done(let sid) = item.target { model.dismissDone(sid) } })
-                            .frame(height: WaitingList.finishedRowHeight)
-                    }
-                    if layout.hiddenFinished > 0 {
-                        Text("+\(layout.hiddenFinished) more").font(.caption2).foregroundStyle(.white.opacity(0.5))
-                            .padding(.leading, 10).frame(height: WaitingList.moreRowHeight, alignment: .leading)
-                            .accessibilityLabel("\(layout.hiddenFinished) more finished, clear some to see them")
-                    }
+                    if layout.expanded, WaitingListView.staticRender {
+                        finishedRows(layout).frame(height: layout.finishedHeight, alignment: .top).clipped() // gallery only: ImageRenderer draws ScrollView blank
+                    } else if layout.expanded {
+                        ScrollViewReader { proxy in
+                            ScrollView { finishedRows(layout) }.frame(height: layout.finishedHeight)
+                                .onChange(of: model.listSelection) { if let t = $0 { withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(t) } } }
+                        }
+                    } else { finishedRows(layout) }
+                    if layout.hasToggle { moreRow(layout) }
                 }
             }
             Text("↑↓ move · Return open · Esc close")
@@ -1199,7 +1224,8 @@ struct FinishedRow: View {
         HStack(spacing: 10) {
             Image(systemName: "checkmark.circle").font(.caption).foregroundStyle(.white.opacity(0.45)).frame(width: 18)
             RepoTitle(repo: item.repo, worktree: item.worktree, mark: mark)
-            Text(item.asksYou ? "asks you" : "finished").font(.caption2).foregroundStyle(item.asksYou ? Color.orange : .white.opacity(0.5)).lineLimit(1).fixedSize()
+            if item.asksYou { Text("asks you").font(.caption2).foregroundStyle(Color.orange).lineLimit(1).fixedSize() }
+            Text(item.snippet ?? "finished").font(.caption2).foregroundStyle(.white.opacity(0.5)).lineLimit(1).truncationMode(.tail)
             Spacer(minLength: 6)
             Text(age).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.5))
             Button(action: dismiss) {
@@ -1216,7 +1242,7 @@ struct FinishedRow: View {
         .animation(.easeOut(duration: 0.12), value: hover)
         // One button for the row; Dismiss is its own action, not a nested element inside a button.
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(mark.map { "\($0.spoken), " } ?? "")\(item.repo)\(item.worktree.map { ", worktree \($0)" } ?? ""), \(item.asksYou ? "asks you" : "finished"), \(age)")
+        .accessibilityLabel("\(mark.map { "\($0.spoken), " } ?? "")\(item.repo)\(item.worktree.map { ", worktree \($0)" } ?? ""), \(item.asksYou ? "asks you, " : "")\(item.snippet ?? "finished"), \(age)")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction(.default, open)
         .accessibilityAction(named: "Dismiss", dismiss)
