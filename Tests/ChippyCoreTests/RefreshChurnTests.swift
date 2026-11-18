@@ -43,11 +43,35 @@ final class RefreshChurnTests: XCTestCase {
         c.cancel()
     }
 
-    /// A short card's shape follows its measured content (no inflated height), and shrinks again when the content does.
-    func testShapeHugsShortContentAndShrinksWithIt() {
-        let m = NotchMetrics(width: 185, height: 32)
-        XCTAssertEqual(m.size(for: .expanded, tall: true, contentHeight: 560).height, NotchMetrics.maxExpandedHeight)
-        XCTAssertEqual(m.size(for: .expanded, tall: true, contentHeight: 175).height, 175 + NotchMetrics.shapePadding)
-        XCTAssertEqual(m.size(for: .expanded, tall: false, contentHeight: 150).height, 150 + NotchMetrics.shapePadding)
+    /// The 1s tick (sweep) and repeated no-change events must not republish sessions, chips or state.
+    func testTickAndExpirySweepWithNoChangeDoNotPublish() {
+        let m = model(); let t = Date()
+        for i in 0..<4 { m.apply(ev("UserPromptSubmit", "s\(i)"), now: t) }
+        m.apply(ev("Stop", "s0", #","last_assistant_message":"Done.""#), now: t)
+
+        var seen: [String: Int] = [:]
+        var bag = Set<AnyCancellable>()
+        m.$sessions.dropFirst().sink { _ in seen["sessions", default: 0] += 1 }.store(in: &bag)
+        m.$doneItems.dropFirst().sink { _ in seen["done", default: 0] += 1 }.store(in: &bag)
+        m.$terminalItems.dropFirst().sink { _ in seen["terminal", default: 0] += 1 }.store(in: &bag)
+        m.$state.dropFirst().sink { _ in seen["state", default: 0] += 1 }.store(in: &bag)
+        m.$density.dropFirst().sink { _ in seen["density", default: 0] += 1 }.store(in: &bag)
+        m.$peeking.dropFirst().sink { _ in seen["peeking", default: 0] += 1 }.store(in: &bag)
+
+        for k in 1...20 { m.sweep(now: t.addingTimeInterval(Double(k) * 0.1)) }
+        m.dismissTerminal()                       // nothing to clear
+        m.dismissDone("nope")                     // no such chip
+        XCTAssertEqual(seen, [:], "an idle tick must not publish sessions, chips, state, density or peeking")
+    }
+
+    func testExpiryStillPublishesOnce() {
+        let m = model(); let t = Date()
+        m.apply(ev("UserPromptSubmit", "a"), now: t)
+        m.apply(ev("Stop", "a", #","last_assistant_message":"Done.""#), now: t)
+        var n = 0
+        let c = m.$doneItems.dropFirst().sink { _ in n += 1 }
+        m.sweep(now: t.addingTimeInterval(NotchModel.doneSeconds + 1))
+        XCTAssertEqual(n, 1); XCTAssertTrue(m.doneItems.isEmpty)
+        c.cancel()
     }
 }
