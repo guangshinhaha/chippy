@@ -58,6 +58,9 @@ public final class NotchModel: ObservableObject {
     @Published public private(set) var asleep = false
     private var idleClock = IdleClock()
     public static let doneSeconds: TimeInterval = 600
+    /// A terminal row is a guess (#101): it clears on a turn boundary, a matching PostToolUse, or "Handled". If none arrives
+    /// it is dropped after this long (30 min, the Recent TTL), longer than finished chips because it is something to act on.
+    public static let terminalSeconds: TimeInterval = 1800
     /// A finished chip is shown compact while peeking, then the island settles to collapsed (chip stays in `doneItems`).
     @Published public private(set) var peeking = false
     private var peek = PeekGate()
@@ -82,28 +85,67 @@ public final class NotchModel: ObservableObject {
     public var onSessionEnd: ((String) -> Void)?
     private let always: AlwaysStore
     private let log: EventLog
+    /// Repo + worktree labels from git, resolved off the main thread and cached per cwd (#101).
+    public let identities: RepoIdentityCache
 
     public init(state: ChippyState = .idle, density: Density = .collapsed,
                 always: AlwaysStore = AlwaysStore(), log: EventLog = EventLog(),
-                clock: @escaping () -> TimeInterval = PeekGate.monotonicNow) {
+                clock: @escaping () -> TimeInterval = PeekGate.monotonicNow,
+                identities: RepoIdentityCache = RepoIdentityCache(),
+                tick: @escaping (@escaping () -> Void) -> Void = { DispatchQueue.main.async(execute: $0) }) {
         self.clock = clock
+        self.identities = identities
         self.state = state
         self.density = density
         self.resting = density == .collapsed // no chips yet, same as refresh()
         self.always = always
         self.log = log
+        self.tick = tick
+        // A label that changed after git was read redraws the rows. Observers add up (a shared cache keeps every owner's),
+        // and a burst of resolutions becomes one refresh per runloop tick.
+        identities.addObserver { [weak self] in self?.labelsChanged() }
     }
 
+    private let tick: (@escaping () -> Void) -> Void
+    private var labelRefreshQueued = false
+    /// Bumps when a resolved repo label changed, so views that show a label outside the waiting list (Recent) redraw.
+    @Published public private(set) var labelEpoch = 0
+
+    private var refreshing = false
+    private var refreshAgain = false
+
+    private func labelsChanged() {
+        if refreshing { refreshAgain = true; return } // an inline tick must not recurse into refresh
+        guard !labelRefreshQueued else { return }
+        labelRefreshQueued = true
+        tick { [weak self] in
+            guard let self else { return }
+            self.labelRefreshQueued = false
+            self.labelEpoch += 1
+            self.refresh()
+        }
+    }
+
+    /// The one repo label for a cwd, as list rows show it: cached git result, or the folder-name fallback while it loads.
+    public func repoLabel(cwd: String, project: String) -> RepoLabel { identities.label(cwd: cwd, project: project) }
+
     private func refresh() {
-        let waiting = WaitingList.items(pending: pending, done: doneItems, terminal: terminalItems, timeout: timeout(for:)) // computed once per refresh
+        refreshing = true
+        defer {
+            refreshing = false
+            if refreshAgain { refreshAgain = false; labelsChanged() }
+        }
+        let waiting = WaitingList.items(pending: pending, done: doneItems, terminal: terminalItems, timeout: timeout(for:),
+                                        label: { [identities] cwd, project in identities.label(cwd: cwd, project: project) }) // computed once per refresh
         if waiting != waitingItems {
             waitingItems = waiting
+            waitingLayout = WaitingList.layout(waiting)
             let byId = Dictionary(pending.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
             rankedPending = waiting.compactMap { if case .pending(let id) = $0.target { return byId[id] } else { return nil } } // stored: not rebuilt per access
         }
         guard !debugLock else { resting = false; return }
         if waiting.isEmpty { listOpen = false }
-        if listOpen { let sel = WaitingList.reconcile(listSelection, in: waiting); if sel != listSelection { listSelection = sel } }
+        if listOpen { let sel = WaitingList.reconcile(listSelection, in: waitingLayout.selectable); if sel != listSelection { listSelection = sel } }
         if let f = focus, !waiting.contains(where: { $0.target == f }) { // the jumped-to item went away
             focus = nil
             if case .done = f { doneOpen = false } // its detail was what doneOpen showed, whether or not an approval waits
@@ -144,6 +186,9 @@ public final class NotchModel: ObservableObject {
 
     /// Everything waiting, in list order (see `WaitingList.items`). Recomputed once per `refresh`.
     @Published public private(set) var waitingItems: [WaitingItem] = []
+
+    /// The list cut into NEEDS YOU and FINISHED, with the FINISHED cap applied (#101). Recomputed with `waitingItems`.
+    @Published public private(set) var waitingLayout = WaitingLayout(needs: [], finished: [], hiddenFinished: 0, totalFinished: 0, needsHeight: 0, needsScrolls: false)
 
     /// The approval or question card on screen, or nil while the list or a done detail covers it.
     /// Keyboard shortcuts act on this one only, so a key never answers a card the user cannot see.
@@ -191,7 +236,7 @@ public final class NotchModel: ObservableObject {
         guard !waitingItems.isEmpty else { return }
         // No pin: folding just pauses while the list is open (foldDue), and closeList gives unpinned cards a fresh timer.
         listOpen = true
-        listSelection = WaitingList.reconcile(listSelection, in: waitingItems)
+        listSelection = WaitingList.reconcile(listSelection, in: waitingLayout.selectable)
         refresh()
     }
 
@@ -212,7 +257,7 @@ public final class NotchModel: ObservableObject {
     /// Arrow keys: move the highlighted row.
     public func moveSelection(_ step: Int) {
         guard listOpen else { return }
-        listSelection = WaitingList.move(listSelection, in: waitingItems, by: step)
+        listSelection = WaitingList.move(listSelection, in: waitingLayout.selectable, by: step) // one flat order; "+N more" is not in it
     }
 
     /// Return: open the highlighted row.
@@ -265,12 +310,23 @@ public final class NotchModel: ObservableObject {
     /// Experimental (#91): off by default. While off, ExitPlanMode goes to the terminal prompt untouched.
     public var planCardEnabled = false
 
-    /// Count shown on the collapsed notch while finished items wait (nil at 0, "9+" over 9).
-    public var badge: String? { PeekGate.badge(count: doneItems.count + (folded ? pending.count : 0)) }
+    /// Count shown on the collapsed notch: needs-you only (#101), i.e. folded approvals and questions plus terminal asks
+    /// (nil at 0, "9+" over 9). Finished chips never count.
+    public var badge: String? { PeekGate.badge(count: (folded ? pending.count : 0) + terminalItems.count) }
 
-    /// The collapsed badge is the needs-you one (pulsing) while any approval or question is folded.
-    public var badgeNeedsYou: Bool { folded && !pending.isEmpty }
+    /// Only finished items wait: a plain dot (no number), so a tap still opens something without implying work for you.
+    /// Never while an approval or question is pending (an unfolded card is on screen, so the notch is not at rest).
+    /// VoiceOver label for the dot: a finished thread that asks something is not "nothing needs you".
+    public var badgeDotLabel: String {
+        waitingItems.contains { $0.kind == .done && $0.asksYou } ? "Finished threads waiting; one asks you" : "Finished threads waiting, nothing needs you"
+    }
+    public var badgeDot: Bool { badge == nil && pending.isEmpty && !doneItems.isEmpty }
 
+    /// The collapsed badge is the needs-you one (pulsing) while any approval or question is folded, or a question
+    /// fell back to the terminal: both are the same "needs you" to the user.
+    public var badgeNeedsYou: Bool { (folded && !pending.isEmpty) || !terminalItems.isEmpty }
+
+    /// A terminal-only badge has no deadline (the hook already gave up), so it pulses without a ring.
     /// When the soonest folded request's hook gives up and the terminal takes over (the badge ring drains to it).
     /// Only requests with a known wait count; one without does not hide the others' deadline.
     public var foldedDeadline: (start: Date, end: Date)? {
@@ -398,7 +454,9 @@ public final class NotchModel: ObservableObject {
     private func noteTerminal(_ req: PendingRequest, now: Date) {
         guard !Tour.isDemo(req.sessionId) else { return }
         terminalItems.removeAll { $0.sessionId == req.sessionId }
-        terminalItems.append(TerminalItem(sessionId: req.sessionId, project: req.project, at: now, host: host(for: req), tool: req.toolName))
+        terminalItems.append(TerminalItem(sessionId: req.sessionId, project: req.project, at: now, host: host(for: req), tool: req.toolName, cwd: req.cwd))
+        // The row the user had selected turned into this terminal row (new id): selection follows it, not the top of the list.
+        if listSelection == .pending(req.id) { listSelection = .terminal(req.sessionId) }
     }
 
     /// The one path for a request whose hook went away (used by `sweep` and by a stale `resolve`/`answer`).
@@ -591,13 +649,13 @@ public final class NotchModel: ObservableObject {
         // With no reported wait (older relay) only a hang-up counts.
         let gone = pending.filter { r in (connections[r.id]?.peerGone ?? true) || (knownTimeout(for: r).map { now >= r.createdAt.addingTimeInterval($0) } ?? false) }
         let expired = doneItems.contains { now.timeIntervalSince($0.at) > Self.doneSeconds }
-            || terminalItems.contains { now.timeIntervalSince($0.at) > Self.doneSeconds }
+            || terminalItems.contains { now.timeIntervalSince($0.at) > Self.terminalSeconds }
         var r = recent
         if r.prune(now: now) { recent = r }
         if expired { // assign only on change: a no-op write still notifies
             retire(doneItems.filter { now.timeIntervalSince($0.at) > Self.doneSeconds }, now: now)
             doneItems.removeAll { now.timeIntervalSince($0.at) > Self.doneSeconds }
-            terminalItems.removeAll { now.timeIntervalSince($0.at) > Self.doneSeconds }
+            terminalItems.removeAll { now.timeIntervalSince($0.at) > Self.terminalSeconds }
             refresh()
         }
         guard !gone.isEmpty else { return }
@@ -624,7 +682,7 @@ public final class NotchModel: ObservableObject {
                 let isNew = !doneItems.contains { $0.sessionId == r.id } // a repeat Stop with no activity between is not a new chip
                 doneItems.removeAll { $0.sessionId == r.id }
                 doneItems.append(DoneItem(sessionId: r.id, project: r.project, branch: r.branch,
-                                          files: r.filesEdited.count, added: r.added, removed: r.removed, reply: r.lastReply, prompt: r.lastPrompt, at: now, host: r.host))
+                                          files: r.filesEdited.count, added: r.added, removed: r.removed, reply: r.lastReply, prompt: r.lastPrompt, at: now, host: r.host, cwd: r.cwd))
                 let quiet = silence()
                 if !quiet.isQuiet { peek.start(now: clock(), hovering: hovering) }
                 if isNew, !Tour.isDemo(r.id) { onSound?(.done, r.id, r.host ?? payload.host, quiet) }
@@ -654,6 +712,8 @@ public struct DoneItem: Identifiable, Equatable {
     public let prompt: String?
     public let at: Date
     public var host: HostInfo? = nil
+    /// Working directory, kept only to resolve the repo + worktree label (#101); never shown.
+    public let cwd: String
     /// Claude ended on a question: the thread is waiting for you, not just done. Computed once, at build.
     public let asksYou: Bool
     /// The closing question as its own line (#98a); nil when there is none. Computed once, at build.
@@ -662,10 +722,10 @@ public struct DoneItem: Identifiable, Equatable {
     public let replyWithoutDecision: String
 
     public init(sessionId: String, project: String, branch: String?, files: Int, added: Int, removed: Int,
-                reply: String?, prompt: String?, at: Date, host: HostInfo? = nil) {
+                reply: String?, prompt: String?, at: Date, host: HostInfo? = nil, cwd: String = "") {
         self.sessionId = sessionId; self.project = project; self.branch = branch
         self.files = files; self.added = added; self.removed = removed
-        self.reply = reply; self.prompt = prompt; self.at = at; self.host = host
+        self.reply = reply; self.prompt = prompt; self.at = at; self.host = host; self.cwd = cwd
         let a = SummaryCleaner.analyze(reply)
         asksYou = a.asksYou; decision = a.decision; replyWithoutDecision = a.rest
     }
@@ -678,13 +738,16 @@ public struct DoneItem: Identifiable, Equatable {
     }
 
     /// One line beside the camera. Neutral unless the user opted in to seeing the reply there.
-    public func glance(showReply: Bool) -> String {
-        if showReply { return (asksYou ? "? " : "") + "\(project): \(headline)" }
-        return "\(project) · \(asksYou ? "needs you" : "finished")"
+    /// `repo` is the resolved label (same as the list rows); it defaults to the project name.
+    public func glance(showReply: Bool, repo: String? = nil) -> String {
+        let r = repo ?? project
+        if showReply { return (asksYou ? "? " : "") + "\(r): \(headline)" }
+        return "\(r) · \(asksYou ? "needs you" : "finished")"
     }
 
     /// "repo · branch", or just the repo.
-    public var identity: String { branch.map { "\(project) · \($0)" } ?? project }
+    public var identity: String { identityLine(repo: project) }
+    public func identityLine(repo: String) -> String { branch.map { "\(repo) · \($0)" } ?? repo }
 }
 
 /// A question or approval that fell back to the terminal. Holds no content (PDPA, #30): only the repo name.
@@ -697,6 +760,9 @@ public struct TerminalItem: Identifiable, Equatable {
     public var host: HostInfo? = nil
     /// Tool name only (never shown): lets that tool's PostToolUse clear the chip.
     public let tool: String
+    /// Working directory, kept only to resolve the repo + worktree label (#101); never shown.
+    public var cwd = ""
 
-    public var glance: String { "\(project) · asked in terminal" }
+    public var glance: String { glance(repo: project) }
+    public func glance(repo: String) -> String { "\(repo) · asked in terminal" }
 }

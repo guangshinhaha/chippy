@@ -98,13 +98,13 @@ final class TerminalChipTests: XCTestCase {
         XCTAssertFalse(m.tall)
     }
 
-    func testExpiresAfterTenMinutes() {
+    func testExpiresAfterThirtyMinutes() {
         let m = model()
         let t0 = Date()
         m.receiveApproval(perm("AskUserQuestion", multi), Connection.detached())
-        m.sweep(now: t0.addingTimeInterval(NotchModel.doneSeconds - 5))
+        m.sweep(now: t0.addingTimeInterval(NotchModel.terminalSeconds - 5))
         XCTAssertEqual(m.terminalItems.count, 1)
-        m.sweep(now: t0.addingTimeInterval(NotchModel.doneSeconds + 5))
+        m.sweep(now: t0.addingTimeInterval(NotchModel.terminalSeconds + 5))
         XCTAssertTrue(m.terminalItems.isEmpty)
         XCTAssertTrue(m.resting)
     }

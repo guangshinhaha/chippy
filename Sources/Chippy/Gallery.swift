@@ -119,13 +119,7 @@ enum Gallery {
         }.padding(16).background(Color(white: 0.25))
         let all = VStack(spacing: 0) { view; variants }
         let r = ImageRenderer(content: all)
-        r.scale = 2
-        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
-              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else {
-            FileHandle.standardError.write(Data("render failed\n".utf8)); exit(1)
-        }
-        do { try png.write(to: URL(fileURLWithPath: path)) } catch { print(error); exit(1) }
-        print("wrote \(path)")
+        writePNG(r, to: path)
     }
 
     /// `Chippy --render-done-detail out.png`: the opened finished-thread card with a long reply.
@@ -165,10 +159,22 @@ enum Gallery {
     @MainActor
     private static func writeNotchPNG(_ model: NotchModel, _ m: NotchMetrics, size sz: CGSize, to path: String, note: String) {
         let r = ImageRenderer(content: NotchView(model: model, box: box(m)).frame(width: sz.width, height: sz.height).background(Color(white: 0.25)))
+        writePNG(r, to: path, note: note)
+    }
+
+    /// The one place a gallery PNG is written (2x). Any failure (render, encode, write) prints to stderr and exits 1,
+    /// and "wrote ..." is only printed once the file is on disk.
+    @MainActor
+    private static func writePNG<V: View>(_ r: ImageRenderer<V>, to path: String, note: String = "") {
         r.scale = 2
         guard let img = r.nsImage, let tiff = img.tiffRepresentation,
-              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
-        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path) \(note)")
+              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else {
+            FileHandle.standardError.write(Data("render failed: \(path)\n".utf8)); exit(1)
+        }
+        do { try png.write(to: URL(fileURLWithPath: path)) } catch {
+            FileHandle.standardError.write(Data("could not write \(path): \(error.localizedDescription)\n".utf8)); exit(1)
+        }
+        print("wrote \(path)" + (note.isEmpty ? "" : " \(note)"))
     }
 
     private static func tempLog() -> URL {
@@ -207,10 +213,7 @@ enum Gallery {
         let sz = m.size(for: .expanded, tall: model.tall)
         let qbox = box(m); qbox.contentHeight = 540 // the app measures this; a static render must be told
         let r = ImageRenderer(content: NotchView(model: model, box: qbox).frame(width: sz.width, height: 560).background(Color(white: 0.25)))
-        r.scale = 2
-        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
-              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
-        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
+        writePNG(r, to: path)
     }
     /// `Chippy --render-terminal-chip out.png`: the compact `repo · asked in terminal` chip and its opened card (sample text only).
     @MainActor
@@ -261,10 +264,7 @@ enum Gallery {
             VStack(alignment: .leading, spacing: 12) { cell(false, "compact"); cell(true, "opened") }
             mixed()
         }.padding(16).background(Color(white: 0.25)))
-        r.scale = 2
-        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
-              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
-        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
+        writePNG(r, to: path)
     }
     /// `Chippy --render-waiting out.png`: the waiting list (#53) with an approval, a question and three done chips
     /// (sample repos only; note the rows never show the command or question), second row highlighted; plus the
@@ -300,10 +300,7 @@ enum Gallery {
             }
         }.padding(16).background(Color(white: 0.25))
         let r = ImageRenderer(content: all)
-        r.scale = 2
-        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
-              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
-        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
+        writePNG(r, to: path)
     }
 
     /// `Chippy --render-resting out.png` (#85): the resting tab on three screens (awake, asleep) and the panel a click opens
@@ -355,10 +352,7 @@ enum Gallery {
         }
         let all = VStack(alignment: .leading, spacing: 16) { tabs; panels }.padding(16).background(Color(white: 0.25))
         let r = ImageRenderer(content: all)
-        r.scale = 2
-        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
-              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
-        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
+        writePNG(r, to: path)
     }
 
     /// `Chippy --render-approval out.png`: approval cards for a short Bash command with a description, an Edit, and a very long command (sample text only).
@@ -384,10 +378,7 @@ enum Gallery {
             card("Bash", ["command": long, "description": desc100], height: NotchMetrics.maxExpandedHeight, prompt: longPrompt)
         }.padding(12).background(Color(white: 0.25))
         let r = ImageRenderer(content: all)
-        r.scale = 2
-        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
-              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
-        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
+        writePNG(r, to: path)
     }
 
     /// `Chippy --render-plan out.png` (#91): the plan card short, long (folded), long (expanded), with hidden characters, and the 16-row worst case (sample text only).
@@ -471,9 +462,117 @@ enum Gallery {
             }
         }.padding(16).background(Color(white: 0.25))
         let r = ImageRenderer(content: all)
-        r.scale = 2
-        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
-              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
-        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
+        writePNG(r, to: path)
+    }
+
+    // MARK: #101 NEEDS YOU / FINISHED
+
+    /// A model with the waiting list open: `needs` rows (approval, question, terminal ask in turn) and `finished` chips.
+    /// `names` are cwd folder names under /work; the injected cache turns the worktree-style ones into repo + worktree.
+    @MainActor
+    private static func listModel(needs: Int, finished: Int, names: [String]? = nil, kinds: [String]? = nil, asksYou: Bool = false) -> NotchModel {
+        let cache = RepoIdentityCache(resolver: { cwd in
+            let n = (cwd as NSString).lastPathComponent
+            switch n {
+            case "fix-53", "fix-51": return RepoLabel(repo: "govapps", worktree: n)
+            case "verify-58b", "verify-59": return RepoLabel(repo: "factory", worktree: n)
+            default: return RepoLabel(repo: n)
+            }
+        }, background: { $0() }, deliver: { $0() })
+        let model = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: tempLog()), identities: cache)
+        let pool = ["govapps", "factory", "api-server", "docs-site", "billing-api", "login-page", "mobile-app", "web-app", "data-lab", "kiosk", "portal", "ledger"]
+        let host = NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == "com.apple.finder" } // any running app, so Jump shows
+        var hostFields: [String: Any] = [:]
+        if let host, let b = host.bundleIdentifier { hostFields = ["chippy_host_pid": Int(host.processIdentifier), "chippy_host_bundle": b] }
+        let now = Date()
+        for i in 0..<finished {
+            let name = names.map { $0[(needs + i) % $0.count] } ?? pool[(needs + i + 3) % pool.count]
+            let reply = asksYou && i == 0 ? "Done.\n\nShould I also bump the version?" : "Done."
+            model.apply(HookPayload(json: try! JSONSerialization.data(withJSONObject: ["session_id": "f\(i)", "hook_event_name": "Stop", "cwd": "/work/\(name)", "last_assistant_message": reply]))!,
+                        now: now.addingTimeInterval(Double(i - finished) * 300 - 60))
+        }
+        for i in 0..<needs {
+            let name = names.map { $0[i % $0.count] } ?? pool[i % pool.count]
+            let kind = kinds.map { $0[i % $0.count] } ?? ["approval", "question", "terminal", "approval", "terminal"][i % 5]
+            var o: [String: Any] = ["session_id": "n\(i)", "hook_event_name": "PermissionRequest", "cwd": "/work/\(name)", "chippy_wait": 120]
+            o.merge(hostFields) { $1 }
+            switch kind {
+            case "approval": o["tool_name"] = "Bash"; o["tool_input"] = ["command": "npm publish"]
+            case "question":
+                o["tool_name"] = "AskUserQuestion"
+                o["tool_input"] = ["questions": [["question": "Which one?", "header": "H", "multiSelect": false, "options": [["label": "a", "description": ""], ["label": "b", "description": ""]]],
+                                                 ["question": "And then?", "header": "H2", "multiSelect": false, "options": [["label": "c", "description": ""], ["label": "d", "description": ""]]]]]
+            default: o["tool_name"] = "AskUserQuestion"; o["tool_input"] = ["questions": [["question": "q"]]] // no options: lands in the terminal
+            }
+            model.receiveApproval(HookPayload(json: try! JSONSerialization.data(withJSONObject: o))!, Connection.detached())
+        }
+        model.openList()
+        return model
+    }
+
+    /// Estimated card height for a static render (the app measures it): fixed chrome plus the two sections the layout chose.
+    @MainActor
+    private static func listHeight(_ model: NotchModel) -> CGFloat {
+        let l = model.waitingLayout
+        let needs = l.needs.isEmpty ? 0 : WaitingList.sectionHeaderHeight + l.needsHeight
+        let fin = l.totalFinished == 0 ? 0 : WaitingList.sectionHeaderHeight + CGFloat(l.finished.count) * WaitingList.finishedRowHeight + (l.hiddenFinished > 0 ? WaitingList.moreRowHeight : 0)
+        let gap = (needs > 0 && fin > 0) ? WaitingList.sectionGap : 0
+        return min(WaitingList.chrome + needs + gap + fin + 10, NotchMetrics.maxExpandedHeight)
+    }
+
+    @MainActor
+    private static func listCell(_ model: NotchModel, _ title: String) -> some View {
+        let m = NotchMetrics.sample14
+        let b = box(m)
+        let h = listHeight(model)
+        b.contentHeight = h - 10
+        let w = m.size(for: .expanded).width
+        return VStack(alignment: .leading, spacing: 4) {
+            NotchView(model: model, box: b).frame(width: w, height: m.size(for: .expanded, contentHeight: b.contentHeight).height, alignment: .top)
+            Text("\(title) (card \(Int(h))pt of \(Int(NotchMetrics.maxExpandedHeight)))").font(.caption2).foregroundStyle(.secondary)
+        }.frame(width: w, alignment: .leading)
+    }
+
+    /// `Chippy --render-needs-finished out.png` (#101): 0/1/5 needs-you x 0/3/6 finished, the six-row screenshot case with
+    /// consistent repo + worktree labels, and the height cap (needs-you never cut; finished shrinks first, then needs-you scrolls).
+    @MainActor
+    static func renderNeedsFinished(to path: String) {
+        let grid = VStack(alignment: .leading, spacing: 16) {
+            ForEach([0, 1, 5], id: \.self) { n in
+                HStack(alignment: .top, spacing: 16) {
+                    ForEach([0, 3, 6], id: \.self) { f in
+                        if n == 0 && f == 0 {
+                            Text("0 needs you x 0 finished: nothing to list, the notch rests").font(.caption2).foregroundStyle(.secondary).frame(width: 380, height: 60)
+                        } else {
+                            listCell(listModel(needs: n, finished: f, asksYou: f == 3 && n == 1), "\(n) needs you x \(f) finished")
+                        }
+                    }
+                }
+            }
+        }
+        let six = listCell(listModel(needs: 3, finished: 3, names: ["govapps", "fix-53", "fix-51", "factory", "verify-58b", "verify-59"], kinds: ["approval", "question", "terminal"]),
+                           "six rows: govapps, fix-53, fix-51, factory, verify-58b, verify-59")
+        let caps = HStack(alignment: .top, spacing: 16) {
+            listCell(listModel(needs: 6, finished: 6), "cap: 6 needs x 6 finished, finished shrinks to 1")
+            listCell(listModel(needs: 9, finished: 6), "cap: 9 needs x 6 finished, needs-you scrolls")
+        }
+        let all = VStack(alignment: .leading, spacing: 20) { grid; HStack(alignment: .top, spacing: 16) { six; caps } }.padding(16).background(Color(white: 0.25))
+        let r = ImageRenderer(content: all)
+        writePNG(r, to: path)
+    }
+
+    /// `Chippy --render-badge-dot out.png` (#101): the collapsed notch with only finished items waiting (a dot).
+    @MainActor
+    static func renderBadgeDot(to path: String) {
+        let m = NotchMetrics.sample14
+        let dot = seededModel(count: 3, density: .collapsed, cwd: "/work/govapps")
+        let all = HStack(alignment: .top, spacing: 24) {
+            VStack(alignment: .leading, spacing: 4) {
+                NotchView(model: dot, box: box(m)).frame(width: m.size(for: .collapsed).width, height: m.size(for: .collapsed).height)
+                Text("3 finished, nothing needs you: dot (badge=\(dot.badge ?? "nil") dot=\(String(dot.badgeDot)))").font(.caption2).foregroundStyle(.secondary)
+            }
+        }.padding(16).background(Color(white: 0.25))
+        let r = ImageRenderer(content: all)
+        writePNG(r, to: path)
     }
 }

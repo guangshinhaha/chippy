@@ -36,3 +36,10 @@ Source: web research on Apple's Live Activities HIG and existing Claude Code not
 - Defaults: approval wait 60s (cap 120), question wait 120s (cap 300). Claude's own hook timeout is `max(approval, question) + 10` so our relay always times out first; otherwise Claude kills the hook at its stale limit (30s on old installs) and a question card dies mid-answer.
 - A hook is stale when its `timeout` is below that, is missing, or the command has no `--question-timeout`. Chippy checks at launch (one alert) and when the menu opens (a "Repair Claude hook" item). Repair opens Terminal and runs `chippy-hook install`: backup, diff, confirm; nothing is written without a yes.
 - Migration keeps custom values. An old default (`--timeout 20` with no question flag) becomes 60; a missing question flag becomes 120; any other `--timeout` or `--question-timeout` is kept.
+
+## Needs you vs finished (#101)
+- The list has two sections: NEEDS YOU (approvals, questions, terminal asks; #93 order, not regrouped) and FINISHED (one line each, grouped by repo, newest 3 shown then "+N more"). "Clear all" calls `dismissDone(nil)`, so items move to Recent.
+- Terminal rows offer "Jump to terminal" and "Handled". A terminal row expires after 30 minutes (`NotchModel.terminalSeconds`); finished chips stay at 10 minutes.
+- Badge counts needs-you only. Finished-only shows a dot, never a count.
+- Height cap 560: FINISHED shrinks first, then NEEDS YOU scrolls. Needs-you rows are never cut.
+- Labels are repo + worktree, read from git (pointer file to the common dir) off the main thread and cached; folder name is the fallback. Cards still show the project name.

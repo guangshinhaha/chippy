@@ -102,7 +102,7 @@ final class PeekTests: XCTestCase {
         t = 10; m.sweep()
         XCTAssertEqual(m.density, .collapsed); XCTAssertFalse(m.resting)
         XCTAssertEqual(m.doneItems.count, 1)           // still reachable, dismissable
-        XCTAssertEqual(m.badge, "1")
+        XCTAssertNil(m.badge); XCTAssertTrue(m.badgeDot) // #101: finished chips show a dot, never a count
         m.toggleOpen(); XCTAssertEqual(m.density, .expanded); XCTAssertTrue(m.doneOpen)
         m.closeDetail(); XCTAssertEqual(m.density, .collapsed)
         m.dismissDone(); XCTAssertNil(m.badge); XCTAssertTrue(m.resting)
@@ -128,7 +128,7 @@ final class PeekTests: XCTestCase {
         m.setHover(false)                          // ignored while expanded
         m.closeDetail()
         XCTAssertEqual(m.density, .collapsed)      // the peek does not come back
-        XCTAssertEqual(m.badge, "1")
+        XCTAssertNil(m.badge); XCTAssertTrue(m.badgeDot) // #101: finished chips show a dot, never a count
     }
 
     func testSweepDoesNotRefreshWhilePeekRuns() {
@@ -166,7 +166,7 @@ final class PeekTests: XCTestCase {
         t = 9; m.apply(ev("Stop", "b"), now: now)
         t = 18; m.sweep(); XCTAssertEqual(m.density, .compact)
         t = 19; m.sweep(); XCTAssertEqual(m.density, .collapsed)
-        XCTAssertEqual(m.badge, "2")
+        XCTAssertNil(m.badge); XCTAssertTrue(m.badgeDot) // #101: finished chips show a dot, never a count
     }
 
     func testApprovalsFoldToTheBadgeButStayPending() { // #86 supersedes "approvals never auto-collapse"
@@ -187,7 +187,7 @@ final class PeekTests: XCTestCase {
         t = 12; m.sweep(); XCTAssertEqual(m.density, .expanded)
         m.resolve(m.pending[0].id, .deny)
         XCTAssertEqual(m.density, .collapsed)          // the peek ran out meanwhile; the chip waits behind the badge
-        XCTAssertEqual(m.badge, "1")
+        XCTAssertNil(m.badge); XCTAssertTrue(m.badgeDot) // #101: finished chips show a dot, never a count
     }
 
     func testActiveStaysOpenPastPeek() {
@@ -201,7 +201,7 @@ final class PeekTests: XCTestCase {
         let m = model(); let now = Date()
         for i in 0..<10 { m.apply(ev("Stop", "s\(i)"), now: now) }
         t = 11; m.sweep()
-        XCTAssertEqual(m.badge, "9+")
+        XCTAssertNil(m.badge); XCTAssertTrue(m.badgeDot) // #101: finished chips show a dot, never a count
     }
 
 }

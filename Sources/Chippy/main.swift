@@ -46,6 +46,16 @@ if let i = args.firstIndex(of: "--render-waiting"), i + 1 < args.count {
     exit(0)
 }
 
+if let i = args.firstIndex(of: "--render-needs-finished"), i + 1 < args.count {
+    MainActor.assumeIsolated { Gallery.renderNeedsFinished(to: args[i + 1]) }
+    exit(0)
+}
+
+if let i = args.firstIndex(of: "--render-badge-dot"), i + 1 < args.count {
+    MainActor.assumeIsolated { Gallery.renderBadgeDot(to: args[i + 1]) }
+    exit(0)
+}
+
 if let i = args.firstIndex(of: "--render-mixed-header"), i + 1 < args.count {
     MainActor.assumeIsolated { Gallery.renderMixedHeader(to: args[i + 1]) }
     exit(0)

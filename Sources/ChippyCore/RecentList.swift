@@ -8,12 +8,14 @@ public struct RecentItem: Identifiable, Equatable {
     public let project: String
     public let at: Date
     public let host: HostInfo?
+    /// Kept only to resolve the repo + worktree label (#101); never shown.
+    public let cwd: String
 
-    public init(sessionId: String, project: String, at: Date, host: HostInfo? = nil) {
-        self.sessionId = sessionId; self.project = project.isEmpty ? "unknown" : project; self.at = at; self.host = host
+    public init(sessionId: String, project: String, at: Date, host: HostInfo? = nil, cwd: String = "") {
+        self.sessionId = sessionId; self.project = project.isEmpty ? "unknown" : project; self.at = at; self.host = host; self.cwd = cwd
     }
 
-    public init(_ done: DoneItem) { self.init(sessionId: done.sessionId, project: done.project, at: done.at, host: done.host) }
+    public init(_ done: DoneItem) { self.init(sessionId: done.sessionId, project: done.project, at: done.at, host: done.host, cwd: done.cwd) }
 }
 
 /// The last few finished threads, kept in memory only after their chip is dismissed or expires. A hard cap and a TTL

@@ -210,7 +210,7 @@ final class RestingTests: XCTestCase {
         let dump = String(describing: m.recent.items)
         XCTAssertFalse(dump.contains("SECRET-REPLY"))
         let labels = Mirror(reflecting: m.recent.items[0]).children.compactMap(\.label)
-        XCTAssertEqual(Set(labels), ["sessionId", "project", "at", "host"])
+        XCTAssertEqual(Set(labels), ["sessionId", "project", "at", "host", "cwd"]) // cwd only resolves the repo label, never shown
     }
 
     // MARK: metrics
