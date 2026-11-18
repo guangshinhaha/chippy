@@ -18,10 +18,19 @@ public struct NotchMetrics: Equatable {
     public static let minIconWing: CGFloat = 36
     /// The collapsed pill's wing: its usual 48pt, clamped to the gap so it never covers an item.
     private var collapsedWing: CGFloat { min(48, max(gap, 0)) }
-    /// False when the gap is smaller than the icon needs; the pill stays inside the gap but draws no icon.
-    public var pillShowsIcon: Bool { collapsedWing >= Self.minIconWing }
     /// False when the gap is under `MenuBarGap.minUsable` (60pt): compact then shows the collapsed pill instead.
     public var compactFits: Bool { gap >= MenuBarGap.minUsable }
+
+    /// Where the collapsed/compact indicator lives.
+    public enum Placement: Equatable {
+        case wings(CGFloat) // beside the camera, this wide on each side
+        case tab            // no room beside the camera: a small tab hanging below it
+    }
+    /// Height of the tab below the menu bar band.
+    public static let tabHeight: CGFloat = 26
+    /// Sideways while a wing can hold the icon; otherwise a tab under the camera, so the indicator never vanishes.
+    public var placement: Placement { hasNotch && collapsedWing < Self.minIconWing ? .tab : .wings(collapsedWing) }
+    public var isTab: Bool { placement == .tab }
 
     public static let none = NotchMetrics(width: 0, height: 24)
     public static let sample14 = NotchMetrics(width: 185, height: 32) // for the gallery
@@ -35,8 +44,11 @@ public struct NotchMetrics: Equatable {
     /// `contentHeight` is the measured height of the expanded card, so the shape hugs it instead of leaving dead space.
     public func size(for density: Density, tall: Bool = false, contentHeight: CGFloat = 0) -> CGSize {
         switch density {
-        case .collapsed: return CGSize(width: width + 2 * collapsedWing, height: band)
+        case .collapsed:
+            if isTab { return CGSize(width: width, height: band + Self.tabHeight) }
+            return CGSize(width: width + 2 * collapsedWing, height: band)
         case .compact:
+            if isTab { return size(for: .collapsed) }
             guard compactFits else { return size(for: .collapsed) }
             return CGSize(width: width + 2 * min(190, gap), height: band + 14)
         case .expanded: return CGSize(width: max(width + 220, tall ? 460 : 380), height: contentHeight > 0 ? min(max(contentHeight + 10, 120), Self.maxExpandedHeight) : (tall ? 470 : 300) + (height - 28))

@@ -109,4 +109,46 @@ enum Gallery {
               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
         try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
     }
+    /// `Chippy --render-tab out.png`: no room beside the camera (menu extras hug the notch), so the indicator is a tab below it.
+    /// A mock menu bar with items touching both edges and the camera in red; wings (room) vs tab (no room), per density.
+    @MainActor
+    static func renderTab(to path: String) {
+        func row(_ title: String, _ left: CGFloat, _ right: CGFloat, _ d: Density) -> some View {
+            var m = NotchMetrics.sample14; m.leftGap = left; m.rightGap = right
+            let model = NotchModel(state: .done, density: d)
+            let _ = { model.apply(HookPayload(json: Data(#"{"session_id":"s","hook_event_name":"Stop","cwd":"/demo/api-server","chippy_branch":"main"}"#.utf8))!); model.density = d }()
+            let w = NotchMetrics.sample14.size(for: .compact).width
+            return VStack(alignment: .leading, spacing: 4) {
+                ZStack(alignment: .top) {
+                    Color(white: 0.55).frame(width: w, height: 80) // desktop
+                    Color(white: 0.85).frame(width: w, height: m.band) // menu bar
+                        .frame(maxHeight: .infinity, alignment: .top)
+                    HStack(spacing: 0) { // items hugging the camera's edges
+                        RoundedRectangle(cornerRadius: 3).fill(.blue).frame(width: 60, height: 16)
+                        Spacer().frame(width: m.width + 2 * 4)
+                        RoundedRectangle(cornerRadius: 3).fill(.purple).frame(width: 60, height: 16)
+                    }.frame(maxHeight: .infinity, alignment: .top).padding(.top, 8)
+                    NotchView(model: model, box: box(m)).frame(width: w, height: 80, alignment: .top)
+                    RoundedRectangle(cornerRadius: 6).fill(Color.red.opacity(0.5)).frame(width: m.width, height: m.height)
+                        .frame(maxHeight: .infinity, alignment: .top)
+                }.frame(width: w, height: 80)
+                Text(title).font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        let all = VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                row("room: wings / collapsed", .infinity, .infinity, .collapsed)
+                row("room: wings / compact", .infinity, .infinity, .compact)
+            }
+            HStack(spacing: 12) {
+                row("no room: tab / collapsed", 4, 4, .collapsed)
+                row("no room: tab / compact", 4, 4, .compact)
+            }
+        }.padding(16).background(Color(white: 0.25))
+        let r = ImageRenderer(content: all)
+        r.scale = 2
+        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
+              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
+        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
+    }
 }

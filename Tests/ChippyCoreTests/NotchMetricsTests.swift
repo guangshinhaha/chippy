@@ -101,16 +101,46 @@ final class MenuBarGapFollowUpTests: XCTestCase {
     func testPillNeverExceedsGapAndWingMatchesFits() {
         var m = NotchMetrics.sample14
         m.leftGap = 20; m.rightGap = 200
-        XCTAssertEqual(m.wing(for: .collapsed), 20)
-        XCTAssertFalse(m.pillShowsIcon); XCTAssertFalse(m.compactFits)
-        XCTAssertEqual(m.wing(for: .compact), 20)
+        XCTAssertEqual(m.wing(for: .collapsed), 0) // no room: a tab under the camera, never a wing over an item
+        XCTAssertFalse(m.compactFits)
+        XCTAssertEqual(m.wing(for: .compact), 0)
         m.leftGap = 70
-        XCTAssertTrue(m.pillShowsIcon); XCTAssertTrue(m.compactFits); XCTAssertEqual(m.wing(for: .compact), 70)
+        XCTAssertEqual(m.placement, .wings(48)); XCTAssertTrue(m.compactFits); XCTAssertEqual(m.wing(for: .compact), 70)
     }
     func testMaxSizeIgnoresGap() {
         var m = NotchMetrics.sample14
         let full = m.maxSize
         m.leftGap = 10; m.rightGap = 10
         XCTAssertEqual(m.maxSize, full)
+    }
+}
+
+final class TabPlacementTests: XCTestCase {
+    private func m(_ l: CGFloat, _ r: CGFloat) -> NotchMetrics { var x = NotchMetrics.sample14; x.leftGap = l; x.rightGap = r; return x }
+
+    func testRoomKeepsWings() {
+        XCTAssertEqual(m(.infinity, .infinity).placement, .wings(48))
+        XCTAssertEqual(m(40, 300).placement, .wings(40)) // icon-only pill, still sideways
+        XCTAssertFalse(m(200, 200).isTab)
+    }
+    func testNoRoomBecomesTab() {
+        for (l, r) in [(CGFloat(0), CGFloat(300)), (300, 0), (10, 10), (35, 200)] {
+            let x = m(l, r)
+            XCTAssertEqual(x.placement, .tab, "\(l),\(r)")
+            for d in [Density.collapsed, .compact] {
+                XCTAssertEqual(x.size(for: d), CGSize(width: 185, height: x.band + NotchMetrics.tabHeight)) // exactly camera-wide: covers no item
+                XCTAssertGreaterThan(x.size(for: d).height, x.band) // visible below the bar
+            }
+        }
+    }
+    func testNoNotchNeverTabs() {
+        var x = NotchMetrics.none; x.leftGap = 0; x.rightGap = 0
+        XCTAssertFalse(x.isTab)
+    }
+    func testExpandedUnaffectedAndWindowFits() {
+        let x = m(0, 0), free = NotchMetrics.sample14
+        XCTAssertEqual(x.size(for: .expanded, tall: false, contentHeight: 200), free.size(for: .expanded, tall: false, contentHeight: 200))
+        XCTAssertEqual(x.maxSize, free.maxSize)
+        XCTAssertLessThanOrEqual(x.size(for: .compact).height, x.maxSize.height)
     }
 }
