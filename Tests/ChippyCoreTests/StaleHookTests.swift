@@ -23,7 +23,7 @@ final class StaleHookTests: XCTestCase {
 
     func testOldInstallIsStale() {
         let old = settings("\"\(bin)\" relay --timeout 20", timeout: 30)
-        XCTAssertEqual(SettingsInstaller.staleness(old), [.missingQuestionFlag])
+        XCTAssertEqual(SettingsInstaller.staleness(old), [.missingQuestionFlag, .legacyApprovalTimeout])
     }
 
     func testFreshInstallIsNotStale() {
@@ -55,8 +55,8 @@ final class StaleHookTests: XCTestCase {
     func testRepairKeepsCustomValues() {
         let fixed = SettingsInstaller.merged(settings("\"\(bin)\" relay --timeout 90", timeout: 30), binary: bin)
         XCTAssertEqual(hook(fixed)["command"] as? String, "\"\(bin)\" relay --timeout 90 --question-timeout 120")
-        let custom = SettingsInstaller.merged(settings("\"\(bin)\" relay --timeout 20 --question-timeout 200", timeout: 40), binary: bin)
-        XCTAssertEqual(hook(custom)["command"] as? String, "\"\(bin)\" relay --timeout 20 --question-timeout 200")
+        let custom = SettingsInstaller.merged(settings("\"\(bin)\" relay --timeout 25 --question-timeout 200", timeout: 40), binary: bin)
+        XCTAssertEqual(hook(custom)["command"] as? String, "\"\(bin)\" relay --timeout 25 --question-timeout 200")
         XCTAssertEqual(hook(custom)["timeout"] as? Int, 210)
     }
 
