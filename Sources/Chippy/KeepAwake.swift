@@ -73,7 +73,7 @@ final class KeepAwake {
     func start() {
         disabler.onIdle = { [weak self] in self?.evaluate() }
         if AwakePolicy.shouldClearOnLaunch(markerExists: disabler.markerExists) { disabler.set(false) }
-        sub = model.$state.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.evaluate() }
+        sub = model.$state.removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] _ in self?.evaluate() }
         timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             DispatchQueue.main.async { self?.evaluate() }
         }

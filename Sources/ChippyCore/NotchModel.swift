@@ -295,15 +295,20 @@ public final class NotchModel: ObservableObject {
         if p != peeking { peeking = p }
         let live = store.derivedState
         // A terminal chip never hides live work: working wins over it, it wins over done.
-        state = !pending.isEmpty ? .needsYou : (live == .working ? .working : (!terminalItems.isEmpty ? .needsYou : (doneItems.isEmpty ? live : .done)))
+        // Assign only on change: a @Published write with an equal value still notifies, and refresh runs on every hook event.
+        let newState: ChippyState = !pending.isEmpty ? .needsYou : (live == .working ? .working : (!terminalItems.isEmpty ? .needsYou : (doneItems.isEmpty ? live : .done)))
+        if newState != state { state = newState }
         // Terminal cards share the panel, so the tall one-card reply view only applies when none are showing.
-        tall = !listOpen && (shownDone != nil || (pending.isEmpty && !restOpen && doneOpen && !doneItems.isEmpty && terminalItems.isEmpty))
+        let newTall = !listOpen && (shownDone != nil || (pending.isEmpty && !restOpen && doneOpen && !doneItems.isEmpty && terminalItems.isEmpty))
+        if newTall != tall { tall = newTall }
         let r: Bool
-        if (!pending.isEmpty && !folded) || doneOpen || listOpen || restOpen { density = .expanded; r = false }
-        else if !pending.isEmpty { density = .collapsed; r = false } // folded: the needs-you badge on the collapsed notch
-        else if !terminalItems.isEmpty { density = .compact; r = false }
-        else if !doneItems.isEmpty { density = peeking ? .compact : .collapsed; r = false }
-        else { density = .collapsed; r = true }
+        let d: Density
+        if (!pending.isEmpty && !folded) || doneOpen || listOpen || restOpen { d = .expanded; r = false }
+        else if !pending.isEmpty { d = .collapsed; r = false } // folded: the needs-you badge on the collapsed notch
+        else if !terminalItems.isEmpty { d = .compact; r = false }
+        else if !doneItems.isEmpty { d = peeking ? .compact : .collapsed; r = false }
+        else { d = .collapsed; r = true }
+        if d != density { density = d }
         if r != resting { resting = r }
     }
 
@@ -809,11 +814,11 @@ public final class NotchModel: ObservableObject {
         sessions = store.rows
         // Conservative: tool events are shared with parallel/subagent calls, so only a turn boundary (prompt, Stop, end)
         // clears a terminal chip, or the PostToolUse of the same tool 2s+ after it (the ask was answered). Others stay.
-        terminalItems.removeAll { t in
+        if terminalItems.contains(where: { $0.sessionId == payload.sessionId }) { terminalItems.removeAll { t in // only when one matches: a no-op write still notifies
             guard t.sessionId == payload.sessionId else { return false }
             if Self.boundaryEvents.contains(payload.event) || payload.event == "Stop" { return true }
             return payload.event == "PostToolUse" && payload.toolName == t.tool && now.timeIntervalSince(t.at) > Self.terminalGrace
-        }
+        } }
         switch payload.event {
         case "Stop" where !payload.isAgentWorktree:
             if let r = sessions.first(where: { $0.id == payload.sessionId }) {
@@ -828,7 +833,7 @@ public final class NotchModel: ObservableObject {
         case let e where Self.boundaryEvents.contains(e) || Self.toolEvents.contains(e):
             // Only the thread itself moving on (new prompt, tool use after a Stop, or ending) clears its chip; another thread's activity must not.
             retire(doneItems.filter { $0.sessionId == payload.sessionId }, now: now) // resumed or ended: the finished chip leaves
-            doneItems.removeAll { $0.sessionId == payload.sessionId }
+            if doneItems.contains(where: { $0.sessionId == payload.sessionId }) { doneItems.removeAll { $0.sessionId == payload.sessionId } }
             if payload.event == "SessionEnd" { onSessionEnd?(payload.sessionId) }
         default: break
         }
