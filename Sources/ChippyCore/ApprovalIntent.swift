@@ -109,16 +109,49 @@ public struct ApprovalIntent: Equatable {
     /// than the card); the view keeps only a generous line-limit backstop.
     public static func preview(_ s: String, columns: Int = 40, maxRows: Int = 6) -> String {
         let lines = s.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline) // CRLF is one Character
-        var rows: [String] = []
+        // `stored` is set on every row of a logical line that is a stored marker (even if it wraps at narrow widths).
+        var rows: [(text: String, lineEnd: Bool, stored: Int?, isFirst: Bool)] = []
         for line in lines {
-            var rest = Substring(line)
-            repeat { rows.append(String(rest.prefix(columns))); rest = rest.dropFirst(columns) } while !rest.isEmpty
+            let stored = storedOmitted(String(line))
+            var rest = Substring(line), first = true
+            repeat {
+                rows.append((String(rest.prefix(columns)), false, stored, first)); first = false
+                rest = rest.dropFirst(columns)
+            } while !rest.isEmpty
+            rows[rows.count - 1].lineEnd = true
         }
         guard rows.count > maxRows else { return s }
         let tail = max(maxRows / 3, 1), head = maxRows - tail - 1
-        let hidden = rows[head..<(rows.count - tail)]
-        let note = lines.count == 1 ? "+\(hidden.reduce(0) { $0 + $1.count }) chars hidden" : "\(hidden.count) more lines hidden"
-        return (rows.prefix(head) + [marker(note)] + rows.suffix(tail)).joined(separator: "\n")
+        let range = head..<(rows.count - tail)
+        // If headTail already cut this text, its "+N chars hidden" row may fall in the dropped part: carry N through
+        // so the total never understates (original newlines inside N are already counted there).
+        var carried = 0, sawStored = false
+        for i in range {
+            if let n = rows[i].stored { sawStored = true; carried = max(carried, n) } // one stored marker per detail
+        }
+        let note: String
+        if sawStored {
+            var total = carried
+            for i in range where rows[i].stored == nil {
+                total += rows[i].text.count
+                // a line end counts as a newline, except the one inserted just before the stored marker row
+                let nextIsMarker = i + 1 < rows.count && rows[i + 1].stored != nil
+                if rows[i].lineEnd && !nextIsMarker { total += 1 }
+            }
+            note = "+\(total) chars hidden"
+        } else if lines.count == 1 {
+            note = "+\(range.reduce(0) { $0 + rows[$1].text.count }) chars hidden"
+        } else {
+            note = "\(range.count) more lines hidden"
+        }
+        return (rows[..<head].map(\.text) + [marker(note)] + rows[(rows.count - tail)...].map(\.text)).joined(separator: "\n")
+    }
+
+    /// N from a stored "⋯ +N chars hidden ⋯" row (only we produce these: `reveal` neutralises ⋯ in commands).
+    static func storedOmitted(_ row: String) -> Int? {
+        let pre = "\(markSymbol) +", suf = " chars hidden \(markSymbol)"
+        guard row.hasPrefix(pre), row.hasSuffix(suf), row.count > pre.count + suf.count else { return nil }
+        return Int(row.dropFirst(pre.count).dropLast(suf.count))
     }
 
     /// Keeps the head AND the tail of a long command for storage, so something like a trailing `| sh` is never cut
