@@ -218,7 +218,7 @@ public final class NotchModel: ObservableObject {
             let asking = Set(doneItems.filter(\.asksYou).map(\.sessionId))
             let ids = Set(d.finishedIds).subtracting(asking)
             retire(doneItems.filter { ids.contains($0.sessionId) }, now: now)
-            doneItems.removeAll { ids.contains($0.sessionId) }
+            set(\.doneItems, doneItems.filter { !ids.contains($0.sessionId) })
         }
         awaySince = nil; awayEnd = nil
         refresh()
@@ -243,6 +243,11 @@ public final class NotchModel: ObservableObject {
         guard digest(since: since, until: now) != nil else { awaySince = nil; awayEnd = nil; return } // nothing to report: no dot
         awaySince = since; awayEnd = now
         refresh()
+    }
+
+    /// Assign only when the value differs: a @Published write with an equal value still notifies every subscriber.
+    private func set<T: Equatable>(_ keyPath: ReferenceWritableKeyPath<NotchModel, T>, _ value: T) {
+        if self[keyPath: keyPath] != value { self[keyPath: keyPath] = value }
     }
 
     private func refresh() {
@@ -295,7 +300,7 @@ public final class NotchModel: ObservableObject {
         if !pending.isEmpty { restOpen = false } // an approval or question takes over; a passive chip just joins the open panel
         if !pending.isEmpty || doneOpen || listOpen || restOpen { peek.cancel() } // the user (or an approval) took over: no peek to resume on close
         let p = peek.isPeeking(now: clock())
-        if p != peeking { peeking = p }
+        set(\.peeking, p)
         let live = store.derivedState
         // A terminal chip never hides live work: working wins over it, it wins over done.
         // Assign only on change: a @Published write with an equal value still notifies, and refresh runs on every hook event.
@@ -602,7 +607,7 @@ public final class NotchModel: ObservableObject {
     /// Acknowledge one finished thread, or all of them.
     public func dismissDone(_ sessionId: String? = nil, now: Date = Date()) {
         retire(doneItems.filter { sessionId == nil || $0.sessionId == sessionId }, now: now)
-        if let sessionId { doneItems.removeAll { $0.sessionId == sessionId } } else { doneItems.removeAll() }
+        set(\.doneItems, sessionId.map { id in doneItems.filter { $0.sessionId != id } } ?? [])
         refresh()
     }
 
@@ -616,7 +621,7 @@ public final class NotchModel: ObservableObject {
 
     /// Acknowledge one terminal chip, or all of them.
     public func dismissTerminal(_ sessionId: String? = nil) {
-        if let sessionId { terminalItems.removeAll { $0.sessionId == sessionId } } else { terminalItems.removeAll() }
+        set(\.terminalItems, sessionId.map { id in terminalItems.filter { $0.sessionId != id } } ?? [])
         refresh()
     }
 
@@ -632,8 +637,9 @@ public final class NotchModel: ObservableObject {
     /// Show `repo · asked in terminal` for this request's session. Metadata only: never the question, command or input.
     private func noteTerminal(_ req: PendingRequest, now: Date) {
         guard !Tour.isDemo(req.sessionId) else { return }
-        terminalItems.removeAll { $0.sessionId == req.sessionId }
-        terminalItems.append(TerminalItem(sessionId: req.sessionId, project: req.project, at: now, host: host(for: req), tool: req.toolName, cwd: req.cwd))
+        var items = terminalItems.filter { $0.sessionId != req.sessionId }
+        items.append(TerminalItem(sessionId: req.sessionId, project: req.project, at: now, host: host(for: req), tool: req.toolName, cwd: req.cwd))
+        set(\.terminalItems, items)
         // The row the user had selected turned into this terminal row (new id): selection follows it, not the top of the list.
         if listSelection == .pending(req.id) { listSelection = .terminal(req.sessionId) }
     }
@@ -897,8 +903,8 @@ public final class NotchModel: ObservableObject {
         if r.prune(now: now) { recent = r; refresh() }
         if expired { // assign only on change: a no-op write still notifies
             retire(doneItems.filter { now.timeIntervalSince($0.at) > Self.doneSeconds }, now: now)
-            doneItems.removeAll { now.timeIntervalSince($0.at) > Self.doneSeconds }
-            terminalItems.removeAll { now.timeIntervalSince($0.at) > Self.terminalSeconds }
+            set(\.doneItems, doneItems.filter { now.timeIntervalSince($0.at) <= Self.doneSeconds })
+            set(\.terminalItems, terminalItems.filter { now.timeIntervalSince($0.at) <= Self.terminalSeconds })
             refresh()
         }
         guard !gone.isEmpty else { return }
@@ -911,21 +917,22 @@ public final class NotchModel: ObservableObject {
     public func apply(_ payload: HookPayload, now: Date = Date()) {
         idleClock.noteEvent(now: now)
         store.apply(payload, now: now)
-        sessions = store.rows
+        set(\.sessions, store.rows)
         // Conservative: tool events are shared with parallel/subagent calls, so only a turn boundary (prompt, Stop, end)
         // clears a terminal chip, or the PostToolUse of the same tool 2s+ after it (the ask was answered). Others stay.
-        if terminalItems.contains(where: { $0.sessionId == payload.sessionId }) { terminalItems.removeAll { t in // only when one matches: a no-op write still notifies
-            guard t.sessionId == payload.sessionId else { return false }
-            if Self.boundaryEvents.contains(payload.event) || payload.event == "Stop" { return true }
-            return payload.event == "PostToolUse" && payload.toolName == t.tool && now.timeIntervalSince(t.at) > Self.terminalGrace
-        } }
+        set(\.terminalItems, terminalItems.filter { t in
+            guard t.sessionId == payload.sessionId else { return true }
+            if Self.boundaryEvents.contains(payload.event) || payload.event == "Stop" { return false }
+            return !(payload.event == "PostToolUse" && payload.toolName == t.tool && now.timeIntervalSince(t.at) > Self.terminalGrace)
+        })
         switch payload.event {
         case "Stop" where !payload.isAgentWorktree:
             if let r = sessions.first(where: { $0.id == payload.sessionId }) {
                 let isNew = !doneItems.contains { $0.sessionId == r.id } // a repeat Stop with no activity between is not a new chip
-                doneItems.removeAll { $0.sessionId == r.id }
-                doneItems.append(DoneItem(sessionId: r.id, project: r.project, branch: r.branch,
+                var items = doneItems.filter { $0.sessionId != r.id }
+                items.append(DoneItem(sessionId: r.id, project: r.project, branch: r.branch,
                                           files: r.filesEdited.count, added: r.added, removed: r.removed, reply: r.lastReply, prompt: r.lastPrompt, at: now, host: r.host, cwd: r.cwd))
+                set(\.doneItems, items)
                 let quiet = silence()
                 if !quiet.isQuiet { peek.start(now: clock(), hovering: hovering) }
                 if isNew, !Tour.isDemo(r.id) { onSound?(.done, r.id, r.host ?? payload.host, quiet) }
@@ -933,7 +940,7 @@ public final class NotchModel: ObservableObject {
         case let e where Self.boundaryEvents.contains(e) || Self.toolEvents.contains(e):
             // Only the thread itself moving on (new prompt, tool use after a Stop, or ending) clears its chip; another thread's activity must not.
             retire(doneItems.filter { $0.sessionId == payload.sessionId }, now: now) // resumed or ended: the finished chip leaves
-            if doneItems.contains(where: { $0.sessionId == payload.sessionId }) { doneItems.removeAll { $0.sessionId == payload.sessionId } }
+            set(\.doneItems, doneItems.filter { $0.sessionId != payload.sessionId })
             if payload.event == "SessionEnd" { onSessionEnd?(payload.sessionId) }
         default: break
         }

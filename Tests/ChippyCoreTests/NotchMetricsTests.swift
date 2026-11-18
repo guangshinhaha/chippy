@@ -143,4 +143,12 @@ final class TabPlacementTests: XCTestCase {
         XCTAssertEqual(x.maxSize, free.maxSize)
         XCTAssertLessThanOrEqual(x.size(for: .compact).height, x.maxSize.height)
     }
+
+    /// A short card's shape follows its measured content (no inflated height), and shrinks again when the content does.
+    func testShapeHugsShortContentAndShrinksWithIt() {
+        let m = NotchMetrics(width: 185, height: 32)
+        XCTAssertEqual(m.size(for: .expanded, tall: true, contentHeight: 560).height, NotchMetrics.maxExpandedHeight)
+        XCTAssertEqual(m.size(for: .expanded, tall: true, contentHeight: 175).height, 175 + NotchMetrics.shapePadding)
+        XCTAssertEqual(m.size(for: .expanded, tall: false, contentHeight: 150).height, 150 + NotchMetrics.shapePadding)
+    }
 }
