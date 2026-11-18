@@ -154,7 +154,7 @@ final class NeedsYouFinishedTests: XCTestCase {
 
     // MARK: keys and selection
 
-    func testArrowKeysWalkOneFlatOrderAndMoreIsNotSelectable() {
+    func testArrowKeysWalkOneFlatOrderEndingOnTheMoreRow() {
         let m = model(); let t0 = Date()
         approval(m, "a"); question(m, "q")
         for i in 0..<5 { stop(m, "d\(i)", cwd: "/w/d\(i)", at: t0.addingTimeInterval(Double(i))) }
@@ -162,12 +162,13 @@ final class NeedsYouFinishedTests: XCTestCase {
         XCTAssertEqual(m.waitingLayout.hiddenFinished, 2)
         var walked: [WaitingTarget] = [m.listSelection!]
         for _ in 0..<12 { m.moveSelection(1); if let s = m.listSelection, walked.last != s { walked.append(s) } }
-        XCTAssertEqual(walked.count, 5) // 2 needs + 3 visible finished, then clamped: the 2 hidden are never reached
-        XCTAssertEqual(m.listSelection, .done("d2")) // newest three are d4, d3, d2; the newest row per repo decides group order
+        XCTAssertEqual(walked.count, 6) // 2 needs + 3 visible finished + the "+2 more" row, then clamped
+        XCTAssertEqual(m.listSelection, .moreToggle)
+        XCTAssertEqual(walked[4], .done("d2")) // newest three are d4, d3, d2; the newest row per repo decides group order
         XCTAssertTrue(walked.prefix(2).allSatisfy { if case .pending = $0 { return true } else { return false } })
         // a selected row that drops out of the visible set (cleared) reconciles to a valid row
         m.dismissDone("d2")
-        XCTAssertTrue(m.waitingLayout.selectable.contains { $0.target == m.listSelection })
+        XCTAssertTrue(m.waitingLayout.selectableTargets.contains(m.listSelection!))
     }
 
     func testClearAllMovesFinishedToRecentAndKeepsNeedsYou() {
@@ -339,5 +340,137 @@ final class NeedsYouFinishedTests: XCTestCase {
         XCTAssertEqual(byId[.done("s2")]?.worktree, "fix-53")
         XCTAssertNil(byId[.done("s1")]?.worktree)
         XCTAssertEqual(byId[.done("s1")]?.repo, byId[.done("s3")]?.repo) // same level: both are the repo
+    }
+
+    // MARK: expanding FINISHED (follow-up to #101): every row reachable
+
+    private func walk(_ m: NotchModel) -> [WaitingTarget] {
+        for _ in 0..<60 { m.moveSelection(-1) } // start from the top
+        var walked: [WaitingTarget] = [m.listSelection!]
+        for _ in 0..<60 { m.moveSelection(1); if let s = m.listSelection, walked.last != s { walked.append(s) } }
+        return walked
+    }
+
+    func testExpandingMakesAllFinishedRowsReachableByKeyboard() {
+        let m = model(); let t0 = Date()
+        approval(m, "a")
+        for i in 0..<8 { stop(m, "d\(i)", cwd: "/w/r\(i % 3)", at: t0.addingTimeInterval(Double(i))) }
+        m.openList()
+        XCTAssertEqual(m.waitingLayout.totalFinished, 8)
+        XCTAssertEqual(m.waitingLayout.hiddenFinished, 5)
+        XCTAssertEqual(walk(m).count, 1 + 3 + 1) // collapsed: 1 needs, 3 rows, the +N row
+        m.activateSelection() // on "+5 more" (walk ended there): Return expands
+        XCTAssertTrue(m.finishedExpanded)
+        XCTAssertEqual(m.waitingLayout.finished.count, 8)
+        XCTAssertEqual(m.waitingLayout.hiddenFinished, 0)
+        let order = walk(m)
+        XCTAssertEqual(order.count, 1 + 8 + 1)
+        for i in 0..<8 { XCTAssertTrue(order.contains(.done("d\(i)")), "d\(i) unreachable") }
+        XCTAssertEqual(order.last, .moreToggle)
+        XCTAssertEqual(order, m.waitingLayout.selectableTargets) // arrows walk exactly the drawn order
+    }
+
+    func testToggleCollapsesAndListCloseResets() {
+        let m = model(); let t0 = Date()
+        for i in 0..<6 { stop(m, "d\(i)", cwd: "/w/r\(i)", at: t0.addingTimeInterval(Double(i))) }
+        m.openList()
+        m.toggleFinished()
+        XCTAssertTrue(m.finishedExpanded)
+        XCTAssertEqual(m.listSelection, .moreToggle)
+        m.activateSelection() // "Show fewer"
+        XCTAssertFalse(m.finishedExpanded)
+        XCTAssertEqual(m.waitingLayout.finished.count, 3)
+        m.toggleFinished(); XCTAssertTrue(m.finishedExpanded)
+        m.closeDetail() // Esc closes the list and resets the expansion
+        XCTAssertFalse(m.listOpen); XCTAssertFalse(m.finishedExpanded); XCTAssertFalse(m.waitingLayout.expanded)
+        m.openList()
+        XCTAssertEqual(m.waitingLayout.finished.count, 3)
+        m.toggleFinished()
+        m.closeList()
+        XCTAssertFalse(m.finishedExpanded)
+    }
+
+    func testExpansionResetsWhenListEmptiesUnderDebugLock() {
+        let m = model(); let t0 = Date()
+        for i in 0..<5 { stop(m, "d\(i)", cwd: "/w/r\(i)", at: t0.addingTimeInterval(Double(i))) }
+        m.openList(); m.toggleFinished()
+        XCTAssertTrue(m.finishedExpanded)
+        m.debugLock = true
+        for i in 0..<5 { m.dismissDone("d\(i)") }
+        XCTAssertFalse(m.finishedExpanded)
+    }
+
+    func testExpandedDropsBackWhenNothingIsHiddenAnymore() {
+        let m = model(); let t0 = Date()
+        for i in 0..<5 { stop(m, "d\(i)", cwd: "/w/r\(i)", at: t0.addingTimeInterval(Double(i))) }
+        m.openList(); m.toggleFinished()
+        XCTAssertTrue(m.waitingLayout.expanded)
+        m.dismissDone("d0"); m.dismissDone("d1") // 3 left: fits collapsed, no toggle row
+        XCTAssertFalse(m.waitingLayout.expanded); XCTAssertFalse(m.waitingLayout.hasToggle)
+        XCTAssertTrue(m.waitingLayout.selectableTargets.contains(m.listSelection!)) // selection was on the vanished toggle
+    }
+
+    func testToggleDoesNothingWithoutHiddenRows() {
+        let m = model()
+        stop(m, "d0", at: Date())
+        m.openList(); m.toggleFinished()
+        XCTAssertFalse(m.finishedExpanded)
+        XCTAssertFalse(m.waitingLayout.hasToggle)
+    }
+
+    func testExpandedLayoutStaysUnderTheCapAndNeverCutsNeedsYou() {
+        for needs in [0, 1, 3, 5, 9, 20] {
+            let l = WaitingList.layout(rows(needs: needs, finished: 12), expanded: true)
+            XCTAssertEqual(l.needs.count, needs)
+            XCTAssertEqual(l.finished.count, 12, "needs \(needs)")
+            XCTAssertEqual(l.selectableTargets.count, needs + 12 + 1)
+            let gap: CGFloat = needs > 0 ? WaitingList.sectionGap : 0
+            let needsBlock = needs > 0 ? WaitingList.sectionHeaderHeight + l.needsHeight : 0
+            let total = WaitingList.chrome + needsBlock + gap + WaitingList.sectionHeaderHeight + l.finishedHeight + WaitingList.moreRowHeight
+            XCTAssertLessThanOrEqual(total, NotchMetrics.maxExpandedHeight, "needs \(needs)")
+            XCTAssertGreaterThanOrEqual(l.finishedHeight, WaitingList.finishedRowHeight)
+            if needs <= 3 { XCTAssertFalse(l.needsScrolls, "needs \(needs)") } // needs-you keeps its full height while it fits
+        }
+        XCTAssertTrue(WaitingList.layout(rows(needs: 1, finished: 12), expanded: true).finishedScrolls)
+    }
+
+    // MARK: finished outcome snippet
+
+    func testSnippetFirstLineOfTheOutcome() {
+        XCTAssertEqual(WaitingList.snippet(reply: "Fixed the redirect.\n\nAlso touched the tests."), "Fixed the redirect.")
+    }
+
+    func testSnippetSkipsHeadingAndStripsMarkdown() {
+        XCTAssertEqual(WaitingList.snippet(reply: "# Summary\n\nBumped the **SDK** to 4.2"), "Bumped the SDK to 4.2")
+    }
+
+    func testSnippetCodeOnlyUsesFirstCodeLine() {
+        XCTAssertEqual(WaitingList.snippet(reply: "```\nnpm test\nnpm run build\n```"), "npm test")
+    }
+
+    func testSnippetEmptyOrMissingReplyIsNilAndRowFallsBack() {
+        XCTAssertNil(WaitingList.snippet(reply: nil))
+        XCTAssertNil(WaitingList.snippet(reply: ""))
+        XCTAssertNil(WaitingList.snippet(reply: "  \n \n"))
+        let m = model()
+        stop(m, "d0", at: Date()) // no reply at all
+        XCTAssertNil(m.waitingItems.first?.snippet)
+    }
+
+    func testSnippetIsClippedToSixtyCharactersWithATail() {
+        let long = String(repeating: "word ", count: 40)
+        let s = WaitingList.snippet(reply: long)!
+        XCTAssertLessThanOrEqual(s.count, WaitingList.snippetLimit)
+        XCTAssertTrue(s.hasSuffix("…"))
+        XCTAssertTrue(long.hasPrefix(String(s.dropLast())))
+    }
+
+    func testFinishedRowsCarryTheirOwnSnippet() {
+        let m = model(); let t0 = Date()
+        stop(m, "a", cwd: "/w/a", at: t0, reply: "Merged the migration")
+        stop(m, "b", cwd: "/w/b", at: t0.addingTimeInterval(1), reply: "Added the timeout")
+        let byId = Dictionary(uniqueKeysWithValues: m.waitingItems.map { ($0.target, $0.snippet) })
+        XCTAssertEqual(byId[.done("a")] ?? nil, "Merged the migration")
+        XCTAssertEqual(byId[.done("b")] ?? nil, "Added the timeout")
     }
 }
