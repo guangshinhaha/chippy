@@ -194,6 +194,44 @@ final class SilencePolicyTests: XCTestCase {
         XCTAssertEqual(sounds, ["t"])               // only once
     }
 
+    func testTourDemoRequestIsNeverQuietFoldedAndKeepsEarlierMarks() {
+        var quiet = SilenceState(focus: true)
+        let m = model(); m.silence = { quiet }
+        var sounds: [String] = []; m.onSound = { _, sid, _, q in if !q.isQuiet { sounds.append(sid) } }
+        ask(m)                                        // real request, quiet-folded
+        XCTAssertTrue(m.folded)
+        ask2(m, "demo-a")                             // tour demo during Focus: must show
+        XCTAssertFalse(m.folded); XCTAssertEqual(m.density, .expanded)
+        quiet = SilenceState(); m.sweep()
+        XCTAssertEqual(sounds, ["s"])                 // the earlier real request still sounds once; demo never
+        let m2 = model(); m2.silence = { SilenceState(locked: true) }
+        ask2(m2, "demo-b")
+        XCTAssertFalse(m2.folded); XCTAssertEqual(m2.density, .expanded)
+    }
+
+    func testQuietEndKeepsMarksOfOtherRequestsNotRevealed() {
+        var quiet = SilenceState(focus: true)
+        let m = model(); m.silence = { quiet }
+        var sounds: [String] = []; m.onSound = { _, sid, _, q in if !q.isQuiet { sounds.append(sid) } }
+        ask(m); ask2(m, "t")
+        m.activate(.pending(m.pending[0].id))
+        quiet = SilenceState(); m.sweep()
+        XCTAssertEqual(sounds, ["t"])
+    }
+
+    func testStaleBackgroundRefreshCannotOverwriteNewerValue() {
+        var t = Date(timeIntervalSince1970: 100); var v = SilencePolicy.FocusReading.on
+        var queued: [() -> Void] = []
+        let c = FocusCache(ttl: 2, clock: { t }, read: { v }, async: { queued.append($0) })
+        XCTAssertTrue(c.current)
+        t = t.addingTimeInterval(1.2); _ = c.current      // half-aged: background refresh queued
+        XCTAssertEqual(queued.count, 1)
+        v = .off; c.invalidate()
+        XCTAssertFalse(c.current)                         // fresh sync read: off
+        v = .on; queued[0]()                              // late refresh finishes with a stale generation
+        XCTAssertFalse(c.current)                         // not overwritten
+    }
+
     private func ask2(_ m: NotchModel, _ sid: String) {
         var p: [Int32] = [0, 0]
         socketpair(AF_UNIX, SOCK_STREAM, 0, &p); fds.append(p)

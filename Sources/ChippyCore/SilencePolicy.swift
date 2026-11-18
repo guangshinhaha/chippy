@@ -86,6 +86,7 @@ public final class FocusCache: @unchecked Sendable {
     private var reading: SilencePolicy.FocusReading = .unknown
     private var stamp: Date = .distantPast
     private var refreshing = false
+    private var generation = 0
     private let ttl: TimeInterval
     private let read: () -> SilencePolicy.FocusReading
     private let async: (@escaping () -> Void) -> Void
@@ -97,8 +98,11 @@ public final class FocusCache: @unchecked Sendable {
         self.ttl = ttl; self.clock = clock; self.read = read; self.async = async
     }
 
-    private func store(_ r: SilencePolicy.FocusReading) {
-        lock.lock(); reading = r; stamp = clock(); refreshing = false; lock.unlock()
+    /// Stores only if no `invalidate()` happened since `gen` was taken, so a late refresh cannot overwrite a newer value.
+    private func store(_ r: SilencePolicy.FocusReading, gen: Int) {
+        lock.lock(); defer { lock.unlock() }
+        guard gen == generation else { return }
+        reading = r; stamp = clock(); refreshing = false
     }
 
     private var snapshot: SilencePolicy.FocusReading {
@@ -107,14 +111,15 @@ public final class FocusCache: @unchecked Sendable {
         let r = reading
         let prefetch = age >= ttl / 2 && age < ttl && !refreshing
         if prefetch { refreshing = true }
+        let gen = generation
         lock.unlock()
-        if age >= ttl { let fresh = read(); store(fresh); return fresh }
-        if prefetch { async { [self] in store(read()) } }
+        if age >= ttl { let fresh = read(); store(fresh, gen: gen); return fresh }
+        if prefetch { async { [self] in store(read(), gen: gen) } }
         return r
     }
 
     /// Forget the cached reading (wake, session active): the next read is synchronous.
-    public func invalidate() { lock.lock(); stamp = .distantPast; lock.unlock() }
+    public func invalidate() { lock.lock(); stamp = .distantPast; generation += 1; refreshing = false; lock.unlock() }
 
     /// Focus is on. Unknown counts as off (fail open).
     public var current: Bool { snapshot == .on }

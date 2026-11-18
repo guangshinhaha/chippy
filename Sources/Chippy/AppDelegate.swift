@@ -10,7 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// The one menu: the status item shows it, and so do the notch's right-click and gear (never rebuilt).
     private var mainMenu: NSMenu?
     private let todayItem = NSMenuItem(), weekItem = NSMenuItem()
-    private let focusHintItem = NSMenuItem(title: "Focus detection needs Full Disk Access", action: nil, keyEquivalent: "")
+    private let focusHintItem = NSMenuItem(title: "Focus detection needs Full Disk Access (open Settings)", action: #selector(openFullDiskAccess), keyEquivalent: "")
     private var server: SocketServer?
     private var sweeper: Timer?
     private var outsideClick: Any?
@@ -126,7 +126,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         for i in [todayItem, weekItem] { i.isEnabled = false; menu.addItem(i) }
-        focusHintItem.isEnabled = false; focusHintItem.isHidden = true; menu.addItem(focusHintItem)
+        focusHintItem.target = self; focusHintItem.isHidden = true; menu.addItem(focusHintItem)
         menu.addItem(.separator())
         let peek = NSMenuItem(title: "Show sessions", action: #selector(peekSessions), keyEquivalent: "")
         peek.target = self
@@ -325,6 +325,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleSounds(_ sender: NSMenuItem) {
         sounds.enabled.toggle()
         sender.state = sounds.enabled ? .on : .off
+    }
+
+    @objc private func openFullDiskAccess() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") { NSWorkspace.shared.open(url) }
     }
 
     @objc private func toggleFocusQuiet(_ sender: NSMenuItem) {

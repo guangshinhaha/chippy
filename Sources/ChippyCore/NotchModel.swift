@@ -254,7 +254,7 @@ public final class NotchModel: ObservableObject {
         let quiet = silence()
         guard !quiet.isQuiet else { return }
         let ids = pending.filter { quietFolded.contains($0.id) }
-        quietFolded = []
+        quietFolded.subtract(ids.map(\.id))
         guard !ids.isEmpty else { return }
         if folded { // already unfolded by hand: nothing to re-show, but each still sounds once below
             folded = false
@@ -409,12 +409,13 @@ public final class NotchModel: ObservableObject {
         // Read quiet state once for this event; the same value goes to the model's decisions and to the sound hook.
         let quiet = silence()
         let quietNow = quiet.isQuiet
+        let foldQuiet = quietNow && !Tour.isDemo(req.sessionId) // the onboarding tour must work during Focus/lock
         // Something is on screen or in the user's hands: a card showing, a pinned card, an opened list or rest panel.
         let onScreen = (!pending.isEmpty && !folded) || engaged || wasDoneOpen || folds.values.contains(where: \.isPinned)
-        let keepFolded = quietNow && folded && !onScreen
+        let keepFolded = foldQuiet && folded && !onScreen
         if folded, !keepFolded { // a new request auto-expands; the earlier ones, shown again with it, get a fresh timer
             folded = false
-            quietFolded = []
+            if !quietNow { quietFolded = [] } // still quiet (a demo card revealed them): they keep their once-sound for when it ends
             for id in Array(folds.keys) { folds[id]?.arrive(now: clock(), hovering: hovering, engaged: false) }
         }
         var f = NeedsMeFold()
@@ -424,7 +425,7 @@ public final class NotchModel: ObservableObject {
         connections[req.id] = conn
         // Quiet (Focus/locked): do not pop the card. A card or list the user opened by hand (engaged) stays as it is.
         // Never folds a card that is already on screen or pinned, only a notch showing nothing (or already folded).
-        if quietNow, !onScreen { folded = true; quietFolded.insert(req.id) }
+        if foldQuiet, !onScreen { folded = true; quietFolded.insert(req.id) }
         refresh()
         updateSleep(now: now)
         if !Tour.isDemo(req.sessionId) {
