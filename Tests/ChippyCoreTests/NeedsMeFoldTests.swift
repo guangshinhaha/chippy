@@ -84,6 +84,112 @@ final class NeedsMeFoldTests: XCTestCase {
     }
     private func advance(_ m: NotchModel, _ s: TimeInterval) { clockNow += s; m.sweep(now: t0) }
 
+    func testBadgeOpensTopRankedItem() {
+        let m = model()
+        let q = #"{"session_id":"q","hook_event_name":"PermissionRequest","cwd":"/x/q","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"Q?","header":"A","multiSelect":false,"options":[{"label":"x","description":""}]}]}}"#
+        var p: [Int32] = [0, 0]; socketpair(AF_UNIX, SOCK_STREAM, 0, &p); fds.append(p)
+        m.receiveApproval(HookPayload(json: Data(q.utf8))!, Connection(fd: p[0]), now: t0)
+        let aid = ask(m)
+        advance(m, 16)
+        XCTAssertTrue(m.folded)
+        m.openBadge()
+        XCTAssertFalse(m.listOpen)
+        XCTAssertEqual(m.shownPending?.id, aid) // the approval, though the question came first
+    }
+
+    func testApprovalWithLongWaitStillBeforeQuestionWithShortWait() {
+        let m = model()
+        let q = #"{"session_id":"q","hook_event_name":"PermissionRequest","cwd":"/x/q","tool_name":"AskUserQuestion","chippy_wait":5,"tool_input":{"questions":[{"question":"Q?","header":"A","multiSelect":false,"options":[{"label":"x","description":""}]}]}}"#
+        var p: [Int32] = [0, 0]; socketpair(AF_UNIX, SOCK_STREAM, 0, &p); fds.append(p)
+        m.receiveApproval(HookPayload(json: Data(q.utf8))!, Connection(fd: p[0]), now: t0)
+        let aid = ask(m, wait: 100)
+        XCTAssertEqual(m.rankedPending.first?.id, aid)
+    }
+
+    func testShownCardIsStickyAgainstHigherRankedArrival() {
+        let m = model()
+        let late = ask(m, wait: 100)   // on screen first
+        let soon = ask(m, wait: 10)    // arrives later, ranks first
+        XCTAssertEqual(m.shownPending?.id, late) // never swapped under the user's hand
+        XCTAssertEqual(m.waitingItems.first?.target, .pending(soon))
+        XCTAssertEqual(m.rankedPending.map(\.id), [soon, late])
+        m.resolve(late, .allow, now: t0)
+        XCTAssertEqual(m.shownPending?.id, soon) // rank picks again once nothing is shown
+    }
+
+    func testRankPicksTheCardAfterAnAnswer() {
+        let m = model()
+        let a = ask(m, wait: 100)
+        let b = ask(m, wait: 50)
+        let c = ask(m, wait: 10)
+        XCTAssertEqual(m.shownPending?.id, a)
+        m.resolve(a, .allow, now: t0)
+        XCTAssertEqual(m.shownPending?.id, c) // soonest to timeout, not the oldest
+        XCTAssertEqual(m.rankedPending.map(\.id), [c, b])
+    }
+
+    func testHeaderCountsFromTheRankedList() {
+        let m = model()
+        let late = ask(m, wait: 100)
+        ask(m, wait: 10)
+        XCTAssertEqual(m.shownPending?.id, late)
+        XCTAssertEqual(m.headerTitle, "Needs you \u{00B7} 2 of 2") // shown card is second in rank
+    }
+
+    func testAnsweringAJumpedToCardShowsRankFirstNext() {
+        let m = model()
+        let a = ask(m, wait: 100)
+        let b = ask(m, wait: 50)
+        let c = ask(m, wait: 10)
+        XCTAssertEqual(m.shownPending?.id, a)
+        m.openList(); m.activate(.pending(b))
+        XCTAssertEqual(m.shownPending?.id, b)
+        XCTAssertEqual(m.headerTitle, "Needs you \u{00B7} 2 of 3") // index is b's rank, not arrival order
+        m.resolve(b, .allow, now: t0)
+        XCTAssertEqual(m.shownPending?.id, c) // rank-first, not the stale sticky a
+        XCTAssertEqual(m.headerTitle, "Needs you \u{00B7} 1 of 2")
+    }
+
+    func testFoldTimerStaysWithTheOldestRequest() {
+        let m = model()
+        ask(m, wait: 100)
+        advance(m, 10)
+        ask(m, wait: 20) // ranks first, but must not restart or take over the timer
+        advance(m, 4); XCTAssertFalse(m.folded)
+        advance(m, 2); XCTAssertTrue(m.folded) // the oldest's 15s, counted from its own arrival
+    }
+
+    func testFoldedDeadlineIsSoonestKnownEvenWhenTopHasNone() throws {
+        let m = model()
+        ask(m)            // old relay: no known wait; arrives first
+        ask(m, wait: 20)
+        advance(m, 16)
+        XCTAssertTrue(m.folded)
+        let d = try XCTUnwrap(m.foldedDeadline)
+        XCTAssertEqual(d.end.timeIntervalSince(d.start), 20)
+    }
+
+    func testFoldedDeadlinePicksSoonestAmongKnown() throws {
+        let m = model()
+        ask(m, wait: 100)
+        ask(m, wait: 20)
+        advance(m, 16)
+        let d = try XCTUnwrap(m.foldedDeadline)
+        XCTAssertEqual(d.end.timeIntervalSince(d.start), 20)
+    }
+
+    func testBadgeTapPinsOnlyTheOpenedCard() {
+        let m = model()
+        ask(m); ask(m)
+        advance(m, 16)
+        XCTAssertTrue(m.folded)
+        m.openBadge()
+        let shown = try! XCTUnwrap(m.shownPending)
+        advance(m, 100); XCTAssertFalse(m.folded) // the opened card is pinned
+        m.resolve(shown.id, .allow, now: t0)
+        XCTAssertTrue(m.folded) // the other one was never pinned: it folds as soon as the pinned one is answered
+    }
+
     func testApprovalOpensThenFoldsToBadgeAfterFifteenSeconds() {
         let m = model()
         let id = ask(m)

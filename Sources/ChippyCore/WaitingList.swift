@@ -30,10 +30,14 @@ public enum WaitingList {
         return name.isEmpty || name == "/" ? "unknown" : name
     }
 
-    /// Approvals and questions first, because they block an agent (oldest first: the order they queued),
-    /// then terminal fallbacks (oldest first), then finished chips, newest first.
-    public static func items(pending: [PendingRequest], done: [DoneItem], terminal: [TerminalItem] = []) -> [WaitingItem] {
-        let blocking = pending.enumerated().sorted { ($0.element.createdAt, $0.offset) < ($1.element.createdAt, $1.offset) }.map { _, r in
+    /// "Needs you next" (#93): approvals, then questions, each by closeness to timeout (createdAt + `timeout`, soonest first),
+    /// then terminal fallbacks (oldest first), then finished chips, newest first. Ties keep arrival order (stable).
+    /// `timeout` is required: the caller says how long each request waits.
+    public static func items(pending: [PendingRequest], done: [DoneItem], terminal: [TerminalItem] = [],
+                             timeout: (PendingRequest) -> TimeInterval) -> [WaitingItem] {
+        // Keys computed once per request (arrival index last, so ties stay stable).
+        let keyed = pending.enumerated().map { i, r in (r: r, kind: r.questions != nil ? 1 : 0, due: r.createdAt.addingTimeInterval(timeout(r)), i: i) }
+        let blocking = keyed.sorted { ($0.kind, $0.due, $0.i) < ($1.kind, $1.due, $1.i) }.map { $0.r }.map { r in
             WaitingItem(target: .pending(r.id), kind: r.questions != nil ? .question : .approval,
                         repo: repoName(cwd: r.cwd), at: r.createdAt)
         }
