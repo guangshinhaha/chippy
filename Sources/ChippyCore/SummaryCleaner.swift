@@ -3,7 +3,8 @@ import Foundation
 /// On-device text cleanup for the finished/question cards (#98a). Pure; nothing is logged or sent anywhere (PDPA).
 public enum SummaryCleaner {
     /// Longest input looked at, so a huge or adversarial string cannot make the regex passes slow.
-    static let maxInput = 4000
+    static let maxInput = 100_000
+    static let maxSentenceScan = 4000
     public static let maxDecisionChars = 200
 
     /// System markup Claude Code injects into the "prompt": the block AND its content go.
@@ -16,25 +17,49 @@ public enum SummaryCleaner {
     private static func alternation(_ names: [String]) -> String {
         names.map { NSRegularExpression.escapedPattern(for: $0) }.joined(separator: "|")
     }
-    private static let blockRe = try? NSRegularExpression(
-        pattern: "<(\(alternation(systemTags)))(?:\\s[^>]*)?>[\\s\\S]*?</\\1\\s*>", options: [.caseInsensitive])
-    /// An opening system tag left after the closed blocks went: nothing closes it, so it and everything after is dropped.
-    private static let unclosedRe = try? NSRegularExpression(
-        pattern: "<(?:\(alternation(systemTags)))(?:\\s[^>]*)?>", options: [.caseInsensitive])
+    /// An opening system tag (with optional attributes).
+    private static let openRe = try? NSRegularExpression(
+        pattern: "<(\(alternation(systemTags)))(?:\\s[^>]*)?>", options: [.caseInsensitive])
     private static let strayRe = try? NSRegularExpression(
         pattern: "</?(?:\(alternation(strayTags)))(?:\\s[^>]*)?/?>", options: [.caseInsensitive])
+    private static let closeTail = try? NSRegularExpression(pattern: "^\\s*>")
+
+    /// Removes each system block with its content in one linear pass. An opening tag nothing closes drops itself and
+    /// everything after it (a regex with a lazy body would rescan to the end for every unclosed tag: quadratic).
+    private static func stripBlocks(_ s: String) -> String {
+        guard let openRe else { return s }
+        let ns = s as NSString
+        var out = ""
+        var cursor = 0
+        var from = 0
+        while from < ns.length,
+              let m = openRe.firstMatch(in: s, range: NSRange(location: from, length: ns.length - from)) {
+            let name = ns.substring(with: m.range(at: 1))
+            let closer = "</" + name
+            var search = m.range.location + m.range.length
+            var end: Int? = nil
+            while search < ns.length {
+                let r = ns.range(of: closer, options: [.caseInsensitive], range: NSRange(location: search, length: ns.length - search))
+                if r.location == NSNotFound { break }
+                let tailStart = r.location + r.length
+                let tail = ns.substring(with: NSRange(location: tailStart, length: min(ns.length - tailStart, 64)))
+                if let t = closeTail?.firstMatch(in: tail, range: NSRange(location: 0, length: (tail as NSString).length)) {
+                    end = tailStart + t.range.length; break
+                }
+                search = tailStart
+            }
+            out += ns.substring(with: NSRange(location: cursor, length: m.range.location - cursor)) + " "
+            guard let end else { return out } // unclosed: the rest goes
+            cursor = end; from = end
+        }
+        return out + ns.substring(from: cursor)
+    }
 
     /// The prompt without system-notification markup, whitespace collapsed; nil when nothing readable remains.
+    /// Cleans the whole text (bounded at maxInput for speed); callers cap the RESULT.
     public static func cleanPrompt(_ raw: String?) -> String? {
-        guard var s = raw.map({ String($0.prefix(maxInput)) }) else { return nil }
-        for _ in 0..<5 { // nested blocks: peel until stable
-            let before = s
-            s = replace(blockRe, in: s)
-            if s == before { break }
-        }
-        if let m = unclosedRe?.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)), let r = Range(m.range, in: s) {
-            s = String(s[..<r.lowerBound])
-        }
+        guard let raw else { return nil }
+        var s = stripBlocks(String(raw.prefix(maxInput)))
         s = replace(strayRe, in: s)
         s = s.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         return s.isEmpty ? nil : s
@@ -46,9 +71,9 @@ public enum SummaryCleaner {
     }
 
     private static let junk = CharacterSet(charactersIn: "*_`~>)]\"'\u{201D} ").union(.whitespacesAndNewlines)
-    private static let abbreviations: Set<String> = ["e.g", "i.e", "etc", "vs", "cf", "approx", "no", "mr", "mrs", "ms", "dr", "st", "fig", "eg", "ie"]
+    private static let abbreviations: Set<String> = ["e.g", "i.e", "etc", "vs", "cf", "approx", "mr", "mrs", "ms", "dr", "st", "fig", "eg", "ie"]
 
-    /// A "." after an abbreviation or a bare number/version ("e.g.", "v2.", "3.") does not end a sentence.
+    /// A "." after an abbreviation ("e.g.", "etc.", "Mr.") does not end a sentence.
     private static func endsSentence(_ chars: [Character], at i: Int) -> Bool {
         guard i + 1 < chars.count, chars[i + 1].isWhitespace else { return false }
         guard chars[i] == "." else { return true }
@@ -56,7 +81,6 @@ public enum SummaryCleaner {
         while j >= 0, !chars[j].isWhitespace { j -= 1 }
         let tok = String(chars[(j + 1)..<i]).trimmingCharacters(in: CharacterSet(charactersIn: "(*_\"'`")).lowercased()
         if abbreviations.contains(tok) { return false }
-        if tok.range(of: "^v?\\d+(\\.\\d+)*$", options: .regularExpression) != nil { return false }
         return true
     }
 
@@ -77,11 +101,23 @@ public enum SummaryCleaner {
     /// True when the message ends on a question (shared by "waiting for your reply" and the decision line).
     public static func endsOnQuestion(_ reply: String?) -> Bool { questionBody(reply) != nil }
 
-    /// The closing question of a final message (its last sentence, when the message ends on "?"), markdown markers
-    /// dropped and capped, plus the reply without that sentence. decision is nil when there is no usable question.
+    /// asksYou, the closing question and the reply body, all from ONE questionBody call.
+    public static func analyze(_ reply: String?) -> (asksYou: Bool, decision: String?, rest: String) {
+        guard let qb = questionBody(reply) else { return (false, nil, reply ?? "") }
+        let s = split(qb)
+        return (true, s.decision, s.rest)
+    }
+
     public static func splitDecision(_ reply: String?) -> (decision: String?, rest: String) {
-        guard let (full, body, trailing) = questionBody(reply) else { return (nil, reply ?? "") }
-        let chars = Array(String(body.suffix(maxInput)))
+        let a = analyze(reply); return (a.decision, a.rest)
+    }
+
+    /// The closing question of a final message (its last sentence, when the message ends on "?"), markdown markers
+    /// dropped and capped. rest is the reply without that sentence, but only when the sentence is shown whole: a
+    /// truncated decision leaves the full sentence in the body.
+    private static func split(_ qb: (full: String, body: String, trailing: Int)) -> (decision: String?, rest: String) {
+        let (full, body, trailing) = qb
+        let chars = Array(String(body.suffix(maxSentenceScan)))
         var start = 0
         var i = chars.count - 1
         while i >= 0 {
@@ -94,9 +130,10 @@ public enum SummaryCleaner {
         q = q.trimmingCharacters(in: CharacterSet(charactersIn: "#>-*_( ").union(.whitespacesAndNewlines))
         q = q.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         guard q.count >= 3, !q.contains("://") else { return (nil, full) }
-        // Everything from the sentence start to the end of the text (trailing markdown included) is the decision.
+        let shown = TranscriptTail.truncate(q + "?", to: maxDecisionChars)
+        if (q + "?").count > maxDecisionChars { return (shown, full) }
         let rest = String(full.dropLast((chars.count - start) + trailing)).trimmingCharacters(in: .whitespacesAndNewlines)
-        return (TranscriptTail.truncate(q + "?", to: maxDecisionChars), rest)
+        return (shown, rest)
     }
 
     public static func closingDecision(_ reply: String?) -> String? { splitDecision(reply).decision }

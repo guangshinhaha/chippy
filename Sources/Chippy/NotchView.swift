@@ -388,7 +388,7 @@ struct ApprovalCard: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(req.branch.map { "\(req.project) · \($0)" } ?? req.project)
                 .font(.caption.bold()).foregroundStyle(.white.opacity(0.85))
-            if let p = req.lastPrompt {
+            if let p = req.lastPrompt, !p.isEmpty {
                 Text("“\(p)”").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
             }
             if let intent = req.intent {
@@ -562,7 +562,7 @@ struct QuestionCard: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(req.branch.map { "\(req.project) · \($0)" } ?? req.project)
                 .font(.caption.bold()).foregroundStyle(.white.opacity(0.85))
-            if let p = req.lastPrompt {
+            if let p = req.lastPrompt, !p.isEmpty {
                 Text("You asked: \(p)").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
             }
             // Short card: hugs its content. Tall one: this part scrolls at a FIXED height (a flexible one would
@@ -642,7 +642,7 @@ struct DoneCard: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(item.identity + (item.asksYou ? " · waiting for your reply" : " · finished"))
                 .font(.caption.bold()).foregroundStyle(item.asksYou ? Color.orange : .white)
-            if full, let p = item.prompt {
+            if full, let p = item.prompt, !p.isEmpty {
                 Text("You asked: \(p)").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
             }
             if full, let d = item.decision {

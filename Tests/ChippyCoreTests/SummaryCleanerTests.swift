@@ -45,9 +45,12 @@ final class SummaryCleanerTests: XCTestCase {
         let d = DoneItem(sessionId: "s", project: "p", branch: nil, files: 0, added: 0, removed: 0, reply: "Fixed it.\n\nShip it?", prompt: nil, at: Date())
         XCTAssertEqual(d.replyWithoutDecision, "Fixed it.")
     }
-    func testAbbreviationsAndVersionsDoNotSplit() {
-        XCTAssertEqual(SummaryCleaner.closingDecision("Done. Should I use a cache, e.g. Redis, or upgrade to v2. Then retry?"),
-                       "Should I use a cache, e.g. Redis, or upgrade to v2. Then retry?")
+    func testAbbreviationsDoNotSplitButNumbersAndNoDo() {
+        XCTAssertEqual(SummaryCleaner.closingDecision("Done. Should I use a cache, e.g. Redis, or Mr. Smith's way?"),
+                       "Should I use a cache, e.g. Redis, or Mr. Smith's way?")
+        XCTAssertEqual(SummaryCleaner.closingDecision("Add tests, docs, etc. Should I proceed?"), "Add tests, docs, etc. Should I proceed?")
+        XCTAssertEqual(SummaryCleaner.closingDecision("The build was no. Want me to retry?"), "Want me to retry?")
+        XCTAssertEqual(SummaryCleaner.closingDecision("Tried v2. Want me to retry?"), "Want me to retry?")
         XCTAssertEqual(SummaryCleaner.closingDecision("Done. Bump to 1.5 or keep it?"), "Bump to 1.5 or keep it?")
     }
     func testFenceParityOverWholeText() {
@@ -102,5 +105,32 @@ final class SummaryCleanerTests: XCTestCase {
         let d = DoneItem(sessionId: "s", project: "p", branch: nil, files: 0, added: 0, removed: 0, reply: "Done. Merge it?", prompt: "<task-id>x</task-id>", at: Date())
         XCTAssertEqual(d.decision, "Merge it?")
         XCTAssertEqual(SummaryCleaner.cleanPrompt(d.prompt), "x")
+    }
+    func testPreviousPromptKeptWhenNewOneIsAllMarkup() {
+        func send(_ prompt: String) -> HookPayload {
+            HookPayload(json: Data((#"{"session_id":"s","hook_event_name":"UserPromptSubmit","cwd":"/a","prompt":"\#(prompt)"}"#).utf8))!
+        }
+        var store = SessionStore()
+        store.apply(send("Real task"))
+        store.apply(send("<task-notification>x</task-notification>"))
+        XCTAssertEqual(store.rows.first?.lastPrompt, "Real task")
+    }
+    func testCleanThenCapNotCapThenClean() {
+        let s = String(repeating: "a ", count: 3000) + "<task-notification>z</task-notification> tail"
+        XCTAssertTrue(SummaryCleaner.cleanPrompt(s)?.hasSuffix("tail") ?? false)
+    }
+    func testManyUnclosedTagsFast() {
+        let s = String(repeating: "x <command-name> ", count: 6000)
+        let t = Date()
+        XCTAssertEqual(SummaryCleaner.cleanPrompt(s), "x")
+        XCTAssertLessThan(Date().timeIntervalSince(t), 2)
+        let closedMix = String(repeating: "<system-reminder>a</system-reminder> y ", count: 2500)
+        XCTAssertLessThan(SummaryCleaner.cleanPrompt(closedMix)?.count ?? 0, 6000)
+    }
+    func testTruncatedDecisionKeepsFullSentenceInBody() {
+        let q = String(repeating: "really ", count: 100) + "sure?"
+        let d = DoneItem(sessionId: "s", project: "p", branch: nil, files: 0, added: 0, removed: 0, reply: "Done.\n" + q, prompt: nil, at: Date())
+        XCTAssertNotNil(d.decision)
+        XCTAssertTrue(d.replyWithoutDecision.hasSuffix("sure?"))
     }
 }

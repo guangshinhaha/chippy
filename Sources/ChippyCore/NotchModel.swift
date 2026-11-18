@@ -529,10 +529,8 @@ public struct DoneItem: Identifiable, Equatable {
         self.sessionId = sessionId; self.project = project; self.branch = branch
         self.files = files; self.added = added; self.removed = removed
         self.reply = reply; self.prompt = prompt; self.at = at; self.host = host
-        asksYou = SummaryCleaner.endsOnQuestion(reply)
-        let s = SummaryCleaner.splitDecision(reply)
-        decision = s.decision
-        replyWithoutDecision = s.rest
+        let a = SummaryCleaner.analyze(reply)
+        asksYou = a.asksYou; decision = a.decision; replyWithoutDecision = a.rest
     }
 
     /// First non-empty line of the reply, for the one-line glance.

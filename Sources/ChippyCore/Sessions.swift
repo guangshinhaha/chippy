@@ -48,7 +48,7 @@ public struct SessionStore {
             rows[i].status = .idle; rows[i].detail = "Session started"
         case "UserPromptSubmit":
             rows[i].status = .working; rows[i].detail = "Thinking"
-            rows[i].lastPrompt = SummaryCleaner.cleanPrompt(p.prompt).map { String($0.prefix(140)) } // clean BEFORE truncating: a cut block would leak
+            if let c = SummaryCleaner.cleanPrompt(p.prompt) { rows[i].lastPrompt = String(c.prefix(140)) } // clean BEFORE truncating; a prompt that is all markup keeps the previous real one
         case "PreToolUse", "PostToolUse":
             rows[i].status = .working
             if let tool = p.toolName { rows[i].detail = describe(tool, p) }
