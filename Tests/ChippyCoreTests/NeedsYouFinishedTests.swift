@@ -120,6 +120,30 @@ final class NeedsYouFinishedTests: XCTestCase {
         XCTAssertLessThanOrEqual(WaitingList.sectionHeaderHeight + onlyNeeds.needsHeight + WaitingList.chrome, NotchMetrics.maxExpandedHeight)
     }
 
+    func testGroupOrderIsDecidedByTheNewestRowPerRepo() {
+        let t = Date()
+        func f(_ id: String, _ repo: String, _ age: Double) -> WaitingItem { WaitingItem(target: .done(id), kind: .done, repo: repo, at: t.addingTimeInterval(-age)) }
+        let l = WaitingList.groupedByRepo([f("1", "a", 1), f("2", "b", 2), f("3", "c", 3), f("4", "b", 4), f("5", "a", 5)])
+        XCTAssertEqual(l.map(\.target), [.done("1"), .done("5"), .done("2"), .done("4"), .done("3")])
+    }
+
+    func testDotLabelSaysWhenAFinishedThreadAsksYou() {
+        let m = model()
+        stop(m, "d1", cwd: "/w/a", reply: "All done.")
+        XCTAssertEqual(m.badgeDotLabel, "Finished threads waiting, nothing needs you")
+        stop(m, "d2", cwd: "/w/b", reply: "Shall I go ahead with the migration?")
+        XCTAssertEqual(m.badgeDotLabel, "Finished threads waiting; one asks you")
+    }
+
+    func testLabelChangeInsideRefreshDoesNotRecurse() {
+        // Everything inline: resolving a label inside refresh() notifies the model while it is still refreshing.
+        let cache = RepoIdentityCache(resolver: { _ in RepoLabel(repo: "govapps", worktree: "fix-1") }, background: { $0() }, deliver: { $0() })
+        let m = model(identities: cache, tick: { $0() })
+        stop(m, "d1", cwd: "/w/fix-1")
+        XCTAssertEqual(m.waitingItems.first?.repo, "govapps")
+        XCTAssertEqual(m.waitingItems.first?.worktree, "fix-1")
+    }
+
     func testFinishedRowsGroupedByRepoNewestGroupFirst() {
         let t = Date()
         func f(_ id: String, _ repo: String, _ age: Double) -> WaitingItem { WaitingItem(target: .done(id), kind: .done, repo: repo, at: t.addingTimeInterval(-age)) }
@@ -139,7 +163,7 @@ final class NeedsYouFinishedTests: XCTestCase {
         var walked: [WaitingTarget] = [m.listSelection!]
         for _ in 0..<12 { m.moveSelection(1); if let s = m.listSelection, walked.last != s { walked.append(s) } }
         XCTAssertEqual(walked.count, 5) // 2 needs + 3 visible finished, then clamped: the 2 hidden are never reached
-        XCTAssertEqual(m.listSelection, .done("d2")) // newest three are d4, d3, d2; grouped order keeps recency
+        XCTAssertEqual(m.listSelection, .done("d2")) // newest three are d4, d3, d2; the newest row per repo decides group order
         XCTAssertTrue(walked.prefix(2).allSatisfy { if case .pending = $0 { return true } else { return false } })
         // a selected row that drops out of the visible set (cleared) reconciles to a valid row
         m.dismissDone("d2")

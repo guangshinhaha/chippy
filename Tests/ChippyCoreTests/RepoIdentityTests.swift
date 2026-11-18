@@ -71,6 +71,26 @@ final class RepoIdentityTests: XCTestCase {
         XCTAssertEqual(RepoResolver.fallback(cwd: "/x/chippy/.claude/worktrees/agent-1"), RepoLabel(repo: "chippy", worktree: "agent-1"))
     }
 
+    func testLinkedWorktreeNamedLikeTheRepoStillGetsATag() throws {
+        let (_, w) = try linked(main: "orca/chippy", wt: "wt/chippy", name: "chippy2")
+        let label = RepoResolver.resolve(cwd: w.path)
+        XCTAssertEqual(label, RepoLabel(repo: "chippy", worktree: "wt/chippy"))
+        let main = RepoResolver.resolve(cwd: root.appendingPathComponent("orca/chippy").path)
+        XCTAssertNil(main.worktree)
+    }
+
+    func testChangeNotificationUsesTheLatestCallersFallback() {
+        var queued: [() -> Void] = []
+        var redraws = 0
+        let cache = RepoIdentityCache(resolver: { _ in RepoLabel(repo: "second") }, background: { queued.append($0) }, deliver: { $0() })
+        cache.addObserver { redraws += 1 }
+        _ = cache.label(cwd: "/w/x", project: "first")  // shown "first"
+        _ = cache.label(cwd: "/w/x", project: "second") // same cwd, but path gives the folder name; fb equal both times
+        _ = cache.label(cwd: "", project: "")
+        queued.removeFirst()()
+        XCTAssertEqual(redraws, 1) // resolved "second" differs from what the latest caller saw ("x")
+    }
+
     func testBrokenPointerFileFallsBack() throws {
         let w = try dir("odd")
         try "not a pointer".write(to: w.appendingPathComponent(".git"), atomically: true, encoding: .utf8)

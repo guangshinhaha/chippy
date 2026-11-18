@@ -55,7 +55,10 @@ public enum RepoResolver {
                 var repo = common.lastPathComponent == ".git" ? common.deletingLastPathComponent().lastPathComponent : common.lastPathComponent
                 if repo.hasSuffix(".git") && repo.count > 4 { repo = String(repo.dropLast(4)) } // bare repo "foo.git"
                 guard !repo.isEmpty, repo != "/" else { return fb }
-                return RepoLabel(repo: repo, worktree: root == repo ? nil : root)
+                // A linked worktree always carries a tag, even when its folder shares the repo's name (~/wt/chippy for ~/orca/chippy).
+                if root != repo { return RepoLabel(repo: repo, worktree: root) }
+                let parent = dir.deletingLastPathComponent().lastPathComponent
+                return RepoLabel(repo: repo, worktree: parent.isEmpty || parent == "/" ? "linked" : "\(parent)/\(root)")
             }
             let up = dir.deletingLastPathComponent()
             if up.path == dir.path { break }
@@ -74,6 +77,8 @@ public final class RepoIdentityCache {
     private let lock = NSLock()
     private var labels: [String: Entry] = [:]
     private var inflight: Set<String> = []
+    /// What the latest caller was shown while no resolved label existed (its own fallback), per in-flight cwd.
+    private var shownWhileLoading: [String: RepoLabel] = [:]
     private var seq = 0
     private var observers: [() -> Void] = []
     private let resolver: (String) -> RepoLabel
@@ -105,13 +110,15 @@ public final class RepoIdentityCache {
         let hit = labels[cwd]
         let stale = hit.map { t.timeIntervalSince($0.at) >= Self.ttl } ?? true
         let start = stale && inflight.insert(cwd).inserted
+        if hit == nil, inflight.contains(cwd) { shownWhileLoading[cwd] = fb }
         lock.unlock()
         if start {
             background { [weak self] in
                 guard let self else { return }
                 let found = self.resolver(cwd)
                 self.lock.lock()
-                let shown = self.labels[cwd]?.label ?? fb
+                let shown = self.labels[cwd]?.label ?? self.shownWhileLoading[cwd] ?? fb
+                self.shownWhileLoading[cwd] = nil
                 if self.labels[cwd] == nil, self.labels.count >= Self.capacity,
                    let oldest = self.labels.min(by: { $0.value.seq < $1.value.seq })?.key { self.labels[oldest] = nil }
                 self.seq += 1

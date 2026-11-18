@@ -111,7 +111,11 @@ public final class NotchModel: ObservableObject {
     /// Bumps when a resolved repo label changed, so views that show a label outside the waiting list (Recent) redraw.
     @Published public private(set) var labelEpoch = 0
 
+    private var refreshing = false
+    private var refreshAgain = false
+
     private func labelsChanged() {
+        if refreshing { refreshAgain = true; return } // an inline tick must not recurse into refresh
         guard !labelRefreshQueued else { return }
         labelRefreshQueued = true
         tick { [weak self] in
@@ -126,6 +130,11 @@ public final class NotchModel: ObservableObject {
     public func repoLabel(cwd: String, project: String) -> RepoLabel { identities.label(cwd: cwd, project: project) }
 
     private func refresh() {
+        refreshing = true
+        defer {
+            refreshing = false
+            if refreshAgain { refreshAgain = false; labelsChanged() }
+        }
         let waiting = WaitingList.items(pending: pending, done: doneItems, terminal: terminalItems, timeout: timeout(for:),
                                         label: { [identities] cwd, project in identities.label(cwd: cwd, project: project) }) // computed once per refresh
         if waiting != waitingItems {
@@ -286,6 +295,10 @@ public final class NotchModel: ObservableObject {
 
     /// Only finished items wait: a plain dot (no number), so a tap still opens something without implying work for you.
     /// Never while an approval or question is pending (an unfolded card is on screen, so the notch is not at rest).
+    /// VoiceOver label for the dot: a finished thread that asks something is not "nothing needs you".
+    public var badgeDotLabel: String {
+        waitingItems.contains { $0.kind == .done && $0.asksYou } ? "Finished threads waiting; one asks you" : "Finished threads waiting, nothing needs you"
+    }
     public var badgeDot: Bool { badge == nil && pending.isEmpty && !doneItems.isEmpty }
 
     /// The collapsed badge is the needs-you one (pulsing) while any approval or question is folded, or a question

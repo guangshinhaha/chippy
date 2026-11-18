@@ -71,6 +71,7 @@ struct CountBadge: View {
     /// Tap opens the waiting list (#53). The hit area is larger than the 16pt capsule.
     var onTap: () -> Void = {}
     var needsYou = false
+    var dotLabel = "Finished threads waiting, nothing needs you"
     var deadline: (start: Date, end: Date)? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pulse = false
@@ -87,7 +88,7 @@ struct CountBadge: View {
             .contentShape(Rectangle())
             .onTapGesture(perform: onTap)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Finished threads waiting, nothing needs you")
+            .accessibilityLabel(dotLabel)
             .accessibilityHint("Opens the list of everything waiting")
             .accessibilityAddTraits(.isButton)
     }
@@ -264,7 +265,7 @@ struct NotchView: View {
                     HStack(spacing: 0) {
                         Color.clear.frame(width: off)
                         CountBadge(text: badge, maxWidth: m.width - off - 8, onTap: { model.openBadge() },
-                                   needsYou: model.badgeNeedsYou, deadline: model.foldedDeadline) // stays inside the tab
+                                   needsYou: model.badgeNeedsYou, dotLabel: model.badgeDotLabel, deadline: model.foldedDeadline) // stays inside the tab
                         Spacer(minLength: 0)
                     }.frame(height: NotchMetrics.tabHeight)
                 }
@@ -275,7 +276,7 @@ struct NotchView: View {
                     Color.clear.frame(width: wing)
                     Color.clear.frame(width: m.width)
                     CountBadge(text: badge, maxWidth: wing - 8, onTap: { model.openBadge() },
-                                   needsYou: model.badgeNeedsYou, deadline: model.foldedDeadline).frame(width: wing)
+                                   needsYou: model.badgeNeedsYou, dotLabel: model.badgeDotLabel, deadline: model.foldedDeadline).frame(width: wing)
                 }
                 .frame(height: m.band, alignment: .center)
                 .frame(maxHeight: .infinity, alignment: .top)
@@ -976,7 +977,7 @@ struct FinishedRow: View {
             Button(action: dismiss) {
                 Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.white.opacity(0.7)).frame(width: 20, height: 24).contentShape(Rectangle())
             }
-            .buttonStyle(.plain).opacity(hover || selected ? 1 : 0).help("Dismiss (moves to Recent)").accessibilityLabel("Dismiss")
+            .buttonStyle(.plain).opacity(hover || selected ? 1 : 0).allowsHitTesting(hover || selected).help("Dismiss (moves to Recent)").accessibilityLabel("Dismiss")
         }
         .padding(.horizontal, 10)
         .background(rowBackground(selected: selected, hover: hover))

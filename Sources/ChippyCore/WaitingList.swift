@@ -135,8 +135,12 @@ public enum WaitingList {
     /// Rows of one repo together; repos ordered by their newest row, rows keep their order inside a repo.
     static func groupedByRepo(_ rows: [WaitingItem]) -> [WaitingItem] {
         var order: [String] = []
-        for r in rows where !order.contains(r.repo) { order.append(r.repo) }
-        return order.flatMap { repo in rows.filter { $0.repo == repo } }
+        var buckets: [String: [WaitingItem]] = [:]
+        for r in rows {
+            if buckets[r.repo] == nil { order.append(r.repo) }
+            buckets[r.repo, default: []].append(r)
+        }
+        return order.flatMap { buckets[$0] ?? [] }
     }
 
     /// Arrow-key movement: clamps at both ends (no wrap, so the user always knows where the edge is).
