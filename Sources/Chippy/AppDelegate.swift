@@ -21,9 +21,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var menuGen = 0
     private lazy var tour = TourRunner(model: model)
     private lazy var keepAwake = KeepAwake(model: model)
+    private let sounds = SoundPlayer()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         panel = NotchPanel(model: model)
+        model.onSound = { [weak self] kind, id, host in self?.sounds.handle(kind, sessionId: id, host: host) }
         buildMenu()
         startServer()
         startShortcuts()
@@ -112,6 +114,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let glance = NSMenuItem(title: "Show reply text beside the camera", action: #selector(toggleGlance(_:)), keyEquivalent: "")
         glance.target = self; glance.state = model.showReplyInGlance ? .on : .off
         menu.addItem(glance)
+        let soundItem = NSMenuItem(title: "Play sounds", action: #selector(toggleSounds(_:)), keyEquivalent: "")
+        soundItem.target = self; soundItem.state = sounds.enabled ? .on : .off
+        menu.addItem(soundItem)
         let tourItem = NSMenuItem(title: "Show me how it works", action: #selector(runTour), keyEquivalent: "")
         tourItem.target = self
         menu.addItem(tourItem)
@@ -197,6 +202,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleGlance(_ sender: NSMenuItem) {
         model.showReplyInGlance.toggle()
         sender.state = model.showReplyInGlance ? .on : .off
+    }
+
+    @objc private func toggleSounds(_ sender: NSMenuItem) {
+        sounds.enabled.toggle()
+        sender.state = sounds.enabled ? .on : .off
     }
 
     @objc private func peekSessions() { model.toggleOpen() }
