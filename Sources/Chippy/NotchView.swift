@@ -5,9 +5,10 @@ import SwiftUI
 struct StateIcon: View {
     let state: ChippyState
     var size: CGFloat = 18
+    var sleeping = false
 
     var body: some View {
-        ChipmunkView(state: state).frame(width: size * 1.4, height: size * 1.4)
+        ChipmunkView(state: state, sleeping: sleeping).frame(width: size * 1.4, height: size * 1.4)
     }
 }
 
@@ -97,7 +98,7 @@ struct NotchView: View {
         let big: CGFloat = 28 * 1.4
         let small = NotchMetrics.glanceIcon
         let open = model.density == .expanded
-        return ChipmunkView(state: model.state).frame(width: big, height: big)
+        return ChipmunkView(state: model.state, sleeping: model.asleep).frame(width: big, height: big)
             .scaleEffect(open ? 1 : small / big, anchor: .topLeading)
             .offset(x: iconX(open: open, small: small, size: size), y: open ? m.height + 2 : m.isTab ? m.band + (NotchMetrics.tabHeight - small) / 2 : (m.band - small) / 2)
             .frame(width: size.width, height: size.height, alignment: .topLeading)

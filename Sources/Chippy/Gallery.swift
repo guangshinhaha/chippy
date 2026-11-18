@@ -19,6 +19,12 @@ enum Gallery {
 
     @MainActor
     static func render(to path: String) {
+        // The asleep sample: built once here (isolated store/log), a quiet session. No side effects in the view body.
+        let sleepy = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("gal-sleep.jsonl")))
+        sleepy.apply(HookPayload(json: Data(#"{"session_id":"s","hook_event_name":"Stop","cwd":"/demo/api-server"}"#.utf8))!, now: .distantPast)
+        sleepy.dismissDone()
+        sleepy.toggleOpen() // peek open so the mascot is visible
+        sleepy.sweep(now: Date().addingTimeInterval(400))
         let view = VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) { // all 4 v1 states, side by side
                 ForEach(ChippyState.allCases, id: \.self) { s in
@@ -27,6 +33,17 @@ enum Gallery {
                         Text(s.title).font(.caption).foregroundStyle(.white)
                     }
                     .background(Color(white: 0.12))
+                }
+            }
+            HStack(alignment: .top, spacing: 12) { // idle-sleep pose (#54): static, and in the notch after a quiet 5 min
+                VStack {
+                    ChipmunkView(state: .idle, sleeping: true).frame(width: 300, height: 200)
+                    Text("Asleep (static)").font(.caption).foregroundStyle(.white)
+                }.background(Color(white: 0.12))
+                let m = NotchMetrics.sample14
+                VStack(spacing: 4) {
+                    NotchView(model: sleepy, box: box(m)).frame(width: m.size(for: .expanded).width, height: 120)
+                    Text("Asleep in the notch (quiet session peeked open, quiet 5 min)").font(.caption2).foregroundStyle(.secondary)
                 }
             }
             ForEach(Density.allCases, id: \.self) { d in
