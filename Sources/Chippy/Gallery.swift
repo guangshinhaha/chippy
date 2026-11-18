@@ -639,4 +639,50 @@ enum Gallery {
         let r = ImageRenderer(content: all)
         writePNG(r, to: path)
     }
+
+    /// `Chippy --render-away out.png` (#92): the dot on the resting notch after an away period, and the digest panel it opens
+    /// (a terminal ask, finished threads, one that asks you, a Recent-only row). Sample repo names only; replies are not shown.
+    @MainActor
+    static func renderAway(to path: String) {
+        let m = NotchMetrics.sample14
+        let t0 = Date().addingTimeInterval(-1500)
+        func away(ask: Bool, finishes: Int = 4) -> NotchModel {
+            var locked = true
+            let model = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: tempLog()))
+            model.awaySignal = { (locked, 0) }
+            model.sweep(now: t0)
+            let names = ["docs-site", "billing-api", "mobile-app", "login-page"]
+            for (i, repo) in (0..<finishes).map({ ($0, $0 < names.count ? names[$0] : "repo-\($0)") }) {
+                let reply = i == 1 ? "REPLY-TEXT-MUST-NOT-SHOW. Shall I go ahead?" : "REPLY-TEXT-MUST-NOT-SHOW"
+                model.apply(HookPayload(json: Data(#"{"session_id":"a\#(i)","hook_event_name":"Stop","cwd":"/demo/\#(repo)","last_assistant_message":"\#(reply)"}"#.utf8))!, now: t0.addingTimeInterval(Double(i + 1) * 200))
+            }
+            model.dismissDone("a0", now: t0.addingTimeInterval(300)) // lands in Recent, still reported
+            if ask { model.receiveApproval(HookPayload(json: try! JSONSerialization.data(withJSONObject: ["session_id": "q", "hook_event_name": "PermissionRequest",
+                "cwd": "/demo/govapps", "tool_name": "AskUserQuestion", "tool_input": ["questions": [["question": "SECRET Q?", "header": "h", "multiSelect": true,
+                "options": [["label": "A, x", "description": "a"], ["label": "B", "description": "b"]]]]]]))!, Connection.detached(), now: Date()) }
+            locked = false
+            model.sweep(now: Date())
+            return model
+        }
+        let dot = away(ask: false)
+        let open = away(ask: true); open.openDigest()
+        let sz = m.size(for: .expanded)
+        let many = away(ask: false, finishes: 12); many.openDigest()
+        let bm = box(m); bm.contentHeight = NotchMetrics.maxExpandedHeight // the app measures this; the panel is clamped to the cap
+        let all = HStack(alignment: .top, spacing: 24) {
+            VStack(alignment: .leading, spacing: 4) {
+                NotchView(model: dot, box: box(m)).frame(width: m.size(for: .collapsed).width, height: m.size(for: .collapsed).height)
+                Text("After 5+ min away: a dot (digest=\(dot.awayDigest?.total ?? 0), dot=\(String(dot.badgeDot)), badge=\(dot.badge ?? "nil"))").font(.caption2).foregroundStyle(.secondary)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                NotchView(model: open, box: box(m)).frame(width: sz.width, height: 330)
+                Text("Click the dot: the digest (repo, status, age; Dismiss moves finished to Recent)").font(.caption2).foregroundStyle(.secondary)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                NotchView(model: many, box: bm).frame(width: sz.width, height: m.size(for: .expanded, contentHeight: bm.contentHeight).height, alignment: .top)
+                Text("12 finishes: rows scroll, panel stays at the \(Int(NotchMetrics.maxExpandedHeight))pt cap").font(.caption2).foregroundStyle(.secondary)
+            }
+        }.padding(16).background(Color(white: 0.25))
+        writePNG(ImageRenderer(content: all), to: path)
+    }
 }

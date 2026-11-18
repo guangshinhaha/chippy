@@ -59,6 +59,18 @@ public final class NotchModel: ObservableObject {
     /// Asleep after 5 quiet minutes (#54); any hook event wakes it. Only changes the mascot's pose.
     @Published public private(set) var asleep = false
     private var idleClock = IdleClock()
+    /// Away detection (#92): the app says whether the screen is locked and how long the keyboard and mouse were idle.
+    /// Default is never away, so tests and the gallery are unaffected.
+    public var awaySignal: () -> (locked: Bool, idle: TimeInterval) = { (false, 0) }
+    private var awayTracker = AwayTracker()
+    /// Start of the last away period that left something to report. The only thing kept for the digest (the rows are
+    /// rebuilt from state already held), so nothing new is stored, logged or sent (PDPA). Cleared once seen.
+    @Published public private(set) var awaySince: Date?
+    /// When the user came back; the digest covers only `awaySince...awayEnd`, so later finishes never fold in.
+    @Published public private(set) var awayEnd: Date?
+    /// Last time the away signal was read; `sweep` runs every 0.5s but the signal is polled at most every `awayPollInterval`.
+    private var lastAwayPoll: Date?
+    public static let awayPollInterval: TimeInterval = 5
     public static let doneSeconds: TimeInterval = 600
     /// A terminal row is a guess (#101): it clears on a turn boundary, a matching PostToolUse, or "Handled". If none arrives
     /// it is dropped after this long (30 min, the Recent TTL), longer than finished chips because it is something to act on.
@@ -167,6 +179,71 @@ public final class NotchModel: ObservableObject {
         return waitingItems.first(where: { $0.needsYou })?.repo
     }
 
+    /// While-you-were-away digest (#92): nil when none is pending or nothing in it is left to report. Passive: it only
+    /// sets a dot and fills the rest panel the user opens; it never pops, folds anything open or plays a sound.
+    /// Computed once per `refresh` (like `waitingItems`), not per access.
+    @Published public private(set) var awayDigest: AwayDigest.Result?
+
+    /// Pure: the digest for a given start, from state already held. nil when nothing is left to report.
+    private func digest(since: Date?, until: Date?) -> AwayDigest.Result? {
+        guard let since else { return nil }
+        let d = AwayDigest.build(since: since, until: until ?? .distantFuture, terminal: terminalItems, done: doneItems, recent: recent.items,
+                                 label: { [identities] cwd, project in identities.label(cwd: cwd, project: project) },
+                                 resolved: { [identities] in identities.isResolved(cwd: $0) },
+                                 cap: .max) // every covered chip is a row: none hides behind "+N more"
+        return d.isEmpty ? nil : d
+    }
+
+    public func identity(row: DigestRow) -> SessionIdentity { marks.identity(repo: row.repo, resolved: row.resolved) }
+
+    /// Open the rest panel on the digest (the dot's tap). An approval or question on screen takes precedence.
+    public func openDigest() {
+        guard awayDigest != nil, pending.isEmpty else { return }
+        listOpen = false; focus = nil; doneOpen = false; restOpen = true
+        refresh()
+    }
+
+    /// The user read the digest and closed its panel themselves (Esc, click-away, dot toggle): the dot clears.
+    /// Row activation and an approval folding the panel do not come through here, so they never mark it seen.
+    private func markDigestSeenIfOpen() {
+        if restOpen, awayDigest != nil, !listOpen, shownPending == nil, shownDone == nil { awaySince = nil; awayEnd = nil }
+    }
+
+    /// Dismiss: the digest's finished chips move to Recent (same as "Clear all" for those), terminal asks stay (they
+    /// are still needs-you, cleared by "Handled"), and the digest is gone.
+    public func dismissAwayDigest(now: Date = Date()) {
+        if let d = awayDigest {
+            // Every finished chip the digest covers, including those behind "+N more"; a chip that asks the user stays in FINISHED.
+            let asking = Set(doneItems.filter(\.asksYou).map(\.sessionId))
+            let ids = Set(d.finishedIds).subtracting(asking)
+            retire(doneItems.filter { ids.contains($0.sessionId) }, now: now)
+            doneItems.removeAll { ids.contains($0.sessionId) }
+        }
+        awaySince = nil; awayEnd = nil
+        refresh()
+    }
+
+    /// Feed the away tracker (at most every `awayPollInterval`); a qualifying return sets the digest start (earliest unseen wins).
+    private func observeAway(now: Date) {
+        if let l = lastAwayPoll, now >= l, now.timeIntervalSince(l) < Self.awayPollInterval { return }
+        lastAwayPoll = now
+        let s = awaySignal()
+        let returned = awayTracker.observe(now: now, locked: s.locked, idle: s.idle)
+        if awaySince != nil { // an unseen digest: its window stays open while the user is away again, and closes when they are back
+            let end: Date? = awayTracker.isAway ? nil : (awayEnd ?? now)
+            if end != awayEnd { awayEnd = end; refresh() }
+        }
+        guard let since = returned else { return }
+        if let earlier = awaySince { // merge into one digest: earliest unseen start to the latest return
+            awaySince = min(earlier, since); awayEnd = now
+            refresh()
+            return
+        }
+        guard digest(since: since, until: now) != nil else { awaySince = nil; awayEnd = nil; return } // nothing to report: no dot
+        awaySince = since; awayEnd = now
+        refresh()
+    }
+
     private func refresh() {
         refreshing = true
         defer {
@@ -176,6 +253,9 @@ public final class NotchModel: ObservableObject {
         let waiting = WaitingList.items(pending: pending, done: doneItems, terminal: terminalItems, timeout: timeout(for:),
                                         label: { [identities] cwd, project in identities.label(cwd: cwd, project: project) }, // computed once per refresh
                                         resolved: { [identities] in identities.isResolved(cwd: $0) })
+        let dg = digest(since: awaySince, until: awayEnd)
+        if dg == nil, awaySince != nil || awayEnd != nil { awaySince = nil; awayEnd = nil } // emptied on its own
+        if dg != awayDigest { awayDigest = dg }
         let previousTargets = waitingLayout.selectableTargets
         if (!listOpen || waiting.isEmpty), finishedExpanded { finishedExpanded = false } // the expansion lives only while the list is open and non-empty
         if waiting != waitingItems || waitingLayout.expanded != finishedExpanded {
@@ -268,6 +348,7 @@ public final class NotchModel: ObservableObject {
             return n > 1 ? "Needs you · \(at + 1) of \(n)" : "Needs you"
         }
         if shownDone != nil { return pending.isEmpty ? "Done" : "Finished" }
+        if restOpen, awayDigest != nil { return "While you were away" }
         if restOpen && doneItems.isEmpty && terminalItems.isEmpty { return "Recent" }
         if !terminalItems.isEmpty { return "Asked in terminal" }
         if !doneItems.isEmpty { return ChippyState.done.title }
@@ -287,6 +368,7 @@ public final class NotchModel: ObservableObject {
     /// With only finished chips, open the list.
     public func openBadge() {
         if badgeNeedsYou, let top = waitingItems.first(where: { if case .pending = $0.target { return true } else { return false } }) { activate(top.target) }
+        else if awayDigest != nil { if restOpen { toggleOpen() } else { openDigest() } } // the dot toggles its panel
         else { openList() }
     }
 
@@ -371,9 +453,10 @@ public final class NotchModel: ObservableObject {
     /// Never while an approval or question is pending (an unfolded card is on screen, so the notch is not at rest).
     /// VoiceOver label for the dot: a finished thread that asks something is not "nothing needs you".
     public var badgeDotLabel: String {
-        waitingItems.contains { $0.kind == .done && $0.asksYou } ? "Finished threads waiting; one asks you" : "Finished threads waiting, nothing needs you"
+        if let d = awayDigest { return "While you were away: \(d.total) \(d.total == 1 ? "update" : "updates")" }
+        return waitingItems.contains { $0.kind == .done && $0.asksYou } ? "Finished threads waiting; one asks you" : "Finished threads waiting, nothing needs you"
     }
-    public var badgeDot: Bool { badge == nil && pending.isEmpty && !doneItems.isEmpty }
+    public var badgeDot: Bool { badge == nil && pending.isEmpty && (!doneItems.isEmpty || awayDigest != nil) }
 
     /// The collapsed badge is the needs-you one (pulsing) while any approval or question is folded, or a question
     /// fell back to the terminal: both are the same "needs you" to the user.
@@ -457,7 +540,7 @@ public final class NotchModel: ObservableObject {
         if folded, !listOpen { unfold(); return } // click on the needs-you badge area opens the card
         guard pending.isEmpty, !listOpen else { return }
         if focus != nil { focus = nil; doneOpen = false; refresh(); return } // one gesture folds a jumped-to detail; focus and doneOpen never drift
-        if restOpen { restOpen = false; refresh(); return }
+        if restOpen { markDigestSeenIfOpen(); restOpen = false; refresh(); return }
         if doneItems.isEmpty && terminalItems.isEmpty { restOpen = true; refresh(); return } // click on the resting tab
         doneOpen.toggle() // a chip is showing: its detail
         refresh()
@@ -469,6 +552,7 @@ public final class NotchModel: ObservableObject {
         if case .pending? = focus { return } // the approval or question the user jumped to stays up until answered
         if focus != nil { focus = nil; doneOpen = false; refresh(); return } // back out of a jumped-to done or terminal detail
         guard pending.isEmpty, doneOpen || restOpen else { return }
+        markDigestSeenIfOpen()
         doneOpen = false; restOpen = false
         refresh()
     }
@@ -694,6 +778,7 @@ public final class NotchModel: ObservableObject {
 
     /// Drop requests whose hook went away (timeout fallback, or answered in the terminal).
     public func sweep(now: Date = Date()) {
+        observeAway(now: now)
         reevaluateQuiet()
         defer { updateSleep(now: now) } // after expiry + refresh, so it sees the settled state
         if peeking, !peek.isPeeking(now: clock()) { refresh() } // an expired peek settles to collapsed
@@ -704,7 +789,7 @@ public final class NotchModel: ObservableObject {
         let expired = doneItems.contains { now.timeIntervalSince($0.at) > Self.doneSeconds }
             || terminalItems.contains { now.timeIntervalSince($0.at) > Self.terminalSeconds }
         var r = recent
-        if r.prune(now: now) { recent = r }
+        if r.prune(now: now) { recent = r; refresh() }
         if expired { // assign only on change: a no-op write still notifies
             retire(doneItems.filter { now.timeIntervalSince($0.at) > Self.doneSeconds }, now: now)
             doneItems.removeAll { now.timeIntervalSince($0.at) > Self.doneSeconds }

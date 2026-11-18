@@ -36,6 +36,11 @@ if let i = args.firstIndex(of: "--render-tab"), i + 1 < args.count {
     exit(0)
 }
 
+if let i = args.firstIndex(of: "--render-away"), i + 1 < args.count {
+    MainActor.assumeIsolated { Gallery.renderAway(to: args[i + 1]) }
+    exit(0)
+}
+
 if let i = args.firstIndex(of: "--render-resting"), i + 1 < args.count {
     MainActor.assumeIsolated { Gallery.renderResting(to: args[i + 1]) }
     exit(0)

@@ -246,6 +246,22 @@ struct NotchView: View {
     /// Session rows in the peek, so the card's measured height stays within its cap.
     static let sessionRowCap = GlanceMetrics.rowCap // rows are GlanceMetrics.rowHeight each
 
+    /// Live glance (#90): one line per session, needs-you first.
+    @ViewBuilder private var glanceRows: some View {
+        // Live glance (#90): one line per session, working first. The word is the tool's category only, never its input.
+        // One timeline for the rows: a word with no new event for 90s (Esc, crash) falls back to the state at read time.
+        TimelineView(.periodic(from: .now, by: 15)) { ctx in
+            let ordered = model.glanceSessions(now: ctx.date) // re-ranked every tick, needs-you always first
+            ForEach(ordered.prefix(Self.sessionRowCap)) { row in
+                let line = model.glanceLine(for: row, now: ctx.date)
+                GlanceRow(label: model.repoLabel(cwd: row.cwd, project: row.project), mark: model.identity(cwd: row.cwd, project: row.project), text: line.text, live: line.live)
+            }
+            if ordered.count > Self.sessionRowCap {
+                Text("\(ordered.count - Self.sessionRowCap) more sessions").font(.caption2).foregroundStyle(.white.opacity(0.6))
+            }
+        }
+    }
+
     /// Terminal chips as cards (at most `terminalCardCap`, then a "N more" row, so the panel's measured height stays within its cap beside done cards).
     @ViewBuilder private var terminalCards: some View {
         ForEach(model.terminalItems.reversed().prefix(Self.terminalCardCap)) { t in TerminalCard(item: t, repo: model.repoLabel(cwd: t.cwd, project: t.project).text, mark: model.identity(cwd: t.cwd, project: t.project)) { model.dismissTerminal(t.sessionId) }.reveal(0.12) }
@@ -370,6 +386,28 @@ struct NotchView: View {
                     }
                 } else if let d = model.shownDone {
                     DoneCard(item: d, repo: model.repoLabel(cwd: d.cwd, project: d.project).text, mark: model.identity(cwd: d.cwd, project: d.project), full: true) { model.dismissDone(d.sessionId) }.reveal(0.12)
+                } else if model.restOpen, let digest = model.awayDigest {
+                    // Digest rows and what is below them scroll together once taller than the room left under the header.
+                    ScrollWhenTall(maxHeight: NotchMetrics.maxExpandedHeight - NotchMetrics.shapePadding - NotchMetrics.cameraInset - box.metrics.height - NotchMetrics.cardHeaderHeight - 2 * NotchMetrics.cardSpacing) {
+                        VStack(alignment: .leading, spacing: NotchMetrics.cardSpacing) {
+                        AwayDigestView(model: model, digest: digest).reveal(0.12) // #92: on top; it covers its own chips and Recent
+                        // Everything the digest does not cover stays reachable below, compact.
+                        let covered = Set(digest.rows.map(\.sessionId))
+                        ForEach(model.terminalItems.reversed().filter { !covered.contains($0.sessionId) }.prefix(2)) { t in
+                            TerminalCard(item: t, repo: model.repoLabel(cwd: t.cwd, project: t.project).text, mark: model.identity(cwd: t.cwd, project: t.project)) { model.dismissTerminal(t.sessionId) }.reveal(0.12)
+                        }
+                        ForEach(model.doneItems.reversed().filter { !covered.contains($0.sessionId) }.prefix(1)) { d in
+                            DoneCard(item: d, repo: model.repoLabel(cwd: d.cwd, project: d.project).text, mark: model.identity(cwd: d.cwd, project: d.project), full: false) { model.dismissDone(d.sessionId) }.reveal(0.12)
+                        }
+                        // Recent entries the digest rows do not already show, compact.
+                        let recentLeft = model.recent.items.filter { !covered.contains($0.sessionId) }
+                        if !recentLeft.isEmpty {
+                            RecentListView(items: Array(recentLeft.prefix(3)), label: { model.repoLabel(cwd: $0.cwd, project: $0.project).text },
+                                           mark: { model.identity(cwd: $0.cwd, project: $0.project) }).reveal(0.12)
+                        }
+                            glanceRows
+                        }
+                    }
                 } else if model.restOpen {
                     terminalCards
                     doneCards(limit: 3)
@@ -380,18 +418,7 @@ struct NotchView: View {
                                                           mark: { model.identity(cwd: $0.cwd, project: $0.project) }).reveal(0.12) }
                     }
                     if model.sessions.isEmpty && model.recent.items.isEmpty { Text("No agent sessions.").font(.caption).foregroundStyle(.white.opacity(0.6)) }
-                    // Live glance (#90): one line per session, working first. The word is the tool's category only, never its input.
-                    // One timeline for the rows: a word with no new event for 90s (Esc, crash) falls back to the state at read time.
-                    TimelineView(.periodic(from: .now, by: 15)) { ctx in
-                        let ordered = model.glanceSessions(now: ctx.date) // re-ranked every tick, needs-you always first
-                        ForEach(ordered.prefix(Self.sessionRowCap)) { row in
-                            let line = model.glanceLine(for: row, now: ctx.date)
-                            GlanceRow(label: model.repoLabel(cwd: row.cwd, project: row.project), mark: model.identity(cwd: row.cwd, project: row.project), text: line.text, live: line.live)
-                        }
-                        if ordered.count > Self.sessionRowCap {
-                            Text("\(ordered.count - Self.sessionRowCap) more sessions").font(.caption2).foregroundStyle(.white.opacity(0.6))
-                        }
-                    }
+                    glanceRows
                 } else {
                     terminalCards
                     doneCards(limit: model.tall ? 1 : 3, full: model.tall)
@@ -401,6 +428,21 @@ struct NotchView: View {
             .padding(.horizontal, 16)
             .background(GeometryReader { g in Color.clear.onAppear { report(g.size.height) }.onChange(of: g.size.height) { report($0) } })
         }
+    }
+}
+
+/// Measured like QuestionCard: natural height until it would exceed `maxHeight`, then a scroll region of exactly that height.
+struct ScrollWhenTall<Content: View>: View {
+    let maxHeight: CGFloat
+    @ViewBuilder let content: () -> Content
+    @State private var h: CGFloat = 0
+    var body: some View {
+        let inner = content().frame(maxWidth: .infinity, alignment: .leading)
+            .background(GeometryReader { g in Color.clear.preference(key: QuestionBodyHeight.self, value: g.size.height) })
+        Group {
+            if h > maxHeight { ScrollView { inner }.frame(height: maxHeight) } else { inner }
+        }
+        .onPreferenceChange(QuestionBodyHeight.self) { h = $0 }
     }
 }
 
@@ -962,6 +1004,58 @@ struct NotchShape: Shape {
                        control: CGPoint(x: rect.minX, y: rect.maxY))
         p.closeSubpath()
         return p
+    }
+}
+
+/// While you were away (#92): repo, status and age per session, no reply, prompt or question text (PDPA #30). A row with a live
+/// chip jumps to it; a Recent-only row offers Open. Dismiss moves the finished ones to Recent.
+struct AwayDigestView: View {
+    @ObservedObject var model: NotchModel
+    let digest: AwayDigest.Result
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 15)) { ctx in
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("WHILE YOU WERE AWAY (\(digest.total))").font(.caption2.weight(.bold)).foregroundStyle(.white.opacity(0.5)).tracking(0.6)
+                    Spacer(minLength: 0)
+                    ChipButton(title: "Dismiss", kind: .neutral) { model.dismissAwayDigest() }
+                        .accessibilityHint("Moves the finished threads to Recent")
+                }
+                ForEach(digest.rows) { row in rowView(row, now: ctx.date) }
+                if digest.hidden > 0 { Text("+\(digest.hidden) more").font(.caption2).foregroundStyle(.white.opacity(0.55)).padding(.leading, 10) }
+            }
+        }
+    }
+
+    private func status(_ r: DigestRow) -> String {
+        switch r.status { case .needsYou: return "asked in terminal"; case .asksYou: return "asks you"; case .finished: return "finished" }
+    }
+
+    private func rowView(_ r: DigestRow, now: Date) -> some View {
+        let age = WaitingList.age(since: r.at, now: now)
+        let name = r.worktree.map { "\(r.repo) / \($0)" } ?? r.repo
+        let content = HStack(spacing: 10) {
+            Image(systemName: r.status == .needsYou ? "exclamationmark.circle.fill" : "checkmark.circle")
+                .font(.caption).foregroundStyle(r.status == .needsYou ? Color.orange : .white.opacity(0.5)).frame(width: 18)
+            IdentityMark(identity: model.identity(row: r), size: 14)
+            Text(name).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle)
+            Text(status(r)).font(.caption2).foregroundStyle(.white.opacity(0.65)).lineLimit(1)
+            Spacer(minLength: 8)
+            Text(age).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.55))
+        }
+        .padding(.horizontal, 10).frame(minHeight: 32)
+        .accessibilityElement(children: .ignore) // one element, one label (age included once), the hint on it
+        .accessibilityLabel("\(name), \(status(r)) \(age) ago")
+        .accessibilityHint(r.target != nil ? "Opens it" : "")
+        return HStack(spacing: 4) {
+            if let t = r.target {
+                Button { model.activate(t) } label: { content.contentShape(Rectangle()) }.buttonStyle(.plain)
+            } else {
+                content
+                if TerminalJump.available(r.host) { OpenTerminalButton(host: r.host) }
+            }
+        }
     }
 }
 
