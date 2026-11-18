@@ -1,4 +1,5 @@
 import AppKit
+import os
 import ChippyCore
 
 /// Plays subtle built-in sounds (#67). Decisions live in ChippyCore/SoundPolicy.swift; this only reads
@@ -10,15 +11,21 @@ final class SoundPlayer {
     private var cooldowns = SoundCooldowns()
     private var playing: [NSSound] = []
     private var locked = SoundPlayer.screenIsLocked()
-    /// Current quiet state (#95), shared with the model so sounds and auto-expand agree.
-    var silenceState: SilenceState { SilenceState(focus: Self.focusIsOn(), locked: locked) }
-
-    /// Focus has no public read API without a permission prompt; Assertions.json is readable only when Full Disk
-    /// Access allows it. Unreadable means "off" (fail open: behaves as before).
-    static func focusIsOn() -> Bool {
+    private let focusCache = FocusCache(read: {
         let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/DoNotDisturb/DB/Assertions.json")
-        return SilencePolicy.focusIsOn(assertionsJSON: try? Data(contentsOf: url))
+        let reading = SilencePolicy.readFocus(assertionsJSON: try? Data(contentsOf: url))
+        if reading == .unknown { SoundPlayer.logFocusUnreadable() }
+        return reading == .on
+    })
+    private static let focusLog = OSAllocatedUnfairLock(initialState: false)
+    /// One line, once per launch, no content: Focus could not be read (needs Full Disk Access) so Chippy behaves as if off.
+    static func logFocusUnreadable() {
+        let first = focusLog.withLock { logged -> Bool in defer { logged = true }; return !logged }
+        if first { os_log("Chippy: Focus state unreadable, treating as off", log: .default, type: .info) }
     }
+    /// Current quiet state (#95): read once per event by the model, which passes it to both its own decisions and `handle`.
+    /// Focus comes from a 2s cache refreshed off the calling thread (fail open until the first read lands).
+    func silenceState() -> SilenceState { SilenceState(focus: focusCache.current, locked: locked) }
     private var warnedMissing = false
     private var observers: [NSObjectProtocol] = []
 
@@ -45,12 +52,12 @@ final class SoundPlayer {
         set { defaults.set(newValue, forKey: Self.key) }
     }
 
-    func handle(_ kind: SoundKind, sessionId: String, host: HostInfo?, now: Date = Date()) {
+    func handle(_ kind: SoundKind, sessionId: String, host: HostInfo?, quiet: SilenceState, now: Date = Date()) {
         let front = NSWorkspace.shared.frontmostApplication
         let pidIsApp = host?.pid.map { NSRunningApplication(processIdentifier: $0) != nil } ?? false
         let frontmost = SoundPolicy.isHostFrontmost(host: host, frontmostPid: front?.processIdentifier,
                                                     frontmostBundle: front?.bundleIdentifier, pidIsRunningApp: pidIsApp)
-        guard SoundPolicy.shouldPlay(kind: kind, enabled: enabled, hostFrontmost: frontmost, locked: locked, silenced: !SilencePolicy.soundsAllowed(silenceState),
+        guard SoundPolicy.shouldPlay(kind: kind, enabled: enabled, hostFrontmost: frontmost, quiet: !SilencePolicy.soundsAllowed(quiet),
                                      lastPlayed: cooldowns.lastPlayed(kind, session: sessionId), now: now) else { return }
         // The named sound is a shared instance and play() on a playing one is a no-op: play a copy.
         guard let s = (NSSound(named: kind == .needsYou ? "Pop" : "Tink")?.copy() as? NSSound) else {

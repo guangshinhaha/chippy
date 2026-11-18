@@ -28,8 +28,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         panel = NotchPanel(model: model)
         panel?.onMenu = { [weak self] at, centered in self?.popMenu(at: at, centered: centered) }
-        model.onSound = { [weak self] kind, id, host in self?.sounds.handle(kind, sessionId: id, host: host) }
-        model.silence = { [weak self] in self?.sounds.silenceState ?? SilenceState() }
+        model.onSound = { [weak self] kind, id, host, quiet in self?.sounds.handle(kind, sessionId: id, host: host, quiet: quiet) }
+        model.silence = { [weak self] in self?.sounds.silenceState() ?? SilenceState() }
         model.onSessionEnd = { [weak self] id in self?.sounds.sessionEnded(id) }
         buildMenu()
         startServer()

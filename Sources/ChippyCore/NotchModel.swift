@@ -72,10 +72,12 @@ public final class NotchModel: ObservableObject {
     private var connections: [String: Connection] = [:]
     private var questionInputs: [String: [String: Any]] = [:]
     /// Sound hook (#67): fired for a new approval/question and a finished chip. The app decides whether to play.
-    public var onSound: ((SoundKind, _ sessionId: String, _ host: HostInfo?) -> Void)?
+    public var onSound: ((SoundKind, _ sessionId: String, _ host: HostInfo?, _ quiet: SilenceState) -> Void)?
     /// Quiet state (#95), asked at event time. While quiet a new approval arrives folded on the badge and a finished
     /// chip does not peek. Nothing is dropped: requests stay pending and the hook timeout still falls back to the terminal.
     public var silence: () -> SilenceState = { SilenceState() }
+    /// Requests that arrived folded only because it was quiet (#95). When quiet ends they are shown (and sound once).
+    private var quietFolded: Set<String> = []
     /// Fired when a session ends, so callers can drop per-session state.
     public var onSessionEnd: ((String) -> Void)?
     private let always: AlwaysStore
@@ -105,6 +107,7 @@ public final class NotchModel: ObservableObject {
         let pendingIds = Set(pending.map(\.id))
         if partials.keys.contains(where: { !pendingIds.contains($0) }) { partials = partials.filter { pendingIds.contains($0.key) } }
         if doneItems.isEmpty { peek.cancel() }
+        if !quietFolded.isEmpty { quietFolded.formIntersection(pendingIds) }
         if folds.keys.contains(where: { !pendingIds.contains($0) }) {
             folds = folds.filter { pendingIds.contains($0.key) }
         }
@@ -216,6 +219,7 @@ public final class NotchModel: ObservableObject {
     private func open(ids: [String]) {
         for id in ids where pending.contains(where: { $0.id == id }) { folds[id]?.pin() }
         if folded { folded = false }
+        quietFolded = []
     }
 
     /// The oldest request decides: it is due and the user has pinned none. A pinned card (opened by hand) is never folded
@@ -224,6 +228,23 @@ public final class NotchModel: ObservableObject {
     private func foldDue(now: TimeInterval) -> Bool {
         guard !listOpen, let oldest = pending.first, !folds.values.contains(where: \.isPinned) else { return false }
         return folds[oldest.id]?.isDue(now: now) ?? false
+    }
+
+    /// Quiet ended (Focus off, screen unlocked): requests that were folded only because of quiet get their normal
+    /// treatment, a fresh fold timer, and sound once. Called from `sweep`; cheap when nothing was quiet-folded.
+    func reevaluateQuiet() {
+        guard !quietFolded.isEmpty else { return }
+        let quiet = silence()
+        guard SilencePolicy.mayAutoExpand(quiet) else { return }
+        let ids = pending.filter { quietFolded.contains($0.id) }
+        quietFolded = []
+        guard folded, !ids.isEmpty else { return }
+        folded = false
+        for id in Array(folds.keys) { folds[id]?.arrive(now: clock(), hovering: hovering, engaged: false) }
+        refresh()
+        for r in ids where !Tour.isDemo(r.sessionId) {
+            onSound?(.needsYou, r.sessionId, sessions.first { $0.id == r.sessionId }?.host, quiet)
+        }
     }
 
     /// Hook-side wait for this request, so a card can show when the terminal takes over.
@@ -362,11 +383,19 @@ public final class NotchModel: ObservableObject {
             return
         }
         if case .done? = focus { focus = nil }
+        let wasDoneOpen = doneOpen
         doneOpen = false // a new blocking request takes over from a done detail: it is not a panel the user opened for this
         // A rest panel or list the user opened by click is theirs: the approval joins it and never folds.
         let engaged = restOpen || listOpen
-        if folded { // a new request auto-expands; the earlier ones, shown again with it, get a fresh timer
+        // Read quiet state once for this event; the same value goes to the model's decisions and to the sound hook.
+        let quiet = silence()
+        let quietNow = !SilencePolicy.mayAutoExpand(quiet)
+        // Something is on screen or in the user's hands: a card showing, a pinned card, an opened list or rest panel.
+        let onScreen = (!pending.isEmpty && !folded) || engaged || wasDoneOpen || folds.values.contains(where: \.isPinned)
+        let keepFolded = quietNow && folded && !onScreen
+        if folded, !keepFolded { // a new request auto-expands; the earlier ones, shown again with it, get a fresh timer
             folded = false
+            quietFolded = []
             for id in Array(folds.keys) { folds[id]?.arrive(now: clock(), hovering: hovering, engaged: false) }
         }
         var f = NeedsMeFold()
@@ -375,11 +404,12 @@ public final class NotchModel: ObservableObject {
         pending.append(req)
         connections[req.id] = conn
         // Quiet (Focus/locked): do not pop the card. A card or list the user opened by hand (engaged) stays as it is.
-        if !engaged, !SilencePolicy.mayAutoExpand(silence()) { folded = true }
+        // Never folds a card that is already on screen or pinned, only a notch showing nothing (or already folded).
+        if quietNow, !onScreen { folded = true; quietFolded.insert(req.id) }
         refresh()
         updateSleep(now: now)
         if !Tour.isDemo(req.sessionId) {
-            onSound?(.needsYou, req.sessionId, sessions.first { $0.id == req.sessionId }?.host ?? payload.host)
+            onSound?(.needsYou, req.sessionId, sessions.first { $0.id == req.sessionId }?.host ?? payload.host, quiet)
         }
     }
 
@@ -453,6 +483,7 @@ public final class NotchModel: ObservableObject {
 
     /// Drop requests whose hook went away (timeout fallback, or answered in the terminal).
     public func sweep(now: Date = Date()) {
+        reevaluateQuiet()
         defer { updateSleep(now: now) } // after expiry + refresh, so it sees the settled state
         if peeking, !peek.isPeeking(now: clock()) { refresh() } // an expired peek settles to collapsed
         if !folded, !pending.isEmpty, foldDue(now: clock()) { refresh() } // an expired needs-me timer folds the card
@@ -494,8 +525,9 @@ public final class NotchModel: ObservableObject {
                 doneItems.removeAll { $0.sessionId == r.id }
                 doneItems.append(DoneItem(sessionId: r.id, project: r.project, branch: r.branch,
                                           files: r.filesEdited.count, added: r.added, removed: r.removed, reply: r.lastReply, prompt: r.lastPrompt, at: now, host: r.host))
-                if SilencePolicy.mayPeek(silence()) { peek.start(now: clock(), hovering: hovering) }
-                if isNew, !Tour.isDemo(r.id) { onSound?(.done, r.id, r.host ?? payload.host) }
+                let quiet = silence()
+                if SilencePolicy.mayPeek(quiet) { peek.start(now: clock(), hovering: hovering) }
+                if isNew, !Tour.isDemo(r.id) { onSound?(.done, r.id, r.host ?? payload.host, quiet) }
             }
         case let e where Self.boundaryEvents.contains(e) || Self.toolEvents.contains(e):
             // Only the thread itself moving on (new prompt, tool use after a Stop, or ending) clears its chip; another thread's activity must not.

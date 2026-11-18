@@ -9,9 +9,9 @@ public enum SoundPolicy {
     public static let needsYouDedupe: TimeInterval = 0.3
 
     /// `lastPlayed` is when this session last made a sound (nil = never). Cooldown is per session.
-    public static func shouldPlay(kind: SoundKind, enabled: Bool, hostFrontmost: Bool, locked: Bool, silenced: Bool = false,
+    public static func shouldPlay(kind: SoundKind, enabled: Bool, hostFrontmost: Bool, quiet: Bool,
                                   lastPlayed: Date?, now: Date) -> Bool {
-        guard enabled, !hostFrontmost, !locked, !silenced else { return false }
+        guard enabled, !hostFrontmost, !quiet else { return false }
         let window = kind == .done ? cooldown : needsYouDedupe
         if let last = lastPlayed, now.timeIntervalSince(last) < window { return false }
         return true

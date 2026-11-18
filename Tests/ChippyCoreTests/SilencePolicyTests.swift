@@ -14,19 +14,45 @@ final class SilencePolicyTests: XCTestCase {
     }
 
     func testFocusParser() {
-        func on(_ s: String?) -> Bool { SilencePolicy.focusIsOn(assertionsJSON: s?.data(using: .utf8)) }
-        XCTAssertTrue(on(#"{"data":[{"storeAssertionRecords":[{"x":1}]}]}"#))
-        XCTAssertFalse(on(#"{"data":[{"storeAssertionRecords":[]}]}"#))
-        XCTAssertFalse(on(#"{"data":[{}]}"#))
-        XCTAssertFalse(on(#"{"data":[]}"#))
-        XCTAssertFalse(on("not json"))
-        XCTAssertFalse(on(nil))
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let ref = now.timeIntervalSince1970 - SilencePolicy.appleEpochOffset
+        func rd(_ s: String?) -> SilencePolicy.FocusReading { SilencePolicy.readFocus(assertionsJSON: s?.data(using: .utf8), now: now) }
+        XCTAssertEqual(rd(#"{"data":[{"storeAssertionRecords":[{"x":1}]}]}"#), .on)
+        XCTAssertEqual(rd(#"{"data":[{"storeAssertionRecords":[]}]}"#), .off)
+        XCTAssertEqual(rd(#"{"data":[]}"#), .off)
+        XCTAssertEqual(rd(#"{"data":[{}]}"#), .unknown)
+        XCTAssertEqual(rd(#"{"data":[{"storeAssertionRecords":["x"]}]}"#), .unknown)
+        XCTAssertEqual(rd("not json"), .unknown)
+        XCTAssertEqual(rd(#"{"other":1}"#), .unknown)
+        XCTAssertEqual(rd(nil), .unknown)
+        // expiry and start are honoured (Apple reference-date seconds)
+        XCTAssertEqual(rd(#"{"data":[{"storeAssertionRecords":[{"assertionStartDateTimestamp":\#(ref - 100),"assertionExpirationDate":\#(ref - 1)}]}]}"#), .off)
+        XCTAssertEqual(rd(#"{"data":[{"storeAssertionRecords":[{"assertionStartDateTimestamp":\#(ref - 100),"assertionExpirationDate":\#(ref + 600)}]}]}"#), .on)
+        XCTAssertEqual(rd(#"{"data":[{"storeAssertionRecords":[{"assertionStartDateTimestamp":\#(ref + 600)}]}]}"#), .off)
+        // one expired plus one active record is on
+        XCTAssertEqual(rd(#"{"data":[{"storeAssertionRecords":[{"assertionExpirationDate":\#(ref - 1)},{"y":2}]}]}"#), .on)
+        XCTAssertFalse(SilencePolicy.focusIsOn(assertionsJSON: nil))
+    }
+
+    func testFocusCacheReadsOncePerTTLOffThread() {
+        var t = Date(timeIntervalSince1970: 100); var reads = 0; var value = true
+        var queued: [() -> Void] = []
+        let c = FocusCache(ttl: 2, clock: { t }, read: { reads += 1; return value }, async: { queued.append($0) })
+        XCTAssertFalse(c.current)            // stale: returns the fail-open initial value, refresh queued, not run inline
+        XCTAssertEqual(reads, 0); XCTAssertEqual(queued.count, 1)
+        XCTAssertFalse(c.current); XCTAssertEqual(queued.count, 1)   // no second refresh while one is in flight
+        queued.removeFirst()(); XCTAssertEqual(reads, 1)
+        XCTAssertTrue(c.current); XCTAssertTrue(c.current)
+        XCTAssertEqual(queued.count, 0)      // fresh within ttl: no read
+        t = t.addingTimeInterval(2.5); value = false
+        XCTAssertTrue(c.current); XCTAssertEqual(queued.count, 1)
+        queued.removeFirst()(); XCTAssertFalse(c.current)
     }
 
     func testSoundPolicySilencedKeepsNeedsYouRules() {
         let t = Date(timeIntervalSince1970: 1_000_000)
         func play(_ k: SoundKind, silenced: Bool, last: Date? = nil, now: Date? = nil) -> Bool {
-            SoundPolicy.shouldPlay(kind: k, enabled: true, hostFrontmost: false, locked: false, silenced: silenced,
+            SoundPolicy.shouldPlay(kind: k, enabled: true, hostFrontmost: false, quiet: silenced,
                                    lastPlayed: last, now: now ?? t)
         }
         XCTAssertFalse(play(.needsYou, silenced: true))
@@ -80,8 +106,54 @@ final class SilencePolicyTests: XCTestCase {
 
     func testQuietNeedsYouStillFiresSoundHookForPolicyToDecide() {
         let m = model(); m.silence = { SilenceState(locked: true) }
-        var fired = 0; m.onSound = { _, _, _ in fired += 1 }
+        var fired = 0; m.onSound = { _, _, _, _ in fired += 1 }
         ask(m)
         XCTAssertEqual(fired, 1)   // the app's SoundPlayer applies SilencePolicy; the model does not drop the event
+    }
+
+    func testQuietApprovalNeverFoldsACardAlreadyOnScreen() {
+        let m = model(); ask(m)                    // not quiet: card showing
+        XCTAssertEqual(m.density, .expanded)
+        m.silence = { SilenceState(focus: true) }
+        ask2(m, "t")                               // quiet second request joins the visible card
+        XCTAssertFalse(m.folded); XCTAssertEqual(m.density, .expanded); XCTAssertEqual(m.pending.count, 2)
+    }
+
+    func testQuietApprovalNeverFoldsAPinnedCardOrEngagedList() {
+        let m = model(); ask(m); m.silence = { SilenceState(locked: true) }
+        m.openList()                               // user-opened list is engaged
+        ask2(m, "t")
+        XCTAssertFalse(m.folded); XCTAssertEqual(m.density, .expanded)
+    }
+
+    func testFocusEndUnfoldsQuietFoldedRequestAndSoundsOnce() {
+        var quiet = SilenceState(focus: true)
+        let m = model(); m.silence = { quiet }
+        var sounds: [Bool] = []; m.onSound = { _, _, _, q in sounds.append(q.isQuiet) }
+        ask(m)
+        XCTAssertTrue(m.folded); XCTAssertEqual(sounds, [true])   // sound hook got the same quiet value the model used
+        m.sweep()
+        XCTAssertTrue(m.folded)                                    // still quiet: stays folded
+        quiet = SilenceState()
+        m.sweep()
+        XCTAssertFalse(m.folded); XCTAssertEqual(m.density, .expanded)
+        XCTAssertEqual(sounds, [true, false])                      // one sound when quiet ended
+        m.sweep()
+        XCTAssertEqual(sounds.count, 2)                            // only once
+    }
+
+    func testUserUnfoldedRequestIsNotReSounded() {
+        var quiet = SilenceState(focus: true)
+        let m = model(); m.silence = { quiet }
+        var n = 0; m.onSound = { _, _, _, _ in n += 1 }
+        ask(m); m.unfold(); quiet = SilenceState(); m.sweep()
+        XCTAssertEqual(n, 1)
+    }
+
+    private func ask2(_ m: NotchModel, _ sid: String) {
+        var p: [Int32] = [0, 0]
+        socketpair(AF_UNIX, SOCK_STREAM, 0, &p); fds.append(p)
+        let h = HookPayload(json: Data(#"{"session_id":"\#(sid)","hook_event_name":"PermissionRequest","cwd":"/x/p","tool_name":"Bash","tool_input":{"command":"ls"},"chippy_wait":20}"#.utf8))!
+        m.receiveApproval(h, Connection(fd: p[0]))
     }
 }
