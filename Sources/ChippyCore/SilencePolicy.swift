@@ -9,15 +9,9 @@ public struct SilenceState: Equatable {
     public var isQuiet: Bool { focus || locked }
 }
 
-/// Quiet means: no sound and no auto-expanding card. It never hides a request: a needs-you still shows on the
+/// Quiet (`SilenceState.isQuiet`) means: no sound, no auto-expanding card, no peek. It never hides a request: a needs-you still shows on the
 /// badge, stays pending and answerable, and the hook's own timeout still hands an approval to the terminal.
 public enum SilencePolicy {
-    public static func soundsAllowed(_ s: SilenceState) -> Bool { !s.isQuiet }
-    /// Whether a new approval/question may open the card by itself. When false it arrives folded onto the badge.
-    public static func mayAutoExpand(_ s: SilenceState) -> Bool { !s.isQuiet }
-    /// Whether a finished chip may peek open by itself. When false it stays on the collapsed badge.
-    public static func mayPeek(_ s: SilenceState) -> Bool { !s.isQuiet }
-
     public enum FocusReading: Equatable { case on, off, unknown }
 
     /// Seconds between the Unix epoch and Apple's reference date (2001-01-01), the usual unit of Focus timestamps.
@@ -52,7 +46,10 @@ public enum SilencePolicy {
         for (k, v) in rec {
             let key = k.lowercased()
             guard key.contains("expir") || key.contains("start") else { continue }
-            guard let n = v as? Double, n > 0 else { continue } // other types: ignored, fail open
+            // NSNumber booleans bridge to Double (true is 1.0): never a timestamp. Other types: ignored, fail open.
+            guard let num = v as? NSNumber, CFGetTypeID(num) != CFBooleanGetTypeID() else { continue }
+            let n = num.doubleValue
+            guard n > 0 else { continue }
             let unix = n < 1_000_000_000 ? n + appleEpochOffset : (n < 4_000_000_000 ? n : n / 1000) // reference-date secs, unix secs, or ms
             if key.contains("expir"), unix <= t { return false }
             if key.contains("start"), unix > t + 1 { return false }
@@ -61,37 +58,43 @@ public enum SilencePolicy {
     }
 }
 
-/// Small time-to-live cache so the Focus file is read at most once per `ttl`, and never on the caller's thread when stale:
-/// a stale value is returned at once and a refresh runs through `async`. Thread-safe.
+/// Small time-to-live cache so the Focus file is read at most once per `ttl`. `current` never returns a value older
+/// than `ttl`: when stale it reads synchronously (the file is tiny) and caches the result. A background refresh starts
+/// once the value is half-aged, only so the synchronous read is rarely needed. Thread-safe.
 public final class FocusCache: @unchecked Sendable {
     private let lock = NSLock()
-    private var value: Bool
-    private var stamp: Date
+    private var reading: SilencePolicy.FocusReading = .unknown
+    private var stamp: Date = .distantPast
     private var refreshing = false
     private let ttl: TimeInterval
-    private let read: () -> Bool
+    private let read: () -> SilencePolicy.FocusReading
     private let async: (@escaping () -> Void) -> Void
     private let clock: () -> Date
 
-    public init(ttl: TimeInterval = 2, initial: Bool = false, clock: @escaping () -> Date = Date.init,
-                read: @escaping () -> Bool,
+    public init(ttl: TimeInterval = 2, clock: @escaping () -> Date = Date.init,
+                read: @escaping () -> SilencePolicy.FocusReading,
                 async: @escaping (@escaping () -> Void) -> Void = { DispatchQueue.global(qos: .utility).async(execute: $0) }) {
         self.ttl = ttl; self.clock = clock; self.read = read; self.async = async
-        self.value = initial; self.stamp = .distantPast
     }
 
-    public var current: Bool {
-        lock.lock()
-        let stale = clock().timeIntervalSince(stamp) >= ttl && !refreshing
-        if stale { refreshing = true }
-        let v = value
-        lock.unlock()
-        if stale {
-            async { [self] in
-                let fresh = read()
-                lock.lock(); value = fresh; stamp = clock(); refreshing = false; lock.unlock()
-            }
-        }
-        return v
+    private func store(_ r: SilencePolicy.FocusReading) {
+        lock.lock(); reading = r; stamp = clock(); refreshing = false; lock.unlock()
     }
+
+    private var snapshot: SilencePolicy.FocusReading {
+        lock.lock()
+        let age = clock().timeIntervalSince(stamp)
+        let r = reading
+        let prefetch = age >= ttl / 2 && age < ttl && !refreshing
+        if prefetch { refreshing = true }
+        lock.unlock()
+        if age >= ttl { let fresh = read(); store(fresh); return fresh }
+        if prefetch { async { [self] in store(read()) } }
+        return r
+    }
+
+    /// Focus is on. Unknown counts as off (fail open).
+    public var current: Bool { snapshot == .on }
+    /// The last read could not be understood (typically no Full Disk Access). Reads if stale.
+    public var unreadable: Bool { snapshot == .unknown }
 }

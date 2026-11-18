@@ -15,8 +15,10 @@ final class SoundPlayer {
         let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/DoNotDisturb/DB/Assertions.json")
         let reading = SilencePolicy.readFocus(assertionsJSON: try? Data(contentsOf: url))
         if reading == .unknown { SoundPlayer.logFocusUnreadable() }
-        return reading == .on
+        return reading
     })
+    /// True when Focus state cannot be read (no Full Disk Access), so the menu can say so.
+    var focusUnreadable: Bool { focusCache.unreadable }
     private static let focusLog = OSAllocatedUnfairLock(initialState: false)
     /// One line, once per launch, no content: Focus could not be read (needs Full Disk Access) so Chippy behaves as if off.
     static func logFocusUnreadable() {
@@ -57,7 +59,7 @@ final class SoundPlayer {
         let pidIsApp = host?.pid.map { NSRunningApplication(processIdentifier: $0) != nil } ?? false
         let frontmost = SoundPolicy.isHostFrontmost(host: host, frontmostPid: front?.processIdentifier,
                                                     frontmostBundle: front?.bundleIdentifier, pidIsRunningApp: pidIsApp)
-        guard SoundPolicy.shouldPlay(kind: kind, enabled: enabled, hostFrontmost: frontmost, quiet: !SilencePolicy.soundsAllowed(quiet),
+        guard SoundPolicy.shouldPlay(kind: kind, enabled: enabled, hostFrontmost: frontmost, quiet: quiet.isQuiet,
                                      lastPlayed: cooldowns.lastPlayed(kind, session: sessionId), now: now) else { return }
         // The named sound is a shared instance and play() on a playing one is a no-op: play a copy.
         guard let s = (NSSound(named: kind == .needsYou ? "Pop" : "Tink")?.copy() as? NSSound) else {

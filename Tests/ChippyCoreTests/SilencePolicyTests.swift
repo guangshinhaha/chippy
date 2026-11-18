@@ -7,9 +7,7 @@ final class SilencePolicyTests: XCTestCase {
         for focus in [false, true] { for locked in [false, true] {
             let s = SilenceState(focus: focus, locked: locked)
             let quiet = focus || locked
-            XCTAssertEqual(SilencePolicy.soundsAllowed(s), !quiet)
-            XCTAssertEqual(SilencePolicy.mayAutoExpand(s), !quiet)
-            XCTAssertEqual(SilencePolicy.mayPeek(s), !quiet)
+            XCTAssertEqual(s.isQuiet, quiet)
         } }
     }
 
@@ -34,19 +32,29 @@ final class SilencePolicyTests: XCTestCase {
         XCTAssertFalse(SilencePolicy.focusIsOn(assertionsJSON: nil))
     }
 
-    func testFocusCacheReadsOncePerTTLOffThread() {
-        var t = Date(timeIntervalSince1970: 100); var reads = 0; var value = true
+    func testFocusCacheNeverReturnsValueOlderThanTTL() {
+        var t = Date(timeIntervalSince1970: 100); var reads = 0; var value = SilencePolicy.FocusReading.on
         var queued: [() -> Void] = []
         let c = FocusCache(ttl: 2, clock: { t }, read: { reads += 1; return value }, async: { queued.append($0) })
-        XCTAssertFalse(c.current)            // stale: returns the fail-open initial value, refresh queued, not run inline
-        XCTAssertEqual(reads, 0); XCTAssertEqual(queued.count, 1)
-        XCTAssertFalse(c.current); XCTAssertEqual(queued.count, 1)   // no second refresh while one is in flight
-        queued.removeFirst()(); XCTAssertEqual(reads, 1)
-        XCTAssertTrue(c.current); XCTAssertTrue(c.current)
-        XCTAssertEqual(queued.count, 0)      // fresh within ttl: no read
-        t = t.addingTimeInterval(2.5); value = false
-        XCTAssertTrue(c.current); XCTAssertEqual(queued.count, 1)
-        queued.removeFirst()(); XCTAssertFalse(c.current)
+        XCTAssertTrue(c.current); XCTAssertEqual(reads, 1)      // first call: synchronous read
+        XCTAssertTrue(c.current); XCTAssertEqual(reads, 1)      // fresh: cached
+        value = .off
+        t = t.addingTimeInterval(1.5)                           // half-aged: cached value, background refresh queued
+        XCTAssertTrue(c.current); XCTAssertEqual(queued.count, 1); XCTAssertEqual(reads, 1)
+        t = t.addingTimeInterval(1)                             // now past ttl before the refresh ran: sync read wins
+        XCTAssertFalse(c.current); XCTAssertEqual(reads, 2)
+        queued.removeFirst()()                                  // the late refresh is harmless
+        XCTAssertFalse(c.current)
+        value = .unknown; t = t.addingTimeInterval(5)
+        XCTAssertFalse(c.current); XCTAssertTrue(c.unreadable)
+    }
+
+    func testFocusParserIgnoresBooleansAsTimestamps() {
+        let ref = Date().timeIntervalSince1970 - SilencePolicy.appleEpochOffset
+        func rd(_ j: String) -> SilencePolicy.FocusReading { SilencePolicy.readFocus(assertionsJSON: Data(j.utf8)) }
+        // true would read as 1.0 (a 2001 expiry) and wrongly end Focus; it must be ignored (fail open to active)
+        XCTAssertEqual(rd(#"{"data":[{"storeAssertionRecords":[{"assertionExpirationDate":true,"assertionStartDateTimestamp":false}]}]}"#), .on)
+        XCTAssertEqual(rd(#"{"data":[{"storeAssertionRecords":[{"assertionExpirationDate":\#(ref + 600)}]}]}"#), .on)
     }
 
     func testSoundPolicySilencedKeepsNeedsYouRules() {
@@ -148,6 +156,21 @@ final class SilencePolicyTests: XCTestCase {
         var n = 0; m.onSound = { _, _, _, _ in n += 1 }
         ask(m); m.unfold(); quiet = SilenceState(); m.sweep()
         XCTAssertEqual(n, 1)
+    }
+
+    func testQuietFoldedABOpeningOneKeepsTheOther() {
+        var quiet = SilenceState(focus: true)
+        let m = model(); m.silence = { quiet }
+        var sounds: [String] = []; m.onSound = { _, sid, _, q in if !q.isQuiet { sounds.append(sid) } }
+        ask(m); ask2(m, "t")
+        XCTAssertTrue(m.folded); XCTAssertEqual(m.pending.count, 2)
+        m.activate(.pending(m.pending[0].id))           // user opens A by hand
+        XCTAssertFalse(m.folded)
+        quiet = SilenceState()
+        m.sweep()                                   // B was quiet-folded and never sounded: sounds once now
+        XCTAssertEqual(sounds, ["t"])
+        m.sweep()
+        XCTAssertEqual(sounds, ["t"])               // only once
     }
 
     private func ask2(_ m: NotchModel, _ sid: String) {

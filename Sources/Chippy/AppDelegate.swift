@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// The one menu: the status item shows it, and so do the notch's right-click and gear (never rebuilt).
     private var mainMenu: NSMenu?
     private let todayItem = NSMenuItem(), weekItem = NSMenuItem()
+    private let focusHintItem = NSMenuItem(title: "Focus detection needs Full Disk Access", action: nil, keyEquivalent: "")
     private var server: SocketServer?
     private var sweeper: Timer?
     private var outsideClick: Any?
@@ -119,6 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         for i in [todayItem, weekItem] { i.isEnabled = false; menu.addItem(i) }
+        focusHintItem.isEnabled = false; focusHintItem.isHidden = true; menu.addItem(focusHintItem)
         menu.addItem(.separator())
         let peek = NSMenuItem(title: "Show sessions", action: #selector(peekSessions), keyEquivalent: "")
         peek.target = self
@@ -182,6 +184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) {
+        focusHintItem.isHidden = !sounds.focusUnreadable // a hint in the menu only, never a nag
         // The log can be large: read it off the main thread, and only when the file changed.
         // Keyed on mtime, size and today's date, so a new day recomputes.
         let url = EventLog().url

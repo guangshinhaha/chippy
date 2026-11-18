@@ -219,7 +219,7 @@ public final class NotchModel: ObservableObject {
     private func open(ids: [String]) {
         for id in ids where pending.contains(where: { $0.id == id }) { folds[id]?.pin() }
         if folded { folded = false }
-        quietFolded = []
+        quietFolded.subtract(ids) // only the ones opened: others stay marked until quiet ends
     }
 
     /// The oldest request decides: it is due and the user has pinned none. A pinned card (opened by hand) is never folded
@@ -235,13 +235,15 @@ public final class NotchModel: ObservableObject {
     func reevaluateQuiet() {
         guard !quietFolded.isEmpty else { return }
         let quiet = silence()
-        guard SilencePolicy.mayAutoExpand(quiet) else { return }
+        guard !quiet.isQuiet else { return }
         let ids = pending.filter { quietFolded.contains($0.id) }
         quietFolded = []
-        guard folded, !ids.isEmpty else { return }
-        folded = false
-        for id in Array(folds.keys) { folds[id]?.arrive(now: clock(), hovering: hovering, engaged: false) }
-        refresh()
+        guard !ids.isEmpty else { return }
+        if folded { // already unfolded by hand: nothing to re-show, but each still sounds once below
+            folded = false
+            for id in Array(folds.keys) { folds[id]?.arrive(now: clock(), hovering: hovering, engaged: false) }
+            refresh()
+        }
         for r in ids where !Tour.isDemo(r.sessionId) {
             onSound?(.needsYou, r.sessionId, sessions.first { $0.id == r.sessionId }?.host, quiet)
         }
@@ -389,7 +391,7 @@ public final class NotchModel: ObservableObject {
         let engaged = restOpen || listOpen
         // Read quiet state once for this event; the same value goes to the model's decisions and to the sound hook.
         let quiet = silence()
-        let quietNow = !SilencePolicy.mayAutoExpand(quiet)
+        let quietNow = quiet.isQuiet
         // Something is on screen or in the user's hands: a card showing, a pinned card, an opened list or rest panel.
         let onScreen = (!pending.isEmpty && !folded) || engaged || wasDoneOpen || folds.values.contains(where: \.isPinned)
         let keepFolded = quietNow && folded && !onScreen
@@ -526,7 +528,7 @@ public final class NotchModel: ObservableObject {
                 doneItems.append(DoneItem(sessionId: r.id, project: r.project, branch: r.branch,
                                           files: r.filesEdited.count, added: r.added, removed: r.removed, reply: r.lastReply, prompt: r.lastPrompt, at: now, host: r.host))
                 let quiet = silence()
-                if SilencePolicy.mayPeek(quiet) { peek.start(now: clock(), hovering: hovering) }
+                if !quiet.isQuiet { peek.start(now: clock(), hovering: hovering) }
                 if isNew, !Tour.isDemo(r.id) { onSound?(.done, r.id, r.host ?? payload.host, quiet) }
             }
         case let e where Self.boundaryEvents.contains(e) || Self.toolEvents.contains(e):
