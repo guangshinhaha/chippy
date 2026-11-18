@@ -244,7 +244,7 @@ struct NotchView: View {
 
     static let terminalCardCap = 2
     /// Session rows in the peek, so the card's measured height stays within its cap.
-    static let sessionRowCap = 4
+    static let sessionRowCap = GlanceMetrics.rowCap // rows are GlanceMetrics.rowHeight each
 
     /// Terminal chips as cards (at most `terminalCardCap`, then a "N more" row, so the panel's measured height stays within its cap beside done cards).
     @ViewBuilder private var terminalCards: some View {
@@ -381,8 +381,12 @@ struct NotchView: View {
                     }
                     if model.sessions.isEmpty && model.recent.items.isEmpty { Text("No agent sessions.").font(.caption).foregroundStyle(.white.opacity(0.6)) }
                     // Live glance (#90): one line per session, working first. The word is the tool's category only, never its input.
-                    ForEach(model.glanceSessions.prefix(Self.sessionRowCap)) { row in
-                        GlanceRow(label: model.repoLabel(cwd: row.cwd, project: row.project), mark: model.identity(cwd: row.cwd, project: row.project), word: row.activity)
+                    // One timeline for the rows: a word with no new event for 90s (Esc, crash) falls back to the state at read time.
+                    TimelineView(.periodic(from: .now, by: 15)) { ctx in
+                        ForEach(model.glanceSessions.prefix(Self.sessionRowCap)) { row in
+                            let line = model.glanceLine(for: row, now: ctx.date)
+                            GlanceRow(label: model.repoLabel(cwd: row.cwd, project: row.project), mark: model.identity(cwd: row.cwd, project: row.project), text: line.text, live: line.live)
+                        }
                     }
                     if model.glanceSessions.count > Self.sessionRowCap {
                         Text("\(model.glanceSessions.count - Self.sessionRowCap) more sessions").font(.caption2).foregroundStyle(.white.opacity(0.6))
@@ -1114,11 +1118,13 @@ struct RepoTitle: View {
 }
 
 /// One line per session (#90): identity mark, repo (worktree tag), and the live word on the right. Read-only: no tap, no focus.
-/// `word` is nil for a session that is not working; it then says "Idle". Fixed one-line height, so the panel budget is rows x 18.
+/// `text` is the live word, or the session's real state; `live` dims it when it is only a state. One line at least
+/// `GlanceMetrics.rowHeight` tall (minHeight, so larger Dynamic Type grows the row instead of clipping it).
 struct GlanceRow: View {
     let label: RepoLabel
     let mark: SessionIdentity
-    let word: String?
+    let text: String
+    let live: Bool
     var body: some View {
         HStack(spacing: 6) {
             IdentityMark(identity: mark, size: 12)
@@ -1127,11 +1133,11 @@ struct GlanceRow: View {
                 Text(wt).font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1).truncationMode(.middle).frame(maxWidth: 90, alignment: .leading)
             }
             Spacer(minLength: 6)
-            Text(word ?? "Idle").font(.caption2).foregroundStyle(.white.opacity(word == nil ? 0.4 : 0.75)).lineLimit(1)
+            Text(text).font(.caption2).foregroundStyle(.white.opacity(live ? 0.75 : 0.5)).lineLimit(1)
         }
-        .frame(height: 18)
+        .frame(minHeight: GlanceMetrics.rowHeight)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(label.repo), \(mark.spokenShort), \(word ?? "idle")")
+        .accessibilityLabel("\(label.repo), \(label.worktree.map { "worktree \($0), " } ?? "")\(mark.spokenShort), \(text)")
     }
 }
 

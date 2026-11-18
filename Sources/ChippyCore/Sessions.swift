@@ -17,7 +17,15 @@ public struct SessionRow: Identifiable, Equatable {
     public var host: HostInfo?
     /// Live glance (#90): one allowlisted word from the tool name only (see `LiveGlance`). nil unless working.
     public var activity: String?
+    /// When `activity` was last set by an event; the word goes stale after `LiveGlance.staleAfter`.
+    public var activityAt: Date?
     public var updatedAt: Date
+
+    /// The glance word if still fresh at `now`; nil when absent or older than `LiveGlance.staleAfter` (Esc/crash: no Stop came).
+    public func liveActivity(now: Date) -> String? {
+        guard let a = activity, let at = activityAt, now.timeIntervalSince(at) <= LiveGlance.staleAfter else { return nil }
+        return a
+    }
 
     /// One-line live status, e.g. "Claude Code · editing 3 files".
     public var headline: String {
@@ -45,7 +53,10 @@ public struct SessionStore {
         rows[i].updatedAt = now
         // Latest wins, but a tty-only report must not erase a known host app.
         if let h = p.host, h.hasHost || rows[i].host == nil { rows[i].host = h }
-        rows[i].activity = LiveGlance.activity(after: p.event, tool: p.toolName) // Stop, SessionStart and others clear it
+        if LiveGlance.touchesActivity(p.event) {
+            rows[i].activity = LiveGlance.activity(after: p.event, tool: p.toolName, current: rows[i].activity)
+            rows[i].activityAt = rows[i].activity == nil ? nil : now
+        }
         switch p.event {
         case "SessionStart":
             rows[i].status = .idle; rows[i].detail = "Session started"
@@ -80,9 +91,13 @@ public struct SessionStore {
         }
     }
 
-    /// One glance line per running session: working only, newest first, word from `LiveGlance` (never tool input).
-    public var glanceRows: [SessionRow] {
-        rows.filter { $0.status == .working && $0.activity != nil }.sorted { $0.updatedAt > $1.updatedAt }
+    /// Every session in glance order: those with a word first, then newest first, ties broken by id so it is deterministic.
+    public var glanceOrder: [SessionRow] {
+        rows.sorted { a, b in
+            let ra = a.activity != nil, rb = b.activity != nil
+            if ra != rb { return ra }
+            return a.updatedAt != b.updatedAt ? a.updatedAt > b.updatedAt : a.id < b.id
+        }
     }
 
     /// Overall notch state derived from all sessions.

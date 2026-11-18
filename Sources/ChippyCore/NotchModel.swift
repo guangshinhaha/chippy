@@ -128,13 +128,15 @@ public final class NotchModel: ObservableObject {
         }
     }
 
-    /// Session lines for the open panel (#90): running sessions first (newest first), then the rest. Read-only, so a glance never
-    /// changes density, pending, folds or sounds; it only rides on `sessions`, which `apply` already updates.
-    public var glanceSessions: [SessionRow] {
-        sessions.sorted { a, b in
-            let ra = a.activity != nil, rb = b.activity != nil
-            return ra != rb ? ra : a.updatedAt > b.updatedAt
-        }
+    /// Session lines for the open panel (#90), in `SessionStore.glanceOrder`, sorted once per `apply` (not per render).
+    /// Read-only, so a glance never changes density, pending, folds or sounds.
+    @Published public private(set) var glanceSessions: [SessionRow] = []
+
+    /// The glance line for a row at `now`: the fresh word, or the real state (Needs you, Waiting for you, Finished, Idle).
+    public func glanceLine(for row: SessionRow, now: Date = Date()) -> (text: String, live: Bool) {
+        LiveGlance.line(for: row, now: now,
+                        needsYou: pending.contains { $0.sessionId == row.id },
+                        waitingTerminal: terminalItems.contains { $0.sessionId == row.id })
     }
 
     /// The one repo label for a cwd, as list rows show it: cached git result, or the folder-name fallback while it loads.
@@ -701,6 +703,7 @@ public final class NotchModel: ObservableObject {
         idleClock.noteEvent(now: now)
         store.apply(payload, now: now)
         sessions = store.rows
+        glanceSessions = store.glanceOrder
         // Conservative: tool events are shared with parallel/subagent calls, so only a turn boundary (prompt, Stop, end)
         // clears a terminal chip, or the PostToolUse of the same tool 2s+ after it (the ask was answered). Others stay.
         terminalItems.removeAll { t in

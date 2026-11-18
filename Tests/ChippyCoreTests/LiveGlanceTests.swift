@@ -48,7 +48,7 @@ final class LiveGlanceTests: XCTestCase {
         XCTAssertEqual(s.rows[0].activity, "Working")
         s.apply(payload(["session_id": "a", "hook_event_name": "Stop"]))
         XCTAssertNil(s.rows[0].activity)
-        XCTAssertTrue(s.glanceRows.isEmpty)
+        XCTAssertNil(s.rows[0].activityAt)
     }
 
     func testSessionStartAndEndClear() {
@@ -58,7 +58,7 @@ final class LiveGlanceTests: XCTestCase {
         XCTAssertNil(s.rows[0].activity)
         s.apply(tool("a", "PreToolUse", "Edit"))
         s.apply(payload(["session_id": "a", "hook_event_name": "SessionEnd"]))
-        XCTAssertTrue(s.rows.isEmpty); XCTAssertTrue(s.glanceRows.isEmpty)
+        XCTAssertTrue(s.rows.isEmpty); XCTAssertTrue(s.glanceOrder.isEmpty)
     }
 
     func testOneLinePerRunningSessionNewestFirst() {
@@ -68,8 +68,8 @@ final class LiveGlanceTests: XCTestCase {
         s.apply(tool("b", "PreToolUse", "Grep"), now: t0.addingTimeInterval(5))
         s.apply(tool("c", "PreToolUse", "Bash"), now: t0.addingTimeInterval(9))
         s.apply(payload(["session_id": "c", "hook_event_name": "Stop"]), now: t0.addingTimeInterval(10))
-        XCTAssertEqual(s.glanceRows.map(\.id), ["b", "a"])
-        XCTAssertEqual(s.glanceRows.map(\.activity), ["Searching", "Editing"])
+        XCTAssertEqual(s.glanceOrder.map(\.id), ["b", "a", "c"])
+        XCTAssertEqual(s.glanceOrder.map(\.activity), ["Searching", "Editing", nil])
     }
 
     /// Privacy: no tool input (path, command, prompt) reaches the glance word.
@@ -77,7 +77,7 @@ final class LiveGlanceTests: XCTestCase {
         var s = SessionStore()
         s.apply(tool("a", "PreToolUse", "Bash", input: ["command": "curl https://secret.example/token"]))
         s.apply(tool("b", "PreToolUse", "Edit", input: ["file_path": "/Users/me/students/Marks.xlsx"]))
-        for r in s.glanceRows {
+        for r in s.glanceOrder {
             let a = r.activity ?? ""
             XCTAssertFalse(a.contains("secret") || a.contains("Marks") || a.contains("/") || a.contains("curl"))
         }
@@ -91,6 +91,70 @@ final class LiveGlanceTests: XCTestCase {
         m.apply(tool("new", "PreToolUse", "Bash"), now: t0.addingTimeInterval(5))
         XCTAssertEqual(m.glanceSessions.map(\.id), ["new", "old", "idle"])
         XCTAssertNil(m.glanceSessions.last?.activity)
+    }
+
+    @MainActor func testPanelOrderIsStoredAndTiesBreakOnId() {
+        let m = NotchModel()
+        let t = Date(timeIntervalSince1970: 3000)
+        for id in ["c", "a", "b"] { m.apply(tool(id, "PreToolUse", "Read"), now: t) }
+        XCTAssertEqual(m.glanceSessions.map(\.id), ["a", "b", "c"])
+        var s = SessionStore()
+        for id in ["c", "a", "b"] { s.apply(tool(id, "PreToolUse", "Read"), now: t) }
+        XCTAssertEqual(m.glanceSessions.map(\.id), s.glanceOrder.map(\.id)) // one ordering
+    }
+
+    // Item 1: which events touch the word
+    func testNonTurnEventsLeaveActivityUntouched() {
+        var s = SessionStore()
+        let t0 = Date(timeIntervalSince1970: 1000)
+        s.apply(tool("a", "PreToolUse", "Edit"), now: t0)
+        for ev in ["Notification", "SubagentStop", "PreCompact", "SomethingNew"] {
+            s.apply(payload(["session_id": "a", "hook_event_name": ev]), now: t0.addingTimeInterval(5))
+            XCTAssertEqual(s.rows[0].activity, "Editing", ev)
+            XCTAssertEqual(s.rows[0].activityAt, t0, ev) // age is not refreshed either
+        }
+        XCTAssertNil(LiveGlance.activity(after: "Stop", tool: nil, current: "Editing"))
+        XCTAssertNil(LiveGlance.activity(after: "SessionStart", tool: nil, current: "Editing"))
+        XCTAssertEqual(LiveGlance.activity(after: "UserPromptSubmit", tool: nil, current: nil), "Thinking")
+    }
+
+    // Item 2: staleness, Esc or crash sends no Stop
+    func testStaleWordFallsBackToState() {
+        var s = SessionStore()
+        let t0 = Date(timeIntervalSince1970: 1000)
+        s.apply(tool("a", "PreToolUse", "Bash"), now: t0)
+        let row = s.rows[0]
+        XCTAssertEqual(row.liveActivity(now: t0.addingTimeInterval(90)), "Running")
+        XCTAssertNil(row.liveActivity(now: t0.addingTimeInterval(91)))
+        XCTAssertEqual(LiveGlance.line(for: row, now: t0.addingTimeInterval(30)).text, "Running")
+        let stale = LiveGlance.line(for: row, now: t0.addingTimeInterval(120))
+        XCTAssertEqual(stale.text, "Idle"); XCTAssertFalse(stale.live)
+        s.apply(tool("a", "PostToolUse", "Bash"), now: t0.addingTimeInterval(100)) // a new event revives it
+        XCTAssertEqual(LiveGlance.line(for: s.rows[0], now: t0.addingTimeInterval(120)).text, "Thinking")
+    }
+
+    // Item 3: real state on non-active lines
+    @MainActor func testLineShowsRealState() {
+        let m = NotchModel()
+        let t = Date(timeIntervalSince1970: 4000)
+        m.apply(payload(["session_id": "idle", "cwd": "/w/a", "hook_event_name": "SessionStart"]), now: t)
+        m.apply(tool("fin", "PreToolUse", "Edit"), now: t)
+        m.apply(payload(["session_id": "fin", "cwd": "/w/b", "hook_event_name": "Stop"]), now: t)
+        m.apply(tool("run", "PreToolUse", "Grep"), now: t)
+        func line(_ id: String) -> String { m.glanceLine(for: m.glanceSessions.first { $0.id == id }!, now: t.addingTimeInterval(5)).text }
+        XCTAssertEqual(line("idle"), "Idle")
+        XCTAssertEqual(line("fin"), "Finished")
+        XCTAssertEqual(line("run"), "Searching")
+        let row = m.glanceSessions.first { $0.id == "run" }!
+        XCTAssertEqual(LiveGlance.line(for: row, now: t, needsYou: true).text, "Needs you")
+        XCTAssertEqual(LiveGlance.line(for: row, now: t, waitingTerminal: true).text, "Waiting for you")
+        XCTAssertFalse(LiveGlance.line(for: row, now: t, needsYou: true).live)
+    }
+
+    func testGlanceHeightBudget() {
+        XCTAssertEqual(GlanceMetrics.height(rows: 0), 0)
+        XCTAssertEqual(GlanceMetrics.height(rows: 2), 2 * GlanceMetrics.rowHeight)
+        XCTAssertEqual(GlanceMetrics.height(rows: 9), 4 * GlanceMetrics.rowHeight + GlanceMetrics.moreHeight)
     }
 
     /// The glance rides on the existing session list: a model apply must not open a card, fold, or start a sound.

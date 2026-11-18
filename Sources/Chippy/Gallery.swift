@@ -173,10 +173,12 @@ enum Gallery {
         model.apply(HookPayload(json: Data(#"{"session_id":"e","hook_event_name":"SessionStart","cwd":"/demo/portal"}"#.utf8))!, now: t.addingTimeInterval(-20))
         model.toggleOpen()
         let m = NotchMetrics.sample14
-        let sz = m.size(for: .expanded, contentHeight: 250)
-        let b = box(m); b.contentHeight = 250
+        // Header and padding around the rows, plus the rows themselves from their count (not a magic number).
+        let h = 110 + GlanceMetrics.height(rows: model.glanceSessions.count)
+        let sz = m.size(for: .expanded, contentHeight: h)
+        let b = box(m); b.contentHeight = h
         let r = ImageRenderer(content: NotchView(model: model, box: b).frame(width: sz.width, height: sz.height).background(Color(white: 0.25)))
-        writePNG(r, to: path, note: "restOpen=\(model.restOpen) lines=\(model.glanceSessions.map { $0.activity ?? "Idle" })")
+        writePNG(r, to: path, note: "restOpen=\(model.restOpen) lines=\(model.glanceSessions.map { model.glanceLine(for: $0).text })")
     }
 
     /// Render one notch view at `size` to a 2x PNG and print the note.
