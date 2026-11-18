@@ -108,8 +108,8 @@ final class SummaryMarkdownTests: XCTestCase {
         XCTAssertEqual(d.outcomePlain, "Updated the parser for several inputs, e.g. quoted strings and nested lists, so it is faster.")
         let v = SummaryMarkdown.doc("Bumped the dependency to v2. and then reran the whole suite plus the lint and type checks to confirm it all works. Second sentence goes here.")!
         XCTAssertEqual(v.outcomePlain, "Bumped the dependency to v2. and then reran the whole suite plus the lint and type checks to confirm it all works.")
-        let x = SummaryMarkdown.doc("Handled json, yaml, etc. and also a lot more formats than before today, which took a while. Done.")!
-        XCTAssertEqual(x.outcomePlain, "Handled json, yaml, etc. and also a lot more formats than before today, which took a while.")
+        let x = SummaryMarkdown.doc("Handled json, yaml, etc. and also a lot more formats than before today, which took a good while to finish properly. Done.")!
+        XCTAssertEqual(x.outcomePlain, "Handled json, yaml, etc. and also a lot more formats than before today, which took a good while to finish properly.")
     }
     func testHugeInputBounded() {
         XCTAssertNotNil(SummaryMarkdown.doc(String(repeating: "**a** ", count: 100_000)))
