@@ -17,23 +17,29 @@ public enum SilencePolicy {
     /// Seconds between the Unix epoch and Apple's reference date (2001-01-01), the usual unit of Focus timestamps.
     static let appleEpochOffset: TimeInterval = 978_307_200
 
-    /// Parses ~/Library/DoNotDisturb/DB/Assertions.json. Focus is `.on` only when a record is a dictionary and is active
-    /// now: not expired, not starting in the future. An empty `storeAssertionRecords` is `.off`. Anything unexpected
-    /// (no data, wrong types, non-dictionary records) is `.unknown`, which callers treat as off (fail open).
-    /// Reads key names and timestamps only, never any content. See docs/decisions/focus-detection.md for what was verified.
+    /// Parses ~/Library/DoNotDisturb/DB/Assertions.json. Focus is `.on` only when a record is a dictionary with a recognised
+    /// start or expiry timestamp and is active now (not expired, not starting in the future). An empty `storeAssertionRecords`
+    /// is `.off`. A record with no recognised timestamp, or anything unexpected (no data, wrong types, non-dictionary
+    /// records), is `.unknown`, which callers treat as off (fail open). Reads key names and timestamps only, never any
+    /// content. See docs/decisions/focus-detection.md for what was verified.
     public static func readFocus(assertionsJSON data: Data?, now: Date = Date()) -> FocusReading {
         guard let data,
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let list = root["data"] as? [Any] else { return .unknown }
-        var sawStore = false
+        var sawStore = false, sawUnknown = false
         for entry in list {
             guard let e = entry as? [String: Any], let records = e["storeAssertionRecords"] as? [Any] else { continue }
             sawStore = true
             for r in records {
-                guard let rec = r as? [String: Any] else { return .unknown }
-                if isActive(rec, now: now) { return .on }
+                guard let rec = r as? [String: Any] else { sawUnknown = true; continue }
+                switch recordState(rec, now: now) {
+                case .active: return .on
+                case .inactive: break
+                case .unrecognised: sawUnknown = true
+                }
             }
         }
+        if sawUnknown { return .unknown }
         return (sawStore || list.isEmpty) ? .off : .unknown
     }
 
@@ -41,20 +47,34 @@ public enum SilencePolicy {
         readFocus(assertionsJSON: data, now: now) == .on
     }
 
-    private static func isActive(_ rec: [String: Any], now: Date) -> Bool {
+    private enum RecordState { case active, inactive, unrecognised }
+
+    private static func recordState(_ rec: [String: Any], now: Date) -> RecordState {
         let t = now.timeIntervalSince1970
+        var recognised = false, active = true
         for (k, v) in rec {
             let key = k.lowercased()
             guard key.contains("expir") || key.contains("start") else { continue }
-            // NSNumber booleans bridge to Double (true is 1.0): never a timestamp. Other types: ignored, fail open.
+            // NSNumber booleans bridge to Double (true is 1.0): never a timestamp. Other types: ignored.
             guard let num = v as? NSNumber, CFGetTypeID(num) != CFBooleanGetTypeID() else { continue }
             let n = num.doubleValue
             guard n > 0 else { continue }
+            recognised = true
             let unix = n < 1_000_000_000 ? n + appleEpochOffset : (n < 4_000_000_000 ? n : n / 1000) // reference-date secs, unix secs, or ms
-            if key.contains("expir"), unix <= t { return false }
-            if key.contains("start"), unix > t + 1 { return false }
+            if key.contains("expir"), unix <= t { active = false }
+            if key.contains("start"), unix > t + 1 { active = false }
         }
-        return true
+        return recognised ? (active ? .active : .inactive) : .unrecognised
+    }
+
+    /// Whether the login session is locked or not on the console (fast user switch), from the dictionary returned by
+    /// `CGSessionCopyCurrentDictionary()`. Read live, so a missed distributed unlock notification cannot leave Chippy quiet.
+    /// A missing dictionary reads as not locked (fail open).
+    public static func sessionIsLocked(_ dict: [String: Any]?) -> Bool {
+        guard let dict else { return false }
+        if let l = dict["CGSSessionScreenIsLocked"] as? Bool, l { return true }
+        if let c = dict["kCGSSessionOnConsoleKey"] as? Bool, !c { return true }
+        return false
     }
 }
 
@@ -92,6 +112,9 @@ public final class FocusCache: @unchecked Sendable {
         if prefetch { async { [self] in store(read()) } }
         return r
     }
+
+    /// Forget the cached reading (wake, session active): the next read is synchronous.
+    public func invalidate() { lock.lock(); stamp = .distantPast; lock.unlock() }
 
     /// Focus is on. Unknown counts as off (fail open).
     public var current: Bool { snapshot == .on }

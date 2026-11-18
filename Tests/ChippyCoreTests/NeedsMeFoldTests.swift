@@ -204,9 +204,9 @@ final class NeedsMeFoldTests: XCTestCase {
         let m = model()
         let id = ask(m)
         advance(m, 16)
-        // The hook gives up at 20s: the peer closes, the sweep drops it and notes the terminal chip as before.
+        // The hook gives up at the default wait: the peer closes, the sweep drops it and notes the terminal chip as before.
         close(fds[fds.count - 1][1]); fds[fds.count - 1][1] = -1
-        m.sweep(now: Date().addingTimeInterval(21)) // t0 is stale by now: every XCTestCase instance is built up front
+        m.sweep(now: Date().addingTimeInterval(TimeInterval(SettingsInstaller.defaultApprovalTimeout) + 1)) // t0 is stale by now: every XCTestCase instance is built up front
         XCTAssertFalse(m.pending.contains { $0.id == id })
         XCTAssertEqual(m.terminalItems.count, 1); XCTAssertFalse(m.folded)
     }

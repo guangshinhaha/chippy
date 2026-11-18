@@ -15,7 +15,7 @@ final class SilencePolicyTests: XCTestCase {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let ref = now.timeIntervalSince1970 - SilencePolicy.appleEpochOffset
         func rd(_ s: String?) -> SilencePolicy.FocusReading { SilencePolicy.readFocus(assertionsJSON: s?.data(using: .utf8), now: now) }
-        XCTAssertEqual(rd(#"{"data":[{"storeAssertionRecords":[{"x":1}]}]}"#), .on)
+        XCTAssertEqual(rd(#"{"data":[{"storeAssertionRecords":[{"x":1}]}]}"#), .unknown) // no recognised timestamp: fail open
         XCTAssertEqual(rd(#"{"data":[{"storeAssertionRecords":[]}]}"#), .off)
         XCTAssertEqual(rd(#"{"data":[]}"#), .off)
         XCTAssertEqual(rd(#"{"data":[{}]}"#), .unknown)
@@ -28,7 +28,9 @@ final class SilencePolicyTests: XCTestCase {
         XCTAssertEqual(rd(#"{"data":[{"storeAssertionRecords":[{"assertionStartDateTimestamp":\#(ref - 100),"assertionExpirationDate":\#(ref + 600)}]}]}"#), .on)
         XCTAssertEqual(rd(#"{"data":[{"storeAssertionRecords":[{"assertionStartDateTimestamp":\#(ref + 600)}]}]}"#), .off)
         // one expired plus one active record is on
-        XCTAssertEqual(rd(#"{"data":[{"storeAssertionRecords":[{"assertionExpirationDate":\#(ref - 1)},{"y":2}]}]}"#), .on)
+        XCTAssertEqual(rd(#"{"data":[{"storeAssertionRecords":[{"assertionExpirationDate":\#(ref - 1)},{"assertionStartDateTimestamp":\#(ref - 5)}]}]}"#), .on)
+        XCTAssertEqual(rd(#"{"data":[{"storeAssertionRecords":[{"assertionExpirationDate":\#(ref - 1)},{"y":2}]}]}"#), .unknown)
+        XCTAssertFalse(SilencePolicy.focusIsOn(assertionsJSON: Data(#"{"data":[{"storeAssertionRecords":[{"mode":"x"}]}]}"#.utf8)))
         XCTAssertFalse(SilencePolicy.focusIsOn(assertionsJSON: nil))
     }
 
@@ -52,9 +54,28 @@ final class SilencePolicyTests: XCTestCase {
     func testFocusParserIgnoresBooleansAsTimestamps() {
         let ref = Date().timeIntervalSince1970 - SilencePolicy.appleEpochOffset
         func rd(_ j: String) -> SilencePolicy.FocusReading { SilencePolicy.readFocus(assertionsJSON: Data(j.utf8)) }
-        // true would read as 1.0 (a 2001 expiry) and wrongly end Focus; it must be ignored (fail open to active)
-        XCTAssertEqual(rd(#"{"data":[{"storeAssertionRecords":[{"assertionExpirationDate":true,"assertionStartDateTimestamp":false}]}]}"#), .on)
+        // true would read as 1.0 (a 2001 expiry); it is never a timestamp, so the record is unrecognised (unknown, fail open)
+        XCTAssertEqual(rd(#"{"data":[{"storeAssertionRecords":[{"assertionExpirationDate":true,"assertionStartDateTimestamp":false}]}]}"#), .unknown)
         XCTAssertEqual(rd(#"{"data":[{"storeAssertionRecords":[{"assertionExpirationDate":\#(ref + 600)}]}]}"#), .on)
+    }
+
+    func testSessionLockReadIsLiveAndFailsOpen() {
+        XCTAssertFalse(SilencePolicy.sessionIsLocked(nil))
+        XCTAssertFalse(SilencePolicy.sessionIsLocked([:]))
+        XCTAssertFalse(SilencePolicy.sessionIsLocked(["kCGSSessionOnConsoleKey": true, "CGSSessionScreenIsLocked": false]))
+        XCTAssertTrue(SilencePolicy.sessionIsLocked(["CGSSessionScreenIsLocked": true]))
+        XCTAssertTrue(SilencePolicy.sessionIsLocked(["kCGSSessionOnConsoleKey": false])) // switched-away user
+        // the same dictionary read later says unlocked: no latched state to go stale
+        XCTAssertFalse(SilencePolicy.sessionIsLocked(["kCGSSessionOnConsoleKey": true]))
+    }
+
+    func testFocusCacheInvalidateForcesFreshRead() {
+        let t = Date(timeIntervalSince1970: 100); var reads = 0; var v = SilencePolicy.FocusReading.on
+        let c = FocusCache(ttl: 2, clock: { t }, read: { reads += 1; return v }, async: { _ in })
+        XCTAssertTrue(c.current); v = .off
+        XCTAssertTrue(c.current)          // cached
+        c.invalidate()
+        XCTAssertFalse(c.current); XCTAssertEqual(reads, 2)
     }
 
     func testSoundPolicySilencedKeepsNeedsYouRules() {
