@@ -32,6 +32,8 @@ public final class NotchModel: ObservableObject {
     @Published public private(set) var pinnedOpen = false
     /// Finished threads waiting to be acknowledged. Sticky: they stay until dismissed, the thread moves on, or they age out.
     @Published public private(set) var doneItems: [DoneItem] = []
+    /// Questions/approvals that fell back to the terminal (#42). Sticky until the session's next event or `doneSeconds`.
+    @Published public private(set) var terminalItems: [TerminalItem] = []
     /// The done chip was clicked: show what the finished threads did.
     @Published public private(set) var doneOpen = false
     /// The done detail is open: the panel grows so the whole reply can be read.
@@ -64,12 +66,13 @@ public final class NotchModel: ObservableObject {
     private func refresh() {
         guard !debugLock else { visible = true; return }
         if sessions.isEmpty { pinnedOpen = false }
-        if doneItems.isEmpty { doneOpen = false }
+        if doneItems.isEmpty && terminalItems.isEmpty { doneOpen = false }
         let live = store.derivedState
-        state = !pending.isEmpty ? .needsYou : (live == .working ? .working : (doneItems.isEmpty ? live : .done))
-        tall = pending.isEmpty && !pinnedOpen && doneOpen
+        let waiting = !pending.isEmpty || !terminalItems.isEmpty
+        state = waiting ? .needsYou : (live == .working ? .working : (doneItems.isEmpty ? live : .done))
+        tall = pending.isEmpty && !pinnedOpen && doneOpen && !doneItems.isEmpty
         if !pending.isEmpty || pinnedOpen || doneOpen { density = .expanded; visible = true }
-        else if !doneItems.isEmpty { density = .compact; visible = true }
+        else if !doneItems.isEmpty || !terminalItems.isEmpty { density = .compact; visible = true }
         else { density = .collapsed; visible = false }
     }
 
@@ -77,7 +80,7 @@ public final class NotchModel: ObservableObject {
     /// otherwise it opens or closes the session peek.
     public func toggleOpen() {
         guard pending.isEmpty else { return }
-        if !doneItems.isEmpty && !pinnedOpen { doneOpen.toggle() } else { pinnedOpen.toggle() }
+        if (!doneItems.isEmpty || !terminalItems.isEmpty) && !pinnedOpen { doneOpen.toggle() } else { pinnedOpen.toggle() }
         refresh()
     }
 
@@ -94,12 +97,30 @@ public final class NotchModel: ObservableObject {
         refresh()
     }
 
+    /// Acknowledge one terminal chip, or all of them.
+    public func dismissTerminal(_ sessionId: String? = nil) {
+        if let sessionId { terminalItems.removeAll { $0.sessionId == sessionId } } else { terminalItems.removeAll() }
+        refresh()
+    }
+
+    /// Show `repo · asked in terminal` for this request's session. Metadata only: never the question, command or input.
+    private func noteTerminal(_ req: PendingRequest, host: HostInfo?, now: Date) {
+        guard !Tour.isDemo(req.sessionId) else { return }
+        terminalItems.removeAll { $0.sessionId == req.sessionId }
+        terminalItems.append(TerminalItem(sessionId: req.sessionId, project: req.project, at: now, host: host))
+    }
+
     /// A PermissionRequest hook is waiting on `conn`. Main thread only.
     /// AskUserQuestion is answerable only when every question is single-select; otherwise no reply, so the terminal handles it.
     public func receiveApproval(_ payload: HookPayload, _ conn: Connection) {
         var req = PendingRequest(payload: payload)
         if payload.toolName == "AskUserQuestion" {
-            guard req.questions != nil else { conn.respond(nil); return }
+            guard req.questions != nil else {
+                conn.respond(nil)
+                noteTerminal(req, host: sessions.first { $0.id == payload.sessionId }?.host ?? payload.host, now: req.createdAt)
+                refresh()
+                return
+            }
             questionInputs[req.id] = payload.toolInput
         }
         req.lastPrompt = sessions.first { $0.id == payload.sessionId }?.lastPrompt
@@ -170,9 +191,12 @@ public final class NotchModel: ObservableObject {
         let gone = pending.filter { connections[$0.id]?.peerGone ?? true }
         let before = doneItems.count
         doneItems.removeAll { now.timeIntervalSince($0.at) > Self.doneSeconds }
-        if doneItems.count != before { refresh() }
+        let tBefore = terminalItems.count
+        terminalItems.removeAll { now.timeIntervalSince($0.at) > Self.doneSeconds }
+        if doneItems.count != before || terminalItems.count != tBefore { refresh() }
         guard !gone.isEmpty else { return }
         for r in gone {
+            noteTerminal(r, host: sessions.first { $0.id == r.sessionId }?.host, now: now)
             connections.removeValue(forKey: r.id)?.respond(nil); questionInputs.removeValue(forKey: r.id)
             record(r, channel: .terminal, decision: "none", now: now)
         }
@@ -184,6 +208,10 @@ public final class NotchModel: ObservableObject {
     public func apply(_ payload: HookPayload, now: Date = Date()) {
         store.apply(payload, now: now)
         sessions = store.rows
+        // The session's next event means the terminal ask was handled (or abandoned): its chip goes, other sessions' stay.
+        if ["Stop", "UserPromptSubmit", "SessionEnd", "PreToolUse", "PostToolUse"].contains(payload.event) {
+            terminalItems.removeAll { $0.sessionId == payload.sessionId }
+        }
         switch payload.event {
         case "Stop" where !payload.isAgentWorktree:
             if let r = sessions.first(where: { $0.id == payload.sessionId }) {
@@ -234,4 +262,16 @@ public struct DoneItem: Identifiable, Equatable {
 
     /// "repo · branch", or just the repo.
     public var identity: String { branch.map { "\(project) · \($0)" } ?? project }
+}
+
+/// A question or approval that fell back to the terminal. Holds no content (PDPA, #30): only the repo name.
+public struct TerminalItem: Identifiable, Equatable {
+    public var id: String { sessionId }
+    public let sessionId: String
+    /// Last path component of the cwd (worktree-aware), nothing else.
+    public let project: String
+    public let at: Date
+    public var host: HostInfo? = nil
+
+    public var glance: String { "\(project) · asked in terminal" }
 }

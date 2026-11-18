@@ -109,6 +109,32 @@ enum Gallery {
               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
         try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
     }
+    /// `Chippy --render-terminal-chip out.png`: the compact `repo · asked in terminal` chip and its opened card (sample text only).
+    @MainActor
+    static func renderTerminalChip(to path: String) {
+        func make(open: Bool) -> NotchModel {
+            let model = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("gal.jsonl")))
+            let json: [String: Any] = ["session_id": "a", "hook_event_name": "PermissionRequest", "cwd": "/demo/api-server", "chippy_branch": "main",
+                "tool_name": "AskUserQuestion", "tool_input": ["questions": [["question": "SECRET QUESTION TEXT", "header": "x", "multiSelect": true, "options": [["label": "A", "description": "a"], ["label": "B", "description": "b"]]]]]]
+            model.receiveApproval(HookPayload(json: try! JSONSerialization.data(withJSONObject: json))!, Connection.detached())
+            if open { model.toggleOpen() }
+            return model
+        }
+        let m = NotchMetrics(width: 185, height: 32)
+        func cell(_ open: Bool, _ title: String) -> some View {
+            let model = make(open: open)
+            let sz = m.size(for: model.density, tall: model.tall)
+            return VStack(spacing: 4) {
+                NotchView(model: model, box: box(m)).frame(width: sz.width, height: sz.height)
+                Text(title).font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        let r = ImageRenderer(content: VStack(alignment: .leading, spacing: 12) { cell(false, "compact"); cell(true, "opened") }.padding(16).background(Color(white: 0.25)))
+        r.scale = 2
+        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
+              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
+        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
+    }
     /// `Chippy --render-tab out.png`: no room beside the camera (menu extras hug the notch), so the indicator is a tab below it.
     /// A mock menu bar with items touching both edges and the camera in red; wings (room) vs tab (no room), per density.
     @MainActor

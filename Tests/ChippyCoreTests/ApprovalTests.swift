@@ -138,7 +138,7 @@ final class ApprovalTests: XCTestCase {
         m.receiveApproval(payload(), c)
         close(f)                                          // hook timed out / terminal answered
         m.sweep()
-        XCTAssertTrue(m.pending.isEmpty); XCTAssertEqual(m.state, .idle)
+        XCTAssertTrue(m.pending.isEmpty); XCTAssertEqual(m.terminalItems.count, 1) // #42: leaves the terminal chip
     }
 
     func testAlwaysOnAnEditDoesNotCoverOtherContentInTheSameFile() {

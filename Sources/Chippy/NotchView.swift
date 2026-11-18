@@ -107,6 +107,7 @@ struct NotchView: View {
 
     /// Glance text: who finished (repo · branch), so several threads can be told apart.
     private var compactText: String {
+        if let t = model.terminalItems.last, model.pending.isEmpty, t.at >= (model.doneItems.last?.at ?? .distantPast) { return t.glance }
         guard let d = model.doneItems.last else { return model.state.title }
         return d.glance(showReply: model.showReplyInGlance)
     }
@@ -131,8 +132,8 @@ struct NotchView: View {
                 HStack(spacing: 6) {
                     Color.clear.frame(width: 18 * 1.4 + 12)
                     Text(compactText).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.tail)
-                    if model.doneItems.count > 1 {
-                        Text("+\(model.doneItems.count - 1)").font(.caption2).foregroundStyle(.white.opacity(0.6))
+                    if model.doneItems.count + model.terminalItems.count > 1 {
+                        Text("+\(model.doneItems.count + model.terminalItems.count - 1)").font(.caption2).foregroundStyle(.white.opacity(0.6))
                     }
                     Spacer(minLength: 0)
                 }
@@ -151,8 +152,8 @@ struct NotchView: View {
                     Text(compactText)
                         .font(.caption.bold()).foregroundStyle(.white)
                         .lineLimit(1).truncationMode(.tail)
-                    if model.doneItems.count > 1 {
-                        Text("+\(model.doneItems.count - 1)").font(.caption2).foregroundStyle(.white.opacity(0.6))
+                    if model.doneItems.count + model.terminalItems.count > 1 {
+                        Text("+\(model.doneItems.count + model.terminalItems.count - 1)").font(.caption2).foregroundStyle(.white.opacity(0.6))
                     }
                     Spacer(minLength: 0)
                 }
@@ -176,6 +177,7 @@ struct NotchView: View {
                         ApprovalCard(req: req) { model.resolve(req.id, $0) }.reveal(0.12)
                     }
                 } else if model.pinnedOpen {
+                    ForEach(model.terminalItems.reversed().prefix(3)) { t in TerminalCard(item: t) { model.dismissTerminal(t.sessionId) }.reveal(0.12) }
                     ForEach(model.doneItems.reversed().prefix(3)) { d in DoneCard(item: d) { model.dismissDone(d.sessionId) }.reveal(0.12) }
                     if model.sessions.isEmpty { Text("No agent sessions.").font(.caption).foregroundStyle(.white.opacity(0.6)) }
                     ForEach(model.sessions) { row in
@@ -185,6 +187,7 @@ struct NotchView: View {
                         }
                     }
                 } else {
+                    ForEach(model.terminalItems.reversed().prefix(3)) { t in TerminalCard(item: t) { model.dismissTerminal(t.sessionId) }.reveal(0.12) }
                     ForEach(model.doneItems.reversed().prefix(model.tall ? 1 : 3)) { d in DoneCard(item: d, full: model.tall) { model.dismissDone(d.sessionId) }.reveal(0.12) }
                 }
             }
@@ -418,6 +421,24 @@ struct DoneCard: View {
                 if TerminalJump.available(item.host) {
                     OpenTerminalButton(host: item.host, onOpened: dismiss)
                 }
+                ChipButton(title: "Dismiss", kind: .neutral, action: dismiss)
+            }
+        }
+    }
+}
+
+/// A question or approval that went to the terminal. Repo name only, never the question or command (PDPA, #30).
+struct TerminalCard: View {
+    let item: TerminalItem
+    let dismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(item.glance).font(.caption.bold()).foregroundStyle(.white.opacity(0.85))
+            HStack {
+                Text("Claude is waiting for you there").font(.caption2).foregroundStyle(.white.opacity(0.6))
+                Spacer()
+                if TerminalJump.available(item.host) { OpenTerminalButton(host: item.host, onOpened: dismiss) }
                 ChipButton(title: "Dismiss", kind: .neutral, action: dismiss)
             }
         }
