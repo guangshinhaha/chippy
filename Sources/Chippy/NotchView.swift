@@ -432,8 +432,15 @@ struct OpenTerminalButton: View {
     @State private var busy = false
     @State private var token = 0
 
+    /// The source app's real name ("Orca", "Terminal", "iTerm2"); "terminal" when unknown.
+    private var appName: String {
+        guard let pid = host?.pid, let app = NSRunningApplication(processIdentifier: pid),
+              let name = app.localizedName, !name.isEmpty else { return "terminal" }
+        return name
+    }
+
     var body: some View {
-        ChipButton(title: failed ? "Couldn't open" : "Open terminal",
+        ChipButton(title: failed ? "Couldn't open" : "Open \(appName)",
                    hint: failed ? "switch to it yourself" : nil, kind: .neutral) {
             guard !busy else { return }
             busy = true; failed = false; token += 1
