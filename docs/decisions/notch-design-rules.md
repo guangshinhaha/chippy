@@ -20,3 +20,8 @@ Source: web research on Apple's Live Activities HIG and existing Claude Code not
 
 ## Open
 - Chip expiry stays at 10 min (HIG suggests 15-30); revisit if it feels short.
+
+## Fold rules (#86)
+- Each approval or question has its own 15s timer; hover holds all of them; the OLDEST request decides when the panel folds, so a later request never restarts an earlier one's timer. A request arriving while folded re-opens the panel and gives every request a fresh timer.
+- A request the user opened by hand (click, list jump, picking an answer, a panel already open on arrival, opening the list while reading a card) is pinned and never folds. While any pinned request exists the panel stays on it and older due requests wait behind it; the moment it is answered, the panel folds if the oldest is due. No fold while the list is open. Clearing a pick back to empty undoes only that pick's pin.
+- The card, the badge ring and the sweep all use the wait the relay reports (`chippy_wait`, the hook's own `--timeout`); the 20s / 120s defaults apply only to an older relay. A request past its wait is dropped to the terminal chip even if hovered.

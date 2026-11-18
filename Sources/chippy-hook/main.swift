@@ -41,6 +41,11 @@ func relay(_ args: [String]) -> Never {
         d["chippy_lead_in"] = lead
         obj = d
     }
+    // Tell Chippy how long this hook will wait, so the card's countdown and the sweep use the real (possibly custom) value.
+    if var d = obj as? [String: Any], d["hook_event_name"] as? String == "PermissionRequest" {
+        d["chippy_wait"] = d["tool_name"] as? String == "AskUserQuestion" ? questionTimeout : timeout
+        obj = d
+    }
     guard let line = try? JSONSerialization.data(withJSONObject: obj) else {
         debug("unparseable payload, exit \(ms())"); exit(0)
     }

@@ -78,10 +78,10 @@ final class NeedsMeFoldTests: XCTestCase {
                           log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("chippy-test-\(UUID()).jsonl")),
                           clock: { [unowned self] in self.clockNow })
     }
-    @discardableResult private func ask(_ m: NotchModel, _ cmd: String = "ls") -> String {
+    @discardableResult private func ask(_ m: NotchModel, _ cmd: String = "ls", wait: Int? = nil) -> String {
         var p: [Int32] = [0, 0]
         socketpair(AF_UNIX, SOCK_STREAM, 0, &p); fds.append(p)
-        let h = HookPayload(json: Data(#"{"session_id":"s","hook_event_name":"PermissionRequest","cwd":"/x/p","tool_name":"Bash","tool_input":{"command":"\#(cmd)"}}"#.utf8))!
+        let h = HookPayload(json: Data(#"{"session_id":"s","hook_event_name":"PermissionRequest","cwd":"/x/p","tool_name":"Bash","tool_input":{"command":"\#(cmd)"\#(wait.map { #"},"chippy_wait":\#($0)"# } ?? "}")}"#.utf8))!
         m.receiveApproval(h, Connection(fd: p[0]), now: t0)
         return m.pending.last!.id
     }
@@ -290,11 +290,62 @@ final class NeedsMeFoldTests: XCTestCase {
         XCTAssertTrue(m.folded)
     }
 
-    func testClosingTheListClearsAPendingJumpTarget() {
+    func testClosingTheListKeepsTheCardTheUserChose() {
         let m = model()
-        let a = ask(m)
+        let a = ask(m); ask(m, "pwd")
         m.activate(.pending(a))
         m.openList(); m.closeList()
-        XCTAssertNil(m.focus)
+        XCTAssertEqual(m.shownPending?.id, a)                // the card does not switch
+    }
+
+    func testCustomHookWaitDrivesTimeoutRingAndSweep() {
+        let m = model()
+        let id = ask(m, wait: 60)
+        XCTAssertEqual(m.timeout(for: m.pending[0]), 60)
+        advance(m, 16)
+        XCTAssertEqual(m.foldedDeadline.map { $0.end.timeIntervalSince($0.start) }, 60)   // the ring drains over 60s, not 20
+        m.sweep(now: Date().addingTimeInterval(30))
+        XCTAssertTrue(m.pending.contains { $0.id == id })    // a live 60s request is not dropped at the default 20s
+        m.sweep(now: Date().addingTimeInterval(61))
+        XCTAssertFalse(m.pending.contains { $0.id == id })
+    }
+
+    func testHookWaitFieldIsValidated() {
+        func w(_ x: String) -> TimeInterval? {
+            HookPayload(json: Data(#"{"session_id":"s","hook_event_name":"PermissionRequest","chippy_wait":\#(x)}"#.utf8))!.waitSeconds
+        }
+        XCTAssertEqual(w("45"), 45)
+        XCTAssertNil(w("0")); XCTAssertNil(w("-5")); XCTAssertNil(w("99999")); XCTAssertNil(w("\"x\""))
+        XCTAssertNil(HookPayload(json: Data(#"{"session_id":"s","hook_event_name":"PermissionRequest"}"#.utf8))!.waitSeconds)
+    }
+
+    func testOpeningTheListWhileReadingPinsTheCard() {
+        let m = model()
+        ask(m)
+        advance(m, 5)
+        m.openList(); XCTAssertFalse(m.folded)
+        advance(m, 600); XCTAssertFalse(m.folded)            // no fold while the list is open
+        m.closeList()
+        advance(m, 600)
+        XCTAssertFalse(m.folded); XCTAssertEqual(m.density, .expanded)   // and the card they were reading stays
+    }
+
+    func testListOpenedFromTheBadgeReturnsToTheBadge() {
+        let m = model()
+        ask(m)
+        advance(m, 16); XCTAssertTrue(m.folded)
+        m.openList(); m.closeList()
+        XCTAssertTrue(m.folded); XCTAssertEqual(m.density, .collapsed)
+    }
+
+    func testPinnedLaterRequestFoldsAwayOnceAnsweredBecauseTheOlderIsDue() {
+        let m = model()
+        ask(m)                                               // A
+        advance(m, 10)
+        let b = ask(m, "pwd")                                // B
+        m.activate(.pending(b))                              // user opens B by hand
+        advance(m, 100); XCTAssertFalse(m.folded)            // pinned B holds the panel
+        m.resolve(b, .allow)
+        XCTAssertTrue(m.folded)                              // A was due long ago: nothing keeps it open
     }
 }

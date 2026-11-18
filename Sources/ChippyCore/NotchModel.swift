@@ -152,6 +152,7 @@ public final class NotchModel: ObservableObject {
     /// Open the waiting list (badge tap, or the header while several wait).
     public func openList() {
         guard !waitingItems.isEmpty else { return }
+        if !folded { open(ids: pending.map(\.id)) } // reading a card: opening the list must not let it fold behind the user's back
         listOpen = true
         listSelection = WaitingList.reconcile(listSelection, in: waitingItems)
         refresh()
@@ -160,7 +161,6 @@ public final class NotchModel: ObservableObject {
     public func closeList() {
         guard listOpen else { return }
         listOpen = false
-        if case .pending? = focus { focus = nil } // a stale jump target must not outlive the list
         refresh()
     }
 
@@ -215,7 +215,7 @@ public final class NotchModel: ObservableObject {
     /// When the soonest folded request's hook gives up and the terminal takes over (the badge ring drains to it).
     public var foldedDeadline: (start: Date, end: Date)? {
         guard folded else { return nil }
-        return pending.map { r in (r.createdAt, r.createdAt.addingTimeInterval(r.questions != nil ? questionTimeout : approvalTimeout)) }
+        return pending.map { r in (r.createdAt, r.createdAt.addingTimeInterval(timeout(for: r))) }
             .min { $0.1 < $1.1 }.map { (start: $0.0, end: $0.1) }
     }
 
@@ -225,16 +225,20 @@ public final class NotchModel: ObservableObject {
         if folded { folded = false }
     }
 
-    /// The oldest request decides: it is due and the user has pinned none (a pinned card on screen is never folded away).
+    /// The oldest request decides: it is due and the user has pinned none. A pinned card (opened by hand) is never folded
+    /// away; while one exists the panel stays on it, the older due requests wait behind it in the list, and the moment it
+    /// is answered the panel folds (the oldest is due). Never while the list is open.
     private func foldDue(now: TimeInterval) -> Bool {
-        guard let oldest = pending.first, !folds.values.contains(where: \.isPinned) else { return false }
+        guard !listOpen, let oldest = pending.first, !folds.values.contains(where: \.isPinned) else { return false }
         return folds[oldest.id]?.isDue(now: now) ?? false
     }
 
     /// Hook-side wait for this request, so a card can show when the terminal takes over.
-    public func timeout(for r: PendingRequest) -> TimeInterval { r.questions != nil ? questionTimeout : approvalTimeout }
+    /// The relay's own reported wait wins (a custom `--timeout`); the defaults cover an older relay.
+    public func timeout(for r: PendingRequest) -> TimeInterval { r.waitSeconds ?? (r.questions != nil ? questionTimeout : approvalTimeout) }
 
-    /// Show the folded card (click on the notch, or a ⌃⌥ key). It never answers by itself, and it never refolds.
+    /// Show the folded card (click on the notch). No ⌃⌥ key does this: keys exist only for a card that is on screen.
+    /// It never answers by itself, and it never refolds.
     public func unfold() {
         guard folded else { return }
         open(ids: pending.map(\.id))
@@ -317,7 +321,7 @@ public final class NotchModel: ObservableObject {
     /// a second) means it timed out unanswered, so the terminal is showing the prompt: chip. Gone earlier means the
     /// terminal was answered (or the session died): no chip. Unsupported questions get theirs in `receiveApproval`.
     private func dropGone(_ r: PendingRequest, now: Date) {
-        let wait = r.questions != nil ? questionTimeout : approvalTimeout
+        let wait = timeout(for: r)
         if now.timeIntervalSince(r.createdAt) >= wait - 1 { noteTerminal(r, now: now) }
         connections.removeValue(forKey: r.id)?.respond(nil)
         questionInputs.removeValue(forKey: r.id)

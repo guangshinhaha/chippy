@@ -39,11 +39,9 @@ struct CountdownSchedule: TimelineSchedule {
     let step: TimeInterval
     func entries(from start: Date, mode: Mode) -> [Date] {
         guard let end, end > start else { return [start] }
-        var out = [start]
-        var t = start.addingTimeInterval(step)
-        while t < end, out.count < 200 { out.append(t); t = t.addingTimeInterval(step) }
-        out.append(end)
-        return out
+        // Covers the whole deadline whatever its length (a 120s question at 0.5s is 240 ticks), then stops.
+        let n = Int((end.timeIntervalSince(start) / step).rounded(.up))
+        return (0..<n).map { start.addingTimeInterval(Double($0) * step) } + [end]
     }
 }
 
@@ -82,10 +80,11 @@ struct CountBadge: View {
         TimelineView(CountdownSchedule(end: needsYou ? deadline?.end : nil, step: reduceMotion ? 1 : 0.5)) { ctx in
             badge(now: ctx.date)
         }
-        .onAppear { updatePulse() }
-        .onChange(of: needsYou) { _ in updatePulse() }
-        .onChange(of: reduceMotion) { _ in updatePulse() }
+        // Runs on appear (so a badge that arrives already needing you pulses) and again when either input changes.
+        .task(id: PulseInput(needsYou: needsYou, reduceMotion: reduceMotion)) { await MainActor.run { updatePulse() } }
     }
+
+    private struct PulseInput: Equatable { let needsYou: Bool; let reduceMotion: Bool }
 
     private func badge(now: Date) -> some View {
         let left = deadline.map { NeedsMeFold.timeLeft(createdAt: $0.start, timeout: $0.end.timeIntervalSince($0.start), now: now) }
