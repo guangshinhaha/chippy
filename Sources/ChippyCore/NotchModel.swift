@@ -70,7 +70,7 @@ public final class NotchModel: ObservableObject {
     private let clock: () -> TimeInterval
     private var store = SessionStore()
     private var connections: [String: Connection] = [:]
-    private var questionInputs: [String: [String: Any]] = [:]
+    private var echoInputs: [String: [String: Any]] = [:]
     /// Sound hook (#67): fired for a new approval/question and a finished chip. The app decides whether to play.
     public var onSound: ((SoundKind, _ sessionId: String, _ host: HostInfo?) -> Void)?
     /// Fired when a session ends, so callers can drop per-session state.
@@ -238,6 +238,12 @@ public final class NotchModel: ObservableObject {
 
     }
 
+    /// The user expanded a plan to read it (#91): that is real engagement, so the card stays (pinned, never folds).
+    public func pinRequest(_ id: String) {
+        guard pending.contains(where: { $0.id == id }) else { return }
+        folds[id]?.pin()
+    }
+
     /// Count shown on the collapsed notch while finished items wait (nil at 0, "9+" over 9).
     public var badge: String? { PeekGate.badge(count: doneItems.count + (folded ? pending.count : 0)) }
 
@@ -362,7 +368,7 @@ public final class NotchModel: ObservableObject {
         let wait = timeout(for: r)
         if now.timeIntervalSince(r.createdAt) >= wait - 1 { noteTerminal(r, now: now) }
         connections.removeValue(forKey: r.id)?.respond(nil)
-        questionInputs.removeValue(forKey: r.id)
+        echoInputs.removeValue(forKey: r.id)
         record(r, channel: .terminal, decision: "none", now: now)
     }
 
@@ -394,10 +400,12 @@ public final class NotchModel: ObservableObject {
                 refresh()
                 return
             }
-            questionInputs[req.id] = payload.toolInput
+            echoInputs[req.id] = payload.toolInput
         }
+        // ExitPlanMode is allowed only with its own input echoed back as updatedInput (docs: a bare allow is not enough).
+        if req.isPlanApproval { echoInputs[req.id] = payload.toolInput }
         req.lastPrompt = sessions.first { $0.id == payload.sessionId }?.lastPrompt
-        if req.questions == nil, always.contains(req) {
+        if req.questions == nil, !req.isPlanApproval, always.contains(req) {
             conn.respond(Decision.allow.reply)
             record(req, channel: .notch, decision: "auto_always", now: req.createdAt)
             return
@@ -431,6 +439,7 @@ public final class NotchModel: ObservableObject {
     /// Resolve exactly the request with this id. Stale or unknown ids are ignored.
     public func resolve(_ id: String, _ decision: Decision, now: Date = Date()) {
         guard let i = pending.firstIndex(where: { $0.id == id }), pending[i].questions == nil,
+              !(pending[i].isPlanApproval && decision == .always), // a plan is never approved "always"
               let conn = connections.removeValue(forKey: id) else { return } // questions are answered via answer(), not Allow/Deny
         let req = pending.remove(at: i)
         if conn.peerGone { // the hook already gave up (timeout) or the terminal answered: this click is stale
@@ -440,9 +449,23 @@ public final class NotchModel: ObservableObject {
             return
         }
         if decision == .always, !Tour.isDemo(req.sessionId) { always.insert(req) } // the tour demo must show again next run
-        conn.respond(decision.reply)
+        if req.isPlanApproval {
+            conn.respond(Self.planReply(decision, input: echoInputs[id] ?? [:]))
+            echoInputs.removeValue(forKey: id)
+        } else {
+            conn.respond(decision.reply)
+        }
         record(req, channel: .notch, decision: "\(decision)", now: now)
         refresh()
+    }
+
+    /// Reply for ExitPlanMode. Approve echoes the original tool input as `updatedInput`; Keep planning is a deny with a fixed
+    /// message (no plan text, no interrupt) that goes to Claude. Live behaviour of both is unverified (see the spikes doc).
+    static func planReply(_ d: Decision, input: [String: Any]) -> Data {
+        let o: [String: Any] = d == .deny
+            ? ["behavior": "deny", "message": "The user chose to keep planning. Revise the plan and propose it again."]
+            : ["behavior": "allow", "updatedInput": input]
+        return try! JSONSerialization.data(withJSONObject: o)
     }
 
     /// Answer with a set of labels per question. Single-select needs exactly one; multi-select at least one.
@@ -453,10 +476,10 @@ public final class NotchModel: ObservableObject {
 
     @discardableResult
     public func answer(_ id: String, selections: [String: Set<String>], now: Date = Date()) -> Answered {
-        guard let i = pending.firstIndex(where: { $0.id == id }), connections[id] != nil, questionInputs[id] != nil,
+        guard let i = pending.firstIndex(where: { $0.id == id }), connections[id] != nil, echoInputs[id] != nil,
               let answers = Self.joined(pending[i].questions ?? [], selections) else { return .refused }
         let conn = connections.removeValue(forKey: id)!
-        var input = questionInputs.removeValue(forKey: id)!
+        var input = echoInputs.removeValue(forKey: id)!
         let req = pending.remove(at: i)
         if conn.peerGone { connections[id] = conn; dropGone(req, now: now); refresh(); return .gone }
         input["answers"] = answers
@@ -483,7 +506,7 @@ public final class NotchModel: ObservableObject {
     public func handBack(_ id: String, now: Date = Date()) {
         guard let i = pending.firstIndex(where: { $0.id == id }), let conn = connections.removeValue(forKey: id) else { return }
         let req = pending.remove(at: i)
-        questionInputs.removeValue(forKey: id)
+        echoInputs.removeValue(forKey: id)
         let stale = conn.peerGone // the hook already gave up or the terminal answered: nothing was handed back
         conn.respond(nil)
         record(req, channel: .terminal, decision: stale ? "none" : "handed_back", now: now)

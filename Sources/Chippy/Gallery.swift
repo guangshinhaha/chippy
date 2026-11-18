@@ -389,6 +389,41 @@ enum Gallery {
         try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
     }
 
+    /// `Chippy --render-plan out.png` (#91): the plan card short, long (folded), long (expanded), with hidden characters, and the generic fallback (sample text only).
+    @MainActor
+    static func renderPlan(to path: String) {
+        let log = tempLog()
+        defer { try? FileManager.default.removeItem(at: log) }
+        let short: [String: Any] = ["plan": "# Fix the login timeout\n1. Raise the session TTL in Auth.swift\n2. Add a refresh test\n3. Update the README", "planFilePath": "/demo/.claude/plans/fix-login.md"]
+        let longPlan = "# Rework the sign-in flow\n\nContext: users are logged out after five minutes and the refresh token is never rotated.\n" +
+            (1...20).map { "\($0). Step \($0): change the handler, add a test and check the edge case for the expired token path" }.joined(separator: "\n")
+        let hidden: [String: Any] = ["plan": "# Clean up\u{202E}\n1. Remove temp files\u{200B}\n2. Run tests"]
+        func card(_ input: [String: Any], tool: String = "ExitPlanMode", height: CGFloat? = nil) -> some View {
+            let model = demoModel(prompt: "Fix the login timeout bug", tool: tool, input: input, log: log)
+            let m = NotchMetrics(width: 185, height: 32)
+            let b = box(m)
+            if let height { b.contentHeight = height }
+            let sz = m.size(for: .expanded, tall: model.tall, contentHeight: b.contentHeight)
+            return NotchView(model: model, box: b).frame(width: sz.width, height: sz.height)
+        }
+        let all = HStack(alignment: .top, spacing: 12) {
+            card(short)
+            card(["plan": longPlan, "planFilePath": "/demo/.claude/plans/rework.md"], height: 420)
+            card(hidden)
+            card([:]) // no plan in the payload: the generic card
+            // the long plan with "Show more" pressed, drawn as the bare card on the notch's black
+            if let req = demoModel(prompt: "Fix the login timeout bug", tool: "ExitPlanMode", input: ["plan": longPlan], log: log).pending.first, let plan = req.plan {
+                PlanCard(req: req, plan: plan, startExpanded: true, expand: {}, decide: { _ in })
+                    .padding(16).frame(width: 405).background(Color.black)
+            }
+        }.padding(12).background(Color(white: 0.25))
+        let r = ImageRenderer(content: all)
+        r.scale = 2
+        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
+              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
+        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
+    }
+
     /// `Chippy --render-tab out.png`: no room beside the camera (menu extras hug the notch), so the indicator is a tab below it.
     /// A mock menu bar with items touching both edges and the camera in red; wings (room) vs tab (no room), per density.
     @MainActor

@@ -330,6 +330,8 @@ struct NotchView: View {
                         QuestionCard(req: req, initial: model.partials[req.id] ?? PartialAnswers(),
                                      progress: { model.savePartial(req.id, step: $0, answers: $1, byUser: $2) },
                                      send: { model.answer(req.id, selections: $0) }, handBack: { model.handBack(req.id) }).id(req.id).reveal(0.12)
+                    } else if let plan = req.plan {
+                        PlanCard(req: req, plan: plan, expand: { model.pinRequest(req.id) }) { model.resolve(req.id, $0) }.id(req.id).reveal(0.12)
                     } else {
                         ApprovalCard(req: req) { model.resolve(req.id, $0) }.reveal(0.12)
                     }
@@ -402,7 +404,70 @@ struct ApprovalCard: View {
                 ChipButton(title: "Allow", hint: "\(ShortcutKeys.prefix)Y", kind: .primary) { decide(.allow) }
                 ChipButton(title: "Deny", hint: "\(ShortcutKeys.prefix)N", kind: .destructive) { decide(.deny) }
                 Spacer(minLength: 0)
-                ChipButton(title: "Always allow this", hint: "\(ShortcutKeys.prefix)A", kind: .quiet) { decide(.always) }
+                if !req.isPlanApproval { // a standing yes would approve plans nobody read; the generic fallback for a plan has none
+                    ChipButton(title: "Always allow this", hint: "\(ShortcutKeys.prefix)A", kind: .quiet) { decide(.always) }
+                }
+            }
+            .padding(.top, 2)
+        }
+    }
+}
+
+/// ExitPlanMode (#91): the plan Claude proposes, capped, with Approve / Keep planning. Plan text is sanitised in core
+/// (`PlanProposal`), agent-written so captioned unverified, and only ever on screen. Expanding it pins the card (never folds).
+struct PlanCard: View {
+    let req: PendingRequest
+    let plan: PlanProposal
+    let expand: () -> Void
+    let decide: (Decision) -> Void
+    @State private var expanded: Bool
+
+    init(req: PendingRequest, plan: PlanProposal, startExpanded: Bool = false, expand: @escaping () -> Void, decide: @escaping (Decision) -> Void) {
+        self.req = req; self.plan = plan; self.expand = expand; self.decide = decide
+        _expanded = State(initialValue: startExpanded)
+    }
+
+    var body: some View {
+        let v = plan.visible(expanded: expanded)
+        VStack(alignment: .leading, spacing: 6) {
+            Text(req.branch.map { "\(req.project) · \($0)" } ?? req.project)
+                .font(.caption.bold()).foregroundStyle(.white.opacity(0.85))
+            if let p = req.lastPrompt, !p.isEmpty {
+                Text("“\(p)”").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
+            }
+            Text("Claude says (unverified):").font(.caption2).foregroundStyle(.white.opacity(0.45))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(plan.title ?? "Proposed plan").font(.callout.weight(.semibold)).foregroundStyle(.white).lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                ForEach(Array(v.shown.enumerated()), id: \.offset) { _, line in
+                    Text(line).font(.caption).foregroundStyle(.white.opacity(0.78)).lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if v.hidden > 0 {
+                    Text(ApprovalIntent.marker("\(v.hidden) more line\(v.hidden == 1 ? "" : "s")")).font(.caption2).foregroundStyle(.white.opacity(0.45))
+                } else if expanded && plan.truncated {
+                    Text(ApprovalIntent.marker("plan continues in the terminal")).font(.caption2).foregroundStyle(.white.opacity(0.45))
+                }
+                if plan.hiddenRemoved > 0 {
+                    Text("\(plan.hiddenRemoved) hidden character\(plan.hiddenRemoved == 1 ? "" : "s") removed").font(.caption2).foregroundStyle(.orange.opacity(0.85))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 6) {
+                if plan.stepCount > 0 { Text("\(plan.stepCount) step\(plan.stepCount == 1 ? "" : "s")").font(.caption2).foregroundStyle(.white.opacity(0.5)) }
+                if let f = plan.fileName { Text(f).font(.caption2).foregroundStyle(.white.opacity(0.4)).lineLimit(1).truncationMode(.middle) }
+            }
+            Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.4)).lineLimit(1).truncationMode(.head)
+            HStack(spacing: 8) {
+                ChipButton(title: "Approve", hint: "\(ShortcutKeys.prefix)Y", kind: .primary) { decide(.allow) }
+                ChipButton(title: "Keep planning", hint: "\(ShortcutKeys.prefix)N", kind: .destructive) { decide(.deny) }
+                Spacer(minLength: 0)
+                if plan.canExpand {
+                    ChipButton(title: expanded ? "Show less" : "Show more", kind: .quiet) {
+                        expand() // reading is engagement: pin so the card cannot fold away mid-read
+                        withAnimation(.easeOut(duration: 0.18)) { expanded.toggle() }
+                    }
+                }
             }
             .padding(.top, 2)
         }

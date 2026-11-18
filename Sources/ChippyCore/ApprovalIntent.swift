@@ -100,7 +100,7 @@ public struct ApprovalIntent: Equatable {
     /// can never pass for a marker.
     static let markSymbol = Unicode.Scalar(0x22EF)!
 
-    static func marker(_ what: String) -> String { "\(markSymbol) \(what) \(markSymbol)" }
+    public static func marker(_ what: String) -> String { "\(markSymbol) \(what) \(markSymbol)" }
 
     /// What the card shows of the raw command (already passed through `reveal`), bounded to `maxRows` rows of
     /// `columns` characters: all of it when it fits, otherwise the first rows, an explicit marker row

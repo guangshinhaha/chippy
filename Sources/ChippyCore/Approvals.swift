@@ -61,6 +61,10 @@ public struct PendingRequest: Identifiable, Equatable {
     public let leadIn: String?
     /// Set for an answerable AskUserQuestion; the card shows options instead of Allow/Deny.
     public let questions: [AskQuestion]?
+    /// Set for a parsed ExitPlanMode (#91): the card shows the plan with Approve / Keep planning. nil for it means the generic card.
+    public let plan: PlanProposal?
+    /// ExitPlanMode in any form: answered by echoing its input, and never "always" (a standing yes to plans would approve unseen ones).
+    public var isPlanApproval: Bool { toolName == "ExitPlanMode" }
     /// How long the hook waits for an answer, as the relay reported it; nil falls back to the model's defaults.
     public let waitSeconds: TimeInterval?
     /// SHA-256 of the full tool input, so "Always" on an Edit can't cover other content in the same file.
@@ -80,6 +84,7 @@ public struct PendingRequest: Identifiable, Equatable {
         branch = p.branch
         host = p.host
         questions = p.toolName == "AskUserQuestion" ? AskQuestion.parse(p.toolInput) : nil
+        plan = PlanProposal.make(tool: p.toolName ?? "tool", input: p.toolInput)
         detail = ApprovalIntent.headTail(ApprovalIntent.reveal(Self.rawDetail(p.toolInput)))
         let canon = (try? JSONSerialization.data(withJSONObject: p.toolInput, options: [.sortedKeys])) ?? Data()
         inputDigest = AlwaysStore.sha256(canon)
