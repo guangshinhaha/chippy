@@ -788,6 +788,8 @@ struct SummaryView: View {
     /// Shown when the parser yields no doc (e.g. "---", an empty fence, a table): the raw text, clipped, never blank.
     private let fallback: String?
     @State private var open = false
+    @State private var detailsHeight: CGFloat = 0
+    static let maxDetailsHeight: CGFloat = 240
 
     init(reply: String?, decision: String? = nil, compact: Bool = false) {
         self.decision = decision; self.compact = compact
@@ -855,7 +857,7 @@ struct SummaryView: View {
                     .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
             }
             if !compact, let d, !d.details.isEmpty {
-                Button { open.toggle() } label: {
+                Button { open.toggle(); if !open { detailsHeight = 0 } } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold)).rotationEffect(.degrees(open ? 90 : 0))
                         Text(open ? "Hide details" : "Show details").font(.caption2)
@@ -863,12 +865,16 @@ struct SummaryView: View {
                 }.buttonStyle(.plain)
                 .accessibilityLabel(open ? "Hide details" : "Show details")
                 if open {
-                    // Short: the card hugs it. Long: scrolls in a FIXED-height area (a flexible one fills what the
-                    // panel offers, the panel grows to fit it, and the card keeps expanding).
-                    ViewThatFits(in: .vertical) {
-                        detailsBody
-                        ScrollView { detailsBody }.frame(height: 240)
-                    }.frame(maxHeight: 240)
+                    // Measured, not ViewThatFits + maxHeight: that flexible frame claims the full 240pt it is offered,
+                    // leaving a blank gap under a short body. Invisible until measured, so no first-frame jump.
+                    let content = detailsBody
+                        .fixedSize(horizontal: false, vertical: true)
+                        .background(GeometryReader { g in Color.clear.preference(key: QuestionBodyHeight.self, value: g.size.height) })
+                    Group {
+                        if detailsHeight > Self.maxDetailsHeight { ScrollView { content }.frame(height: Self.maxDetailsHeight) } else { content }
+                    }
+                    .opacity(detailsHeight > 0 ? 1 : 0)
+                    .onPreferenceChange(QuestionBodyHeight.self) { detailsHeight = $0 }
                 }
             }
         }
