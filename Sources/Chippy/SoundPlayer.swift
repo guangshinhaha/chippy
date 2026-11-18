@@ -10,6 +10,15 @@ final class SoundPlayer {
     private var cooldowns = SoundCooldowns()
     private var playing: [NSSound] = []
     private var locked = SoundPlayer.screenIsLocked()
+    /// Current quiet state (#95), shared with the model so sounds and auto-expand agree.
+    var silenceState: SilenceState { SilenceState(focus: Self.focusIsOn(), locked: locked) }
+
+    /// Focus has no public read API without a permission prompt; Assertions.json is readable only when Full Disk
+    /// Access allows it. Unreadable means "off" (fail open: behaves as before).
+    static func focusIsOn() -> Bool {
+        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/DoNotDisturb/DB/Assertions.json")
+        return SilencePolicy.focusIsOn(assertionsJSON: try? Data(contentsOf: url))
+    }
     private var warnedMissing = false
     private var observers: [NSObjectProtocol] = []
 
@@ -41,7 +50,7 @@ final class SoundPlayer {
         let pidIsApp = host?.pid.map { NSRunningApplication(processIdentifier: $0) != nil } ?? false
         let frontmost = SoundPolicy.isHostFrontmost(host: host, frontmostPid: front?.processIdentifier,
                                                     frontmostBundle: front?.bundleIdentifier, pidIsRunningApp: pidIsApp)
-        guard SoundPolicy.shouldPlay(kind: kind, enabled: enabled, hostFrontmost: frontmost, locked: locked,
+        guard SoundPolicy.shouldPlay(kind: kind, enabled: enabled, hostFrontmost: frontmost, locked: locked, silenced: !SilencePolicy.soundsAllowed(silenceState),
                                      lastPlayed: cooldowns.lastPlayed(kind, session: sessionId), now: now) else { return }
         // The named sound is a shared instance and play() on a playing one is a no-op: play a copy.
         guard let s = (NSSound(named: kind == .needsYou ? "Pop" : "Tink")?.copy() as? NSSound) else {

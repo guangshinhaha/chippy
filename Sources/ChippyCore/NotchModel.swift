@@ -73,6 +73,9 @@ public final class NotchModel: ObservableObject {
     private var questionInputs: [String: [String: Any]] = [:]
     /// Sound hook (#67): fired for a new approval/question and a finished chip. The app decides whether to play.
     public var onSound: ((SoundKind, _ sessionId: String, _ host: HostInfo?) -> Void)?
+    /// Quiet state (#95), asked at event time. While quiet a new approval arrives folded on the badge and a finished
+    /// chip does not peek. Nothing is dropped: requests stay pending and the hook timeout still falls back to the terminal.
+    public var silence: () -> SilenceState = { SilenceState() }
     /// Fired when a session ends, so callers can drop per-session state.
     public var onSessionEnd: ((String) -> Void)?
     private let always: AlwaysStore
@@ -371,6 +374,8 @@ public final class NotchModel: ObservableObject {
         folds[req.id] = f
         pending.append(req)
         connections[req.id] = conn
+        // Quiet (Focus/locked): do not pop the card. A card or list the user opened by hand (engaged) stays as it is.
+        if !engaged, !SilencePolicy.mayAutoExpand(silence()) { folded = true }
         refresh()
         updateSleep(now: now)
         if !Tour.isDemo(req.sessionId) {
@@ -489,7 +494,7 @@ public final class NotchModel: ObservableObject {
                 doneItems.removeAll { $0.sessionId == r.id }
                 doneItems.append(DoneItem(sessionId: r.id, project: r.project, branch: r.branch,
                                           files: r.filesEdited.count, added: r.added, removed: r.removed, reply: r.lastReply, prompt: r.lastPrompt, at: now, host: r.host))
-                peek.start(now: clock(), hovering: hovering)
+                if SilencePolicy.mayPeek(silence()) { peek.start(now: clock(), hovering: hovering) }
                 if isNew, !Tour.isDemo(r.id) { onSound?(.done, r.id, r.host ?? payload.host) }
             }
         case let e where Self.boundaryEvents.contains(e) || Self.toolEvents.contains(e):
