@@ -351,6 +351,8 @@ struct NotchView: View {
                         QuestionCard(req: req, repo: model.repoLabel(cwd: req.cwd, project: req.project).text, initial: model.partials[req.id] ?? PartialAnswers(),
                                      progress: { model.savePartial(req.id, step: $0, answers: $1, byUser: $2) },
                                      send: { model.answer(req.id, selections: $0) }, handBack: { model.handBack(req.id) }).id(req.id).reveal(0.12)
+                    } else if let plan = req.plan {
+                        PlanCard(req: req, plan: plan, repo: model.repoLabel(cwd: req.cwd, project: req.project).text, startExpanded: model.expandedPlans.contains(req.id), expand: { model.setPlanExpanded(req.id, $0) }) { model.resolve(req.id, $0) }.id(req.id).reveal(0.12)
                     } else {
                         ApprovalCard(req: req, repo: model.repoLabel(cwd: req.cwd, project: req.project).text) { model.resolve(req.id, $0) }.reveal(0.12)
                     }
@@ -428,6 +430,83 @@ struct ApprovalCard: View {
                 ChipButton(title: "Always allow this", hint: "\(ShortcutKeys.prefix)A", kind: .quiet) { decide(.always) }
             }
             .padding(.top, 2)
+        }
+    }
+}
+
+/// ExitPlanMode (#91): the plan Claude proposes, capped, with Approve / Keep planning. Plan text is sanitised in core
+/// (`PlanProposal`), agent-written so captioned unverified, and only ever on screen. Expanding it pins the card (never folds).
+struct PlanCard: View {
+    let req: PendingRequest
+    let plan: PlanProposal
+    /// The resolved repo label, as the list rows show it; the project name until given.
+    var repo: String? = nil
+    let expand: (Bool) -> Void
+    let decide: (Decision) -> Void
+    @State private var expanded: Bool
+    @State private var bodyHeight: CGFloat = 0
+    /// Chrome around the rows (header, captions, buttons) is about 250pt; the rest of the panel is the rows' budget.
+    static let maxBodyHeight: CGFloat = NotchMetrics.maxExpandedHeight - 250
+
+    init(req: PendingRequest, plan: PlanProposal, repo: String? = nil, startExpanded: Bool = false, expand: @escaping (Bool) -> Void, decide: @escaping (Decision) -> Void) {
+        self.req = req; self.plan = plan; self.repo = repo; self.expand = expand; self.decide = decide
+        _expanded = State(initialValue: startExpanded)
+    }
+
+    var body: some View {
+        let v = plan.visible(expanded: expanded)
+        VStack(alignment: .leading, spacing: 6) {
+            Text(req.branch.map { "\(repo ?? req.project) · \($0)" } ?? (repo ?? req.project))
+                .font(.caption.bold()).foregroundStyle(.white.opacity(0.85))
+            if let p = req.lastPrompt, !p.isEmpty {
+                Text("“\(p)”").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
+            }
+            Text("Claude says (unverified):").font(.caption2).foregroundStyle(.white.opacity(0.45))
+            let rows = VStack(alignment: .leading, spacing: 3) {
+                Text(plan.title ?? "Proposed plan").font(.callout.weight(.semibold)).foregroundStyle(.white)
+                    .fixedSize(horizontal: false, vertical: true) // no line limit: rows are capped in core, so nothing is ellipsized silently
+                ForEach(Array(v.shown.enumerated()), id: \.offset) { _, line in
+                    Text(line).font(.caption).foregroundStyle(.white.opacity(0.78))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if plan.truncated || v.hidden > 0 {
+                    let more = v.hidden > 0 ? "\(v.hidden) more line\(v.hidden == 1 ? "" : "s")" : nil
+                    let tail = plan.truncated ? "plan continues in the terminal" : nil
+                    Text(ApprovalIntent.marker([more, tail].compactMap { $0 }.joined(separator: " · "))).font(.caption2).foregroundStyle(.white.opacity(0.45))
+                }
+                let removed = plan.hiddenRemoved(expanded: expanded)
+                if removed > 0 {
+                    Text("\(removed) hidden character\(removed == 1 ? "" : "s") removed").font(.caption2).foregroundStyle(.orange.opacity(0.85))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(GeometryReader { g in Color.clear.preference(key: QuestionBodyHeight.self, value: g.size.height) })
+            // Measured like QuestionCard: scrolls at a fixed height once taller, so the buttons never leave the panel.
+            Group {
+                if bodyHeight > Self.maxBodyHeight { ScrollView { rows }.frame(height: Self.maxBodyHeight) } else { rows }
+            }
+            .onPreferenceChange(QuestionBodyHeight.self) { bodyHeight = $0 }
+            HStack(spacing: 6) {
+                if plan.stepCount > 0 { Text("\(plan.stepCount) step\(plan.stepCount == 1 ? "" : "s")").font(.caption2).foregroundStyle(.white.opacity(0.5)) }
+                if let f = plan.fileName { Text(f).font(.caption2).foregroundStyle(.white.opacity(0.4)).lineLimit(1).truncationMode(.middle) }
+            }
+            Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.4)).lineLimit(1).truncationMode(.head)
+            HStack(spacing: 8) {
+                ChipButton(title: plan.truncated ? "Approve (partly shown)" : "Approve", kind: .primary) { decide(.allow) }
+                    .help(plan.truncated ? "Approve the part shown (click only: the plan continues in the terminal)"
+                          : plan.canExpand && !expanded ? "Show more to approve with \(ShortcutKeys.prefix)Y"
+                          : "Approve (\(ShortcutKeys.prefix)Y)")
+                ChipButton(title: "Keep planning", kind: .destructive) { decide(.deny) }
+                    .help("Keep planning (\(ShortcutKeys.prefix)N)")
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 2)
+            if plan.canExpand {
+                ChipButton(title: expanded ? "Show less" : "Show more", kind: .quiet) {
+                    expand(!expanded) // reading is engagement: pins so the card cannot fold away mid-read; the hotkey needs it
+                    withAnimation(.easeOut(duration: 0.18)) { expanded.toggle() }
+                }
+            }
         }
     }
 }

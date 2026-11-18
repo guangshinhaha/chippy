@@ -185,6 +185,7 @@ enum Gallery {
     @MainActor
     private static func demoModel(prompt: String, tool: String, input: [String: Any], extra: [String: Any] = [:], log: URL) -> NotchModel {
         let model = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: log))
+        model.planCardEnabled = true // the plan card is behind a setting; the gallery renders the real card
         let base: [String: Any] = ["session_id": "demo-a", "cwd": "/demo/api-server", "chippy_branch": "fix/login-timeout"]
         func payload(_ fields: [String: Any]) -> HookPayload? {
             (try? JSONSerialization.data(withJSONObject: base.merging(fields) { $1 })).flatMap { HookPayload(json: $0) }
@@ -378,6 +379,43 @@ enum Gallery {
         }.padding(12).background(Color(white: 0.25))
         let r = ImageRenderer(content: all)
         writePNG(r, to: path)
+    }
+
+    /// `Chippy --render-plan out.png` (#91): the plan card short, long (folded), long (expanded), with hidden characters, and the 16-row worst case (sample text only).
+    @MainActor
+    static func renderPlan(to path: String) {
+        let log = tempLog()
+        defer { try? FileManager.default.removeItem(at: log) }
+        let short: [String: Any] = ["plan": "# Fix the login timeout\n1. Raise the session TTL in Auth.swift\n2. Add a refresh test\n3. Update the README", "planFilePath": "/demo/.claude/plans/fix-login.md"]
+        let longPlan = "# Rework the sign-in flow\n\nContext: users are logged out after five minutes and the refresh token is never rotated.\n" +
+            (1...20).map { "\($0). Step \($0): change the handler, add a test and check the edge case for the expired token path" }.joined(separator: "\n")
+        let worst = "# Worst case plan\n" + (1...16).map { n in "\(n). " + String(repeating: "wide row text ", count: 12) }.joined(separator: "\n")
+        let hidden: [String: Any] = ["plan": "# Clean up\u{202E}\n1. Remove temp files\u{200B}\n2. Run tests"]
+        func card(_ input: [String: Any], tool: String = "ExitPlanMode", height: CGFloat? = nil, expanded: Bool = false) -> some View {
+            let model = demoModel(prompt: "Fix the login timeout bug", tool: tool, input: input, log: log)
+            if expanded, let id = model.pending.first?.id { model.setPlanExpanded(id, true) }
+            let m = NotchMetrics(width: 185, height: 32)
+            let b = box(m)
+            if let height { b.contentHeight = height }
+            let sz = m.size(for: .expanded, tall: model.tall, contentHeight: b.contentHeight)
+            return NotchView(model: model, box: b).frame(width: sz.width, height: sz.height)
+        }
+        let all = HStack(alignment: .top, spacing: 12) {
+            card(short)
+            card(["plan": longPlan, "planFilePath": "/demo/.claude/plans/rework.md"], height: 420)
+            card(hidden)
+            card(["plan": worst, "planFilePath": "/demo/.claude/plans/worst.md"], height: NotchMetrics.maxExpandedHeight, expanded: true) // 16 rows, every one at the 140-char clip
+            // the long plan with "Show more" pressed, drawn as the bare card on the notch's black
+            if let req = demoModel(prompt: "Fix the login timeout bug", tool: "ExitPlanMode", input: ["plan": longPlan], log: log).pending.first, let plan = req.plan {
+                PlanCard(req: req, plan: plan, startExpanded: true, expand: { _ in }, decide: { _ in })
+                    .padding(16).frame(width: 405).background(Color.black)
+            }
+        }.padding(12).background(Color(white: 0.25))
+        let r = ImageRenderer(content: all)
+        r.scale = 2
+        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
+              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
+        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
     }
 
     /// `Chippy --render-tab out.png`: no room beside the camera (menu extras hug the notch), so the indicator is a tab below it.

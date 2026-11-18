@@ -73,7 +73,7 @@ public final class NotchModel: ObservableObject {
     private let clock: () -> TimeInterval
     private var store = SessionStore()
     private var connections: [String: Connection] = [:]
-    private var questionInputs: [String: [String: Any]] = [:]
+    private var echoInputs: [String: [String: Any]] = [:]
     /// Sound hook (#67): fired for a new approval/question and a finished chip. The app decides whether to play.
     public var onSound: ((SoundKind, _ sessionId: String, _ host: HostInfo?, _ quiet: SilenceState) -> Void)?
     /// Quiet state (#95), asked at event time. While quiet a new approval arrives folded on the badge and a finished
@@ -157,6 +157,7 @@ public final class NotchModel: ObservableObject {
         if folds.keys.contains(where: { !pendingIds.contains($0) }) {
             folds = folds.filter { pendingIds.contains($0.key) }
         }
+        if !expandedPlans.isSubset(of: pendingIds) { expandedPlans.formIntersection(pendingIds) }
         if pending.isEmpty { if folded { folded = false } }
         else if !folded, foldDue(now: clock()) { folded = true }
         // The visible card is sticky: rank only picks one when nothing is on screen (first show, after an answer, after a fold).
@@ -288,6 +289,26 @@ public final class NotchModel: ObservableObject {
         if partials[id] != new { partials[id] = new } // an unchanged write would still notify observers
 
     }
+
+    /// Plan cards the user has expanded (#91). The hotkey approves a plan only from an expanded card, unless it is short enough
+    /// to be fully shown folded.
+    @Published public private(set) var expandedPlans: Set<String> = []
+    public func setPlanExpanded(_ id: String, _ on: Bool) {
+        guard pending.contains(where: { $0.id == id }) else { return }
+        if on { expandedPlans.insert(id) } else { expandedPlans.remove(id) }
+        if on { folds[id]?.pin() }
+    }
+    /// May ⌃⌥Y approve this card? Any non-plan card yes. A truncated plan never (expanded or not: part of it is not readable
+    /// here, so the user must click "Approve (partly shown)"). Otherwise a plan only when nothing is folded away from the reader.
+    public func hotkeyMayApprove(_ req: PendingRequest) -> Bool {
+        guard req.isPlanApproval else { return true }
+        guard let plan = req.plan else { return false }
+        if plan.truncated { return false }
+        return !plan.canExpand || expandedPlans.contains(req.id)
+    }
+
+    /// Experimental (#91): off by default. While off, ExitPlanMode goes to the terminal prompt untouched.
+    public var planCardEnabled = false
 
     /// Count shown on the collapsed notch: needs-you only (#101), i.e. folded approvals and questions plus terminal asks
     /// (nil at 0, "9+" over 9). Finished chips never count.
@@ -446,7 +467,7 @@ public final class NotchModel: ObservableObject {
         let wait = timeout(for: r)
         if now.timeIntervalSince(r.createdAt) >= wait - 1 { noteTerminal(r, now: now) }
         connections.removeValue(forKey: r.id)?.respond(nil)
-        questionInputs.removeValue(forKey: r.id)
+        echoInputs.removeValue(forKey: r.id)
         record(r, channel: .terminal, decision: "none", now: now)
     }
 
@@ -478,10 +499,22 @@ public final class NotchModel: ObservableObject {
                 refresh()
                 return
             }
-            questionInputs[req.id] = payload.toolInput
+            echoInputs[req.id] = payload.toolInput
+        }
+        // ExitPlanMode is allowed only with its own input echoed back as updatedInput (docs: a bare allow is not enough).
+        // Flag off or no parseable plan: never a generic Allow card for a plan; the terminal prompt handles it.
+        if req.isPlanApproval {
+            guard planCardEnabled, req.plan != nil else {
+                conn.respond(nil)
+                noteTerminal(req, now: req.createdAt)
+                record(req, channel: .terminal, decision: "none", now: req.createdAt)
+                refresh()
+                return
+            }
+            echoInputs[req.id] = payload.toolInput
         }
         req.lastPrompt = sessions.first { $0.id == payload.sessionId }?.lastPrompt
-        if req.questions == nil, always.contains(req) {
+        if req.questions == nil, !req.isPlanApproval, always.contains(req) {
             conn.respond(Decision.allow.reply)
             record(req, channel: .notch, decision: "auto_always", now: req.createdAt)
             return
@@ -527,6 +560,7 @@ public final class NotchModel: ObservableObject {
     /// Resolve exactly the request with this id. Stale or unknown ids are ignored.
     public func resolve(_ id: String, _ decision: Decision, now: Date = Date()) {
         guard let i = pending.firstIndex(where: { $0.id == id }), pending[i].questions == nil,
+              !(pending[i].isPlanApproval && decision == .always), // a plan is never approved "always"
               let conn = connections.removeValue(forKey: id) else { return } // questions are answered via answer(), not Allow/Deny
         let req = pending.remove(at: i)
         if conn.peerGone { // the hook already gave up (timeout) or the terminal answered: this click is stale
@@ -536,9 +570,28 @@ public final class NotchModel: ObservableObject {
             return
         }
         if decision == .always, !Tour.isDemo(req.sessionId) { always.insert(req) } // the tour demo must show again next run
-        conn.respond(decision.reply)
+        if req.isPlanApproval {
+            let echo = echoInputs.removeValue(forKey: id)
+            let data = echo.flatMap { Self.planReply(decision, input: $0) }
+            conn.respond(data) // nil (no echo, or unserialisable) leaves the terminal prompt to answer
+            record(req, channel: data == nil ? .terminal : .notch, decision: data == nil ? "none" : "\(decision)", now: now)
+            refresh()
+            return
+        } else {
+            conn.respond(decision.reply)
+        }
         record(req, channel: .notch, decision: "\(decision)", now: now)
         refresh()
+    }
+
+    /// Reply for ExitPlanMode. Approve echoes the original tool input as `updatedInput`; Keep planning is a deny with a fixed
+    /// message (no plan text, no interrupt) that goes to Claude. Live behaviour of both is unverified (see the spikes doc).
+    static func planReply(_ d: Decision, input: [String: Any]) -> Data? {
+        let o: [String: Any] = d == .deny
+            ? ["behavior": "deny", "message": "The user chose to keep planning. Revise the plan and propose it again."]
+            : ["behavior": "allow", "updatedInput": input]
+        guard JSONSerialization.isValidJSONObject(o) else { return nil } // invalid types raise, not throw
+        return try? JSONSerialization.data(withJSONObject: o)
     }
 
     /// Answer with a set of labels per question. Single-select needs exactly one; multi-select at least one.
@@ -549,10 +602,10 @@ public final class NotchModel: ObservableObject {
 
     @discardableResult
     public func answer(_ id: String, selections: [String: Set<String>], now: Date = Date()) -> Answered {
-        guard let i = pending.firstIndex(where: { $0.id == id }), connections[id] != nil, questionInputs[id] != nil,
+        guard let i = pending.firstIndex(where: { $0.id == id }), connections[id] != nil, echoInputs[id] != nil,
               let answers = Self.joined(pending[i].questions ?? [], selections) else { return .refused }
         let conn = connections.removeValue(forKey: id)!
-        var input = questionInputs.removeValue(forKey: id)!
+        var input = echoInputs.removeValue(forKey: id)!
         let req = pending.remove(at: i)
         if conn.peerGone { connections[id] = conn; dropGone(req, now: now); refresh(); return .gone }
         input["answers"] = answers
@@ -579,7 +632,7 @@ public final class NotchModel: ObservableObject {
     public func handBack(_ id: String, now: Date = Date()) {
         guard let i = pending.firstIndex(where: { $0.id == id }), let conn = connections.removeValue(forKey: id) else { return }
         let req = pending.remove(at: i)
-        questionInputs.removeValue(forKey: id)
+        echoInputs.removeValue(forKey: id)
         let stale = conn.peerGone // the hook already gave up or the terminal answered: nothing was handed back
         conn.respond(nil)
         record(req, channel: .terminal, decision: stale ? "none" : "handed_back", now: now)

@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         model.onSound = { [weak self] kind, id, host, quiet in self?.sounds.handle(kind, sessionId: id, host: host, quiet: quiet) }
         model.silence = { [weak self] in self?.sounds.silenceState() ?? SilenceState() }
         model.onSessionEnd = { [weak self] id in self?.sounds.sessionEnded(id) }
+        model.planCardEnabled = UserDefaults.standard.bool(forKey: Self.planCardKey) // experimental (#91), default off
         buildMenu()
         startServer()
         startShortcuts()
@@ -79,24 +80,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.registerQuestionKeys(req) // the next question may have fewer options
         }
         pendingWatch = Publishers.MergeMany([model.$pending.map { _ in () }.eraseToAnyPublisher(), model.$listOpen.map { _ in () }.eraseToAnyPublisher(),
-                                      model.$focus.map { _ in () }.eraseToAnyPublisher(), model.$folded.map { _ in () }.eraseToAnyPublisher(), model.$partials.map { _ in () }.eraseToAnyPublisher()])
+                                      model.$focus.map { _ in () }.eraseToAnyPublisher(), model.$folded.map { _ in () }.eraseToAnyPublisher(), model.$partials.map { _ in () }.eraseToAnyPublisher(),
+                                      model.$expandedPlans.map { _ in () }.eraseToAnyPublisher()])
             .receive(on: DispatchQueue.main).sink { [weak self] in self?.syncShortcuts() }
     }
 
+    /// The key set last asked of HotKeys, kept only while it registered in full; a failed registration is retried on the next sync.
+    private var lastDesiredKeys: [ShortcutAction]?
+
     private func syncShortcuts() {
-        guard let req = model.shownPending else { shortcutCard = nil; hotKeys.unregister(); return }
+        guard let req = model.shownPending else { shortcutCard = nil; lastDesiredKeys = nil; hotKeys.unregister(); return }
         let seed = min(model.partials[req.id]?.step ?? 0, max((req.questions?.count ?? 1) - 1, 0)) // re-seeded on every sync, step 0 included; never past the last question
         if shortcutCard?.id == req.id { // same card: keep keys and its shownAt
             if req.questions != nil, questionStep != seed { questionStep = seed; registerQuestionKeys(req) }
+            if req.isPlanApproval { registerPlanKeys(req) } // expanding or folding the plan changes whether Y may approve
             return
         }
         shortcutCard = (req.id, Date())
+        lastDesiredKeys = nil
         questionStep = seed
         if req.questions != nil {
             registerQuestionKeys(req)
+        } else if req.isPlanApproval {
+            registerPlanKeys(req)
         } else {
             hotKeys.register(ShortcutKeys.approval)
         }
+    }
+
+    /// A plan has no "always" key, and approves by key only once the reader has the whole card open.
+    private func registerPlanKeys(_ req: PendingRequest) {
+        let mayApprove = model.hotkeyMayApprove(req)
+        let keys = ShortcutKeys.approval.filter { k in
+            switch k.action {
+            case .allow: return mayApprove
+            case .always: return false
+            default: return true
+            }
+        }
+        let desired = keys.map { $0.action }
+        if lastDesiredKeys == desired { return } // same desired set and it registered in full: no churn
+        lastDesiredKeys = hotKeys.register(keys) ? desired : nil
     }
 
     /// Digits for the question on screen only, so an unused digit isn't swallowed.
@@ -110,9 +134,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let req = model.shownPending, let card = shortcutCard, card.id == req.id,
               ShortcutGate.allows(shownAt: card.shownAt) else { return }
         switch action {
-        case .allow where req.questions == nil: model.resolve(req.id, .allow)
+        case .allow where req.questions == nil && model.hotkeyMayApprove(req): model.resolve(req.id, .allow)
         case .deny where req.questions == nil: model.resolve(req.id, .deny)
-        case .always where req.questions == nil: model.resolve(req.id, .always)
+        case .always where req.questions == nil: model.resolve(req.id, .always) // plans have no always key, and resolve refuses it anyway
         case .option where req.questions != nil: ShortcutBus.events.send(ShortcutEvent(requestId: req.id, action: action))
         default: break
         }
@@ -140,6 +164,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let focusItem = NSMenuItem(title: "Quiet during Focus (best effort, needs Full Disk Access)", action: #selector(toggleFocusQuiet(_:)), keyEquivalent: "")
         focusItem.target = self; focusItem.state = sounds.focusQuietEnabled ? .on : .off
         menu.addItem(focusItem)
+        let planItem = NSMenuItem(title: "Plan approval card (experimental)", action: #selector(togglePlanCard(_:)), keyEquivalent: "")
+        planItem.target = self; planItem.state = model.planCardEnabled ? .on : .off
+        menu.addItem(planItem)
         let tourItem = NSMenuItem(title: "Show me how it works", action: #selector(runTour), keyEquivalent: "")
         tourItem.target = self
         menu.addItem(tourItem)
@@ -329,6 +356,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func openFullDiskAccess() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") { NSWorkspace.shared.open(url) }
+    }
+
+    private static let planCardKey = "planCard"
+    @objc private func togglePlanCard(_ sender: NSMenuItem) {
+        model.planCardEnabled.toggle()
+        UserDefaults.standard.set(model.planCardEnabled, forKey: Self.planCardKey)
+        sender.state = model.planCardEnabled ? .on : .off
     }
 
     @objc private func toggleFocusQuiet(_ sender: NSMenuItem) {
