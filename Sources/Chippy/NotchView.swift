@@ -254,7 +254,7 @@ struct NotchView: View {
                     let off = (m.width + NotchMetrics.glanceIcon) / 2 + NotchMetrics.badgeGap // past the centred icon
                     HStack(spacing: 0) {
                         Color.clear.frame(width: off)
-                        CountBadge(text: badge, maxWidth: m.width - off - 8, onTap: { model.openList() },
+                        CountBadge(text: badge, maxWidth: m.width - off - 8, onTap: { model.openBadge() },
                                    needsYou: model.badgeNeedsYou, deadline: model.foldedDeadline) // stays inside the tab
                         Spacer(minLength: 0)
                     }.frame(height: NotchMetrics.tabHeight)
@@ -265,7 +265,7 @@ struct NotchView: View {
                 HStack(spacing: 0) {
                     Color.clear.frame(width: wing)
                     Color.clear.frame(width: m.width)
-                    CountBadge(text: badge, maxWidth: wing - 8, onTap: { model.openList() },
+                    CountBadge(text: badge, maxWidth: wing - 8, onTap: { model.openBadge() },
                                    needsYou: model.badgeNeedsYou, deadline: model.foldedDeadline).frame(width: wing)
                 }
                 .frame(height: m.band, alignment: .center)

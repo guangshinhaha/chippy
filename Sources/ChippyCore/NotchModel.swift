@@ -90,7 +90,7 @@ public final class NotchModel: ObservableObject {
     }
 
     private func refresh() {
-        let waiting = WaitingList.items(pending: pending, done: doneItems, terminal: terminalItems) // computed once per refresh
+        let waiting = WaitingList.items(pending: pending, done: doneItems, terminal: terminalItems, timeout: timeout(for:)) // computed once per refresh
         if waiting != waitingItems { waitingItems = waiting }
         guard !debugLock else { resting = false; return }
         if waiting.isEmpty { listOpen = false }
@@ -151,6 +151,12 @@ public final class NotchModel: ObservableObject {
         listOpen = true
         listSelection = WaitingList.reconcile(listSelection, in: waitingItems)
         refresh()
+    }
+
+    /// Badge tap: open the top "needs you" item (#93); with only finished chips, the list.
+    public func openBadge() {
+        if badgeNeedsYou, let top = waitingItems.first(where: { if case .pending = $0.target { return true } else { return false } }) { activate(top.target) }
+        else { openList() }
     }
 
     public func closeList() {
