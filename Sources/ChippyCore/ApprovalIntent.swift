@@ -31,8 +31,9 @@ public struct ApprovalIntent: Equatable {
     /// Scalars that can reorder, hide or fake text: C0/C1 controls, bidi controls, zero-width and invisible characters.
     static func isHidden(_ u: Unicode.Scalar) -> Bool {
         switch u.value {
-        case 0x00...0x1F, 0x7F...0x9F, 0x061C, 0x180E, 0x200B...0x200F, 0x2028, 0x2029, 0x202A...0x202E,
-             0x2060, 0x2066...0x2069, 0xFEFF: return true
+        case 0x00...0x1F, 0x7F...0x9F, 0xAD, 0x034F, 0x061C, 0x115F, 0x1160, 0x180E, 0x200B...0x200F, 0x2028, 0x2029,
+             0x202A...0x202E, 0x2060...0x2064, 0x2066...0x2069, 0x3164, 0xFE00...0xFE0F, 0xFEFF, 0xFFA0,
+             0xE0000...0xE007F, 0xE0100...0xE01EF: return true
         default: return false
         }
     }
@@ -50,11 +51,12 @@ public struct ApprovalIntent: Equatable {
     }
 
     /// For the raw command: hidden scalars are shown as `<U+202E>` instead of acting, so the reader sees them.
-    /// Newlines and tabs stay as they are.
+    /// Newlines and tabs stay as they are. The marker symbol ⋯ is revealed too, so command text can never
+    /// pass for one of our "hidden" markers.
     public static func reveal(_ s: String) -> String {
         var out = ""
         for u in s.unicodeScalars {
-            if u.value == 0x0A || u.value == 0x09 || !isHidden(u) { out.unicodeScalars.append(u) }
+            if u.value == 0x0A || u.value == 0x0D || u.value == 0x09 || (!isHidden(u) && u != markSymbol) { out.unicodeScalars.append(u) }
             else { out += String(format: "<U+%04X>", u.value) }
         }
         return out
@@ -68,6 +70,9 @@ public struct ApprovalIntent: Equatable {
         var s = p
         if !home.isEmpty, home != "/", s == home || s.hasPrefix(home + "/") { s = "~" + s.dropFirst(home.count) }
         guard s.count > limit else { return s }
+        if s.count > 1, s.hasSuffix("/") { // a directory: shorten it as a path, then put the slash back
+            return displayPath(String(s.dropLast()), home: "", limit: limit - 1) + "/"
+        }
         let name = (s as NSString).lastPathComponent
         let dir = String(s.dropLast(name.count))
         let room = limit - name.count - 1 // for the "…" joining dir parts
@@ -91,25 +96,36 @@ public struct ApprovalIntent: Equatable {
         return h
     }
 
-    /// What the card shows of the raw command, bounded to `maxRows` rows of `columns` characters: all of it when it
-    /// fits, otherwise the first rows, a "…" row and the last rows, so a tail like `| sh` is always visible.
-    /// `columns` is deliberately conservative (narrower than the card), and the view applies no line limit,
-    /// so a narrower render can only add rows, never cut the tail.
+    /// Marker symbol for text Chippy omitted. `reveal()` shows any ⋯ in a command as `<U+22EF>`, so command text
+    /// can never pass for a marker.
+    static let markSymbol = Unicode.Scalar(0x22EF)!
+
+    static func marker(_ what: String) -> String { "\(markSymbol) \(what) \(markSymbol)" }
+
+    /// What the card shows of the raw command (already passed through `reveal`), bounded to `maxRows` rows of
+    /// `columns` characters: all of it when it fits, otherwise the first rows, an explicit marker row
+    /// ("⋯ N more lines hidden ⋯", or "⋯ +N chars hidden ⋯" for one long line) and the last rows, so a tail
+    /// like `| sh` is always visible and the omission is too. `columns` is deliberately conservative (narrower
+    /// than the card); the view keeps only a generous line-limit backstop.
     public static func preview(_ s: String, columns: Int = 40, maxRows: Int = 6) -> String {
+        let lines = s.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline) // CRLF is one Character
         var rows: [String] = []
-        for line in s.split(separator: "\n", omittingEmptySubsequences: false) {
+        for line in lines {
             var rest = Substring(line)
             repeat { rows.append(String(rest.prefix(columns))); rest = rest.dropFirst(columns) } while !rest.isEmpty
         }
         guard rows.count > maxRows else { return s }
         let tail = max(maxRows / 3, 1), head = maxRows - tail - 1
-        return (rows.prefix(head) + ["…"] + rows.suffix(tail)).joined(separator: "\n")
+        let hidden = rows[head..<(rows.count - tail)]
+        let note = lines.count == 1 ? "+\(hidden.reduce(0) { $0 + $1.count }) chars hidden" : "\(hidden.count) more lines hidden"
+        return (rows.prefix(head) + [marker(note)] + rows.suffix(tail)).joined(separator: "\n")
     }
 
-    /// Keeps the head AND the tail of a long command for storage, so something like a trailing `| sh` is never cut off.
+    /// Keeps the head AND the tail of a long command for storage, so something like a trailing `| sh` is never cut
+    /// off, with a "+N chars hidden" marker between.
     public static func headTail(_ s: String, limit: Int = 800) -> String {
         guard s.count > limit else { return s }
-        let tail = limit * 3 / 8
-        return String(s.prefix(limit - tail)) + "\n…\n" + String(s.suffix(tail))
+        let tail = limit * 3 / 8, head = limit - tail
+        return String(s.prefix(head)) + "\n" + marker("+\(s.count - head - tail) chars hidden") + "\n" + String(s.suffix(tail))
     }
 }

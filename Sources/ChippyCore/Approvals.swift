@@ -86,7 +86,7 @@ public struct PendingRequest: Identifiable, Equatable {
     }
 
     static func oneLine(tool: String, input: [String: Any]) -> String {
-        let detail = rawDetail(input)
+        let detail = ApprovalIntent.reveal(rawDetail(input)) // hidden scalars shown, never acting, in the ask too
         let flat = detail.split(whereSeparator: \.isNewline).joined(separator: " ⏎ ")
         return detail.isEmpty ? tool : "\(tool): \(flat)"
     }

@@ -223,7 +223,8 @@ struct ApprovalCard: View {
             }
             Text(req.detail.isEmpty ? req.toolName : ApprovalIntent.preview(req.detail))
                 .font(.system(.callout, design: .monospaced).weight(.medium)).foregroundStyle(.white)
-                .fixedSize(horizontal: false, vertical: true) // no line limit: preview() bounds rows and keeps head and tail
+                .lineLimit(12) // backstop only: preview() already bounds rows and keeps head, tail and a hidden-count marker
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.4)).lineLimit(1).truncationMode(.head)
             TourCaption(sessionId: req.sessionId, step: .approval)

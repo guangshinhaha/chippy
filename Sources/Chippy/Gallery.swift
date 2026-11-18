@@ -89,10 +89,13 @@ enum Gallery {
         try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path) tall=\(model.tall)")
     }
 
+    private static func tempLog() -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("chippy-gallery-\(UUID().uuidString).jsonl")
+    }
+
     /// A model with one prompt submitted and one pending approval, from sample text only. Throwaway log path per call.
     @MainActor
-    private static func demoModel(prompt: String, tool: String, input: [String: Any], extra: [String: Any] = [:]) -> NotchModel {
-        let log = FileManager.default.temporaryDirectory.appendingPathComponent("chippy-gallery-\(UUID().uuidString).jsonl")
+    private static func demoModel(prompt: String, tool: String, input: [String: Any], extra: [String: Any] = [:], log: URL) -> NotchModel {
         let model = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: log))
         let base: [String: Any] = ["session_id": "demo-a", "cwd": "/demo/api-server", "chippy_branch": "fix/login-timeout"]
         func payload(_ fields: [String: Any]) -> HookPayload? {
@@ -110,11 +113,13 @@ enum Gallery {
     /// `Chippy --render-question out.png`: a question card with prompt, lead-in and a long option description (sample text only).
     @MainActor
     static func renderQuestion(to path: String) {
+        let log = tempLog()
+        defer { try? FileManager.default.removeItem(at: log) }
         let model = demoModel(prompt: "Set up the login page", tool: "AskUserQuestion", input: ["questions": [["question": "Which auth method should the login page use?", "header": "Auth", "multiSelect": false, "options": [
                 ["label": "Email + password", "description": "Classic form, simplest to ship. We would store salted hashes and need a reset flow, rate limiting and a lockout policy before launch."],
                 ["label": "Magic link", "description": "No passwords to store"],
                 ["label": "SSO", "description": "Use the school's identity provider"]]]]],
-            extra: ["chippy_lead_in": "Before I wire up the login page I need to pick how people sign in. The school has an identity provider, but it is not set up for this app yet, and a plain password form would mean storing credentials."])
+            extra: ["chippy_lead_in": "Before I wire up the login page I need to pick how people sign in. The school has an identity provider, but it is not set up for this app yet, and a plain password form would mean storing credentials."], log: log)
         let m = NotchMetrics(width: 185, height: 32)
         let sz = m.size(for: .expanded, tall: model.tall)
         let r = ImageRenderer(content: NotchView(model: model, box: box(m)).frame(width: sz.width, height: 560).background(Color(white: 0.25)))
@@ -126,8 +131,10 @@ enum Gallery {
     /// `Chippy --render-approval out.png`: approval cards for a short Bash command with a description, an Edit, and a very long command (sample text only).
     @MainActor
     static func renderApproval(to path: String) {
+        let log = tempLog()
+        defer { try? FileManager.default.removeItem(at: log) }
         func card(_ tool: String, _ input: [String: Any], height: CGFloat? = nil, prompt: String = "Fix the login timeout bug") -> some View {
-            let model = demoModel(prompt: prompt, tool: tool, input: input)
+            let model = demoModel(prompt: prompt, tool: tool, input: input, log: log)
             let m = NotchMetrics(width: 185, height: 32)
             let b = box(m)
             if let height { b.contentHeight = height } // the app hugs measured content; give the worst case its cap so nothing is squeezed
