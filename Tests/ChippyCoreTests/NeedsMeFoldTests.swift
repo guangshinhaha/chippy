@@ -136,6 +136,20 @@ final class NeedsMeFoldTests: XCTestCase {
         XCTAssertEqual(m.headerTitle, "Needs you \u{00B7} 2 of 2") // shown card is second in rank
     }
 
+    func testAnsweringAJumpedToCardShowsRankFirstNext() {
+        let m = model()
+        let a = ask(m, wait: 100)
+        let b = ask(m, wait: 50)
+        let c = ask(m, wait: 10)
+        XCTAssertEqual(m.shownPending?.id, a)
+        m.openList(); m.activate(.pending(b))
+        XCTAssertEqual(m.shownPending?.id, b)
+        XCTAssertEqual(m.headerTitle, "Needs you \u{00B7} 2 of 3") // index is b's rank, not arrival order
+        m.resolve(b, .allow, now: t0)
+        XCTAssertEqual(m.shownPending?.id, c) // rank-first, not the stale sticky a
+        XCTAssertEqual(m.headerTitle, "Needs you \u{00B7} 1 of 2")
+    }
+
     func testFoldTimerStaysWithTheOldestRequest() {
         let m = model()
         ask(m, wait: 100)

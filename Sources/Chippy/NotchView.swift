@@ -214,8 +214,6 @@ struct NotchView: View {
         return d.glance(showReply: model.showReplyInGlance)
     }
 
-    private var headerTitle: String { model.headerTitle }
-
     static let terminalCardCap = 2
     /// Session rows in the peek, so the card's measured height stays within its cap.
     static let sessionRowCap = 4
@@ -308,7 +306,7 @@ struct NotchView: View {
                 HStack(spacing: 10) {
                     Color.clear.frame(width: 28 * 1.4, height: 28 * 1.4) // where NotchView.icon sits
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(headerTitle).font(.headline.monospacedDigit()).foregroundStyle(.white)
+                        Text(model.headerTitle).font(.headline.monospacedDigit()).foregroundStyle(.white)
                         if !model.listOpen, let r = model.shownPending, let t = model.knownTimeout(for: r) { TimeoutNote(createdAt: r.createdAt, timeout: t) }
                     }
                     Spacer(minLength: 0)
