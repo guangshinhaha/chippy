@@ -291,11 +291,11 @@ final class NeedsMeFoldTests: XCTestCase {
         XCTAssertTrue(m.folded)
     }
 
-    func testFoldedBadgeCountsFinishedChipsToo() {
+    func testFoldedBadgeCountsNeedsYouOnly() {
         let m = model()
         m.apply(HookPayload(json: Data(#"{"session_id":"d","hook_event_name":"Stop","cwd":"/x/q"}"#.utf8))!, now: t0)
         ask(m); advance(m, 16)
-        XCTAssertEqual(m.badge, "2"); XCTAssertEqual(m.density, .collapsed)
+        XCTAssertEqual(m.badge, "1"); XCTAssertEqual(m.density, .collapsed) // the finished chip is not counted (#101)
     }
 
     func testSoundStillFiresOnceOnArrivalAndNotOnFold() {

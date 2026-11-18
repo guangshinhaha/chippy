@@ -75,7 +75,24 @@ struct CountBadge: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pulse = false
 
-    var body: some View {
+    @ViewBuilder var body: some View {
+        if text.isEmpty { dot } else { counted }
+    }
+
+    /// Only finished items wait (#101): a plain dot, no number. Same tap target and wing limit as the count.
+    private var dot: some View {
+        Circle().fill(.white.opacity(0.92)).frame(width: 8, height: 8)
+            .reveal(0.08)
+            .frame(minWidth: min(24, max(maxWidth, 16)), maxWidth: max(maxWidth, 16), minHeight: 24)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onTap)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Finished threads waiting, nothing needs you")
+            .accessibilityHint("Opens the list of everything waiting")
+            .accessibilityAddTraits(.isButton)
+    }
+
+    private var counted: some View {
         // Ring and VoiceOver label are both computed from this tick's date, so they never disagree or go stale.
         TimelineView(CountdownSchedule(end: needsYou ? deadline?.end : nil, step: reduceMotion ? 1 : 0.5)) { ctx in
             badge(now: ctx.date)
@@ -238,7 +255,7 @@ struct NotchView: View {
         switch model.density {
         case .collapsed:
             // The icon is drawn once, by NotchView.icon. Finished items waiting show a small count.
-            if let badge = model.badge, m.isTab {
+            if let badge = model.badge ?? (model.badgeDot ? "" : nil), m.isTab {
                 VStack(spacing: 0) {
                     Color.clear.frame(height: m.band)
                     let off = (m.width + NotchMetrics.glanceIcon) / 2 + NotchMetrics.badgeGap // past the centred icon
@@ -250,7 +267,7 @@ struct NotchView: View {
                     }.frame(height: NotchMetrics.tabHeight)
                 }
                 .frame(maxHeight: .infinity, alignment: .top)
-            } else if let badge = model.badge {
+            } else if let badge = model.badge ?? (model.badgeDot ? "" : nil) {
                 let wing = m.wing(for: .collapsed)
                 HStack(spacing: 0) {
                     Color.clear.frame(width: wing)
@@ -656,8 +673,10 @@ struct DoneCard: View {
             }
             TourCaption(sessionId: item.sessionId, step: .done)
             HStack {
-                Text(item.files == 0 ? "No file edits" : "\(item.files) file\(item.files == 1 ? "" : "s") · +\(item.added) −\(item.removed)")
-                    .font(.caption2).foregroundStyle(.white.opacity(0.6))
+                if item.files > 0 {
+                    Text("\(item.files) file\(item.files == 1 ? "" : "s") · +\(item.added) −\(item.removed)")
+                        .font(.caption2).foregroundStyle(.white.opacity(0.6))
+                }
                 Spacer()
                 if TerminalJump.available(item.host) {
                     OpenTerminalButton(host: item.host, onOpened: dismiss)
@@ -690,6 +709,9 @@ struct TerminalCard: View {
 /// instead of appearing to do nothing.
 struct OpenTerminalButton: View {
     let host: HostInfo?
+    /// Fixed wording (the terminal rows say "Jump to terminal"); nil names the app ("Open Orca").
+    var title: String? = nil
+    var kind: ChipButton.Kind = .neutral
     var onOpened: () -> Void = {}
     @State private var failed = false
     @State private var offSpace = false
@@ -704,8 +726,8 @@ struct OpenTerminalButton: View {
     }
 
     var body: some View {
-        ChipButton(title: offSpace ? "On another Space" : failed ? "Couldn't open" : "Open \(appName)",
-                   hint: offSpace ? "\(appName) is frontmost; switch Space" : failed ? "switch to it yourself" : nil, kind: .neutral) {
+        ChipButton(title: offSpace ? "On another Space" : failed ? "Couldn't open" : (title ?? "Open \(appName)"),
+                   hint: offSpace ? "\(appName) is frontmost; switch Space" : failed ? "switch to it yourself" : nil, kind: (offSpace || failed) ? .neutral : kind) {
             guard !busy else { return }
             busy = true; failed = false; offSpace = false; token += 1
             let mine = token
@@ -774,15 +796,63 @@ struct RecentListView: View {
     }
 }
 
-/// The waiting list (#53): one row per approval, question and finished chip. Each row shows only the repo, a
-/// type icon and the age, never the question or command (PDPA #30). Arrows, Return and Esc are handled by the panel.
+/// The waiting list (#53, #101): NEEDS YOU on top (act on these), FINISHED below (FYI). Rows show only the repo, a worktree
+/// tag, a verb-led label and the age, never the question or command (PDPA #30). Arrows, Return and Esc are handled by the panel.
 struct WaitingListView: View {
     @ObservedObject var model: NotchModel
 
+    private func section(_ title: String, count: Int, clearAll: (() -> Void)? = nil) -> some View {
+        HStack {
+            Text("\(title) (\(count))").font(.caption2.weight(.bold)).foregroundStyle(.white.opacity(0.5)).tracking(0.6)
+            Spacer(minLength: 0)
+            if let clearAll {
+                Button(action: clearAll) { Text("Clear all").font(.caption2).foregroundStyle(.white.opacity(0.6)).padding(.horizontal, 6).frame(minHeight: 22).contentShape(Rectangle()) }
+                    .buttonStyle(.plain).help("Move every finished thread to Recent").accessibilityLabel("Clear all finished")
+            }
+        }
+        .padding(.horizontal, 10).frame(height: WaitingList.sectionHeaderHeight)
+        .accessibilityAddTraits(.isHeader)
+    }
+
+    private func needsRows(_ layout: WaitingLayout) -> some View {
+        VStack(spacing: 0) {
+            ForEach(layout.needs) { item in
+                NeedsRow(item: item, selected: model.listSelection == item.target, host: model.terminalItems.first { .terminal($0.sessionId) == item.target }?.host,
+                         open: { model.activate(item.target) },
+                         handled: { if case .terminal(let sid) = item.target { model.dismissTerminal(sid) } })
+                    .frame(height: WaitingList.needsRowHeight).id(item.target)
+            }
+        }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(model.waitingItems) { item in
-                WaitingRow(item: item, selected: model.listSelection == item.target) { model.activate(item.target) }
+        let layout = model.waitingLayout
+        VStack(alignment: .leading, spacing: WaitingList.sectionGap) {
+            if !layout.needs.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    section("NEEDS YOU", count: layout.needs.count)
+                    if layout.needsScrolls {
+                        ScrollViewReader { proxy in
+                            ScrollView { needsRows(layout) }.frame(height: layout.needsHeight)
+                                .onChange(of: model.listSelection) { if let t = $0 { withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(t) } } }
+                        }
+                    } else { needsRows(layout) }
+                }
+            }
+            if layout.totalFinished > 0 {
+                VStack(alignment: .leading, spacing: 0) {
+                    section("FINISHED", count: layout.totalFinished, clearAll: { model.dismissDone(nil) })
+                    ForEach(layout.finished) { item in
+                        FinishedRow(item: item, selected: model.listSelection == item.target,
+                                    open: { model.activate(item.target) }, dismiss: { if case .done(let sid) = item.target { model.dismissDone(sid) } })
+                            .frame(height: WaitingList.finishedRowHeight)
+                    }
+                    if layout.hiddenFinished > 0 {
+                        Text("+\(layout.hiddenFinished) more").font(.caption2).foregroundStyle(.white.opacity(0.5))
+                            .padding(.leading, 10).frame(height: WaitingList.moreRowHeight, alignment: .leading)
+                            .accessibilityLabel("\(layout.hiddenFinished) more finished, clear some to see them")
+                    }
+                }
             }
             Text("↑↓ move · Return open · Esc close")
                 .font(.caption2).foregroundStyle(.white.opacity(0.4)).padding(.top, 6).padding(.leading, 4)
@@ -790,29 +860,44 @@ struct WaitingListView: View {
     }
 }
 
-struct WaitingRow: View {
+/// "repo" with the worktree as a small secondary tag (only linked worktrees have one).
+struct RepoTitle: View {
+    let repo: String
+    let worktree: String?
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle)
+            if let worktree {
+                Text(worktree).font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1).truncationMode(.middle)
+                    .padding(.horizontal, 5).padding(.vertical, 1).background(Capsule().fill(Color.white.opacity(0.12)))
+                    .frame(maxWidth: 110, alignment: .leading).layoutPriority(-1)
+            }
+        }
+    }
+}
+
+private func rowBackground(selected: Bool, hover: Bool) -> some View {
+    RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(selected ? 0.18 : hover ? 0.1 : 0))
+}
+
+/// A row you act on: verb-led label, one primary button (terminal rows add "Handled").
+struct NeedsRow: View {
     let item: WaitingItem
     let selected: Bool
+    let host: HostInfo?
     let open: () -> Void
+    let handled: () -> Void
     @State private var hover = false
 
     private var symbol: String {
         switch item.kind {
         case .approval: return "hand.raised.fill"
         case .question: return "questionmark.bubble.fill"
-        case .done: return "checkmark.circle.fill"
         case .terminal: return "terminal.fill"
+        case .done: return "checkmark.circle.fill"
         }
     }
-    private var tint: Color {
-        switch item.kind {
-        case .approval: return .orange
-        case .question: return .cyan
-        case .done: return .green
-        case .terminal: return .purple
-        }
-    }
-    private var kindName: String { item.kind == .done ? "finished" : item.kind == .terminal ? "asked in terminal" : item.kind == .question ? "question" : "approval" }
+    private var tint: Color { item.kind == .approval ? .orange : item.kind == .question ? .cyan : .purple }
 
     /// One 15s timeline per row feeds both the visible age and the VoiceOver label, so they never disagree.
     var body: some View {
@@ -822,19 +907,63 @@ struct WaitingRow: View {
     private func row(age: String) -> some View {
         HStack(spacing: 10) {
             Image(systemName: symbol).font(.caption).foregroundStyle(tint).frame(width: 18)
-            Text(item.repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle)
-            Spacer(minLength: 8)
-            Text(age).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.55))
+            VStack(alignment: .leading, spacing: 2) {
+                RepoTitle(repo: item.repo, worktree: item.worktree)
+                Text("\(item.label) · \(age)").font(.caption2).foregroundStyle(tint.opacity(0.95)).lineLimit(1)
+            }
+            Spacer(minLength: 6)
+            if item.kind == .terminal {
+                if TerminalJump.available(host) { OpenTerminalButton(host: host, title: "Jump to terminal", kind: .primary) }
+                ChipButton(title: "Handled", kind: .quiet, action: handled)
+            } else {
+                ChipButton(title: item.kind == .question ? "Answer" : "Review", kind: .primary, action: open)
+            }
         }
-        .padding(.horizontal, 10).frame(minHeight: 32)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(selected ? 0.18 : hover ? 0.1 : 0)))
+        .padding(.horizontal, 10)
+        .background(rowBackground(selected: selected, hover: hover))
         .contentShape(Rectangle())
         .onHover { hover = $0 }
         .onTapGesture(perform: open)
         .animation(.easeOut(duration: 0.12), value: selected)
         .animation(.easeOut(duration: 0.12), value: hover)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(item.repo), \(kindName), \(age)")
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(item.repo)\(item.worktree.map { ", worktree \($0)" } ?? ""), \(item.label), \(age)")
+    }
+}
+
+/// One line, FYI: repo, outcome, age. No buttons; the whole row opens, and an x shows on hover.
+struct FinishedRow: View {
+    let item: WaitingItem
+    let selected: Bool
+    let open: () -> Void
+    let dismiss: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 15)) { ctx in row(age: WaitingList.age(since: item.at, now: ctx.date)) }
+    }
+
+    private func row(age: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark.circle").font(.caption).foregroundStyle(.white.opacity(0.45)).frame(width: 18)
+            RepoTitle(repo: item.repo, worktree: item.worktree)
+            Text(item.asksYou ? "asks you" : "finished").font(.caption2).foregroundStyle(item.asksYou ? Color.orange : .white.opacity(0.5)).lineLimit(1).fixedSize()
+            Spacer(minLength: 6)
+            Text(age).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.5))
+            Button(action: dismiss) {
+                Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.white.opacity(0.7)).frame(width: 20, height: 24).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).opacity(hover || selected ? 1 : 0).help("Dismiss (moves to Recent)").accessibilityLabel("Dismiss")
+        }
+        .padding(.horizontal, 10)
+        .background(rowBackground(selected: selected, hover: hover))
+        .contentShape(Rectangle())
+        .onHover { hover = $0 }
+        .onTapGesture(perform: open)
+        .animation(.easeOut(duration: 0.12), value: selected)
+        .animation(.easeOut(duration: 0.12), value: hover)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(item.repo)\(item.worktree.map { ", worktree \($0)" } ?? ""), \(item.asksYou ? "asks you" : "finished"), \(age)")
         .accessibilityAddTraits(.isButton)
     }
 }
