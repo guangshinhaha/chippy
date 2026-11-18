@@ -429,14 +429,19 @@ struct DoneCard: View {
 struct OpenTerminalButton: View {
     let host: HostInfo?
     @State private var failed = false
+    @State private var busy = false
+    @State private var token = 0
 
     var body: some View {
         ChipButton(title: failed ? "Couldn't open" : "Open terminal",
                    hint: failed ? "switch to it yourself" : nil, kind: .neutral) {
-            failed = false
+            guard !busy else { return }
+            busy = true; failed = false; token += 1
+            let mine = token
             TerminalJump.open(host) { ok in
+                busy = false
                 failed = !ok
-                if !ok { DispatchQueue.main.asyncAfter(deadline: .now() + 4) { failed = false } }
+                if !ok { DispatchQueue.main.asyncAfter(deadline: .now() + 4) { if token == mine { failed = false } } }
             }
         }
         .help(failed ? "Chippy couldn't bring the app forward. Switch to it from the Dock or Cmd-Tab." : "")

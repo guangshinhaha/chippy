@@ -63,7 +63,10 @@ enum TerminalJump {
     static func bringForward(pid: Int32, completion: @escaping (Bool) -> Void) {
         guard let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else { completion(false); return }
         func isFront() -> Bool {
-            ActivationOutcome.isFrontmost(frontmostPid: NSWorkspace.shared.frontmostApplication?.processIdentifier, target: pid)
+            let front = NSWorkspace.shared.frontmostApplication
+            // Same app counts even if the frontmost pid differs (multi-process hosts).
+            return ActivationOutcome.isFrontmost(frontmostPid: front?.processIdentifier, target: pid)
+                || (app.bundleIdentifier != nil && front?.bundleIdentifier == app.bundleIdentifier)
         }
         if app.isHidden { app.unhide() }
         if #available(macOS 14.0, *) { NSApp.yieldActivation(to: app) }
