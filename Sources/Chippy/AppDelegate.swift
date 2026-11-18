@@ -101,7 +101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !CardKeyGate.shouldRegisterHotKeys(hasShownCard: true, replyFieldFocused: model.replyFieldFocused) { lastDesiredKeys = nil; hotKeys.unregister(); return }
         let seed = min(model.partials[req.id]?.step ?? 0, max((req.questions?.count ?? 1) - 1, 0)) // re-seeded on every sync, step 0 included; never past the last question
         if shortcutCard?.id == req.id { // same card: keep its shownAt; keys are re-registered if they were dropped (focus left the field)
-            if req.questions != nil, questionStep != seed || lastDesiredKeys == nil { questionStep = seed; registerQuestionKeys(req) }
+            if req.questions != nil, questionStep != seed || (model.freeTextReplyEnabled && lastDesiredKeys == nil) { questionStep = seed; registerQuestionKeys(req) } // retry-on-drop only with the flag on; off = main's exact semantics
             if req.isPlanApproval { registerPlanKeys(req) } // expanding or folding the plan changes whether Y may approve
             return
         }
@@ -137,8 +137,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let counts = (req.questions ?? []).map { $0.options.count }
         let keys = ShortcutKeys.question(optionCount: ShortcutGate.optionCount(step: questionStep, counts: counts))
         let desired = keys.map { $0.action }
-        if lastDesiredKeys == desired { return } // already registered in full: no churn
-        lastDesiredKeys = registerKeys(keys) ? desired : nil
+        // Caching is flag-on only (#94); with the flag off every call registers, exactly as on main.
+        if model.freeTextReplyEnabled {
+            if lastDesiredKeys == desired { return } // already registered in full: no churn
+            lastDesiredKeys = registerKeys(keys) ? desired : nil
+        } else {
+            registerKeys(keys)
+        }
     }
 
     /// The one door to HotKeys.register: while the reply field has focus (#94) no card key may be registered, whoever asks

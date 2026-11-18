@@ -479,7 +479,10 @@ public final class NotchModel: ObservableObject {
         else if replyFocusOwner == id { replyFocusOwner = nil }
     }
     /// The panel lost key or Esc left the field: drop whichever focus is held, straight in the model (not via SwiftUI's onChange).
-    public func clearReplyFocus() { if replyFocusOwner != nil { replyFocusOwner = nil } }
+    /// Bumped whenever AppKit drops the field's focus (Esc, resignKey): the card observes it and resets SwiftUI's @FocusState,
+    /// so a later click is a false->true change instead of a no-op on a stale `true`.
+    @Published public private(set) var replyFocusReset = 0
+    public func clearReplyFocus() { replyFocusReset &+= 1; if replyFocusOwner != nil { replyFocusOwner = nil } }
 
     /// Experimental (#91): off by default. While off, ExitPlanMode goes to the terminal prompt untouched.
     public var planCardEnabled = false
@@ -811,20 +814,35 @@ public final class NotchModel: ObservableObject {
     public static func validFreeText(_ raw: String) -> String? {
         for u in raw.unicodeScalars where lineBreaks.contains(u.value) { return nil }
         let typed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard typed.count <= freeTextLimit, typed.unicodeScalars.count <= freeTextLimit * 2 else { return nil } // also bounds hidden padding
+        guard !freeTextTooLong(typed) else { return nil }
         var out = String.UnicodeScalarView()
+        var prevIsBase = false // last kept scalar is visible and not a joiner: only then may a joiner/selector follow
+        var hasBase = false
         for u in typed.unicodeScalars {
-            if u.value == 0x09 { out.append(" ") } else if !isStrippedInFreeText(u) { out.append(u) }
+            if u.value == 0x09 || u.value == 0x0B || u.value == 0x0C { out.append(" "); prevIsBase = false; continue } // tab, VT, FF read as spaces
+            if [0x200C, 0x200D, 0xFE0E, 0xFE0F].contains(u.value) {
+                if prevIsBase { out.append(u); prevIsBase = false } // no base before it, or a run of them: dropped
+                continue
+            }
+            if isStrippedInFreeText(u) { continue } // known limit: tag characters and VS1-13 are stripped even after a base
+            out.append(u)
+            prevIsBase = !CharacterSet.whitespacesAndNewlines.contains(u)
+            if prevIsBase { hasBase = true }
         }
         let t = String(out).trimmingCharacters(in: .whitespacesAndNewlines)
-        return t.isEmpty ? nil : t
+        return (t.isEmpty || !hasBase) ? nil : t
+    }
+
+    /// 500 characters, and a scalar ceiling of 16x that so hidden padding cannot grow without bound (real emoji text sits far below it).
+    static func freeTextTooLong(_ typed: String) -> Bool {
+        typed.count > freeTextLimit || typed.unicodeScalars.count > freeTextLimit * 16
     }
 
     /// Why typed text cannot be sent, for the card's hint; nil when it is fine.
     public static func freeTextProblem(_ raw: String) -> String? {
         if validFreeText(raw) != nil { return nil }
-        if raw.trimmingCharacters(in: .whitespacesAndNewlines).count > freeTextLimit { return "Too long (max \(freeTextLimit) characters). Shorten it, or use Answer in terminal." }
-        if raw.unicodeScalars.contains(where: { lineBreaks.contains($0.value) }) { return "One line only. Use Answer in terminal for more." }
+        if raw.unicodeScalars.contains(where: { lineBreaks.contains($0.value) }) { return "One line only. Use Answer in terminal for more." } // send path only: the field already turns pasted newlines into spaces
+        if freeTextTooLong(raw.trimmingCharacters(in: .whitespacesAndNewlines)) { return "Too long (max \(freeTextLimit) characters). Shorten it, or use Answer in terminal." }
         return "Type a reply first, or pick an option."
     }
 

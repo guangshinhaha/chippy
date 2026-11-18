@@ -202,7 +202,7 @@ final class FreeTextReplyTests: XCTestCase {
         XCTAssertEqual(NotchModel.validFreeText("a\tb"), "a b")
         XCTAssertEqual(NotchModel.validFreeText(String(repeating: "x", count: 500)), String(repeating: "x", count: 500))
         XCTAssertNil(NotchModel.validFreeText(String(repeating: "x ", count: 251))) // 501 typed after trim
-        XCTAssertNil(NotchModel.validFreeText("x" + String(repeating: "\u{202E}", count: 1100) + "x")) // hidden padding is bounded
+        XCTAssertNil(NotchModel.validFreeText("x" + String(repeating: "\u{202E}", count: 8100) + "x")) // hidden padding is bounded (16x)
         let q = AskQuestion.parse(["questions": [mq("Q")]])!
         XCTAssertEqual(NotchModel.joined(q, [:], texts: ["Q": "two  spaces"]), ["Q": "two  spaces"])
     }
@@ -212,5 +212,30 @@ final class FreeTextReplyTests: XCTestCase {
         XCTAssertTrue(NotchModel.freeTextProblem("   ")!.contains("Type a reply"))
         XCTAssertTrue(NotchModel.freeTextProblem(String(repeating: "x", count: 501))!.contains("Too long"))
         XCTAssertTrue(NotchModel.freeTextProblem("a\nb")!.contains("One line"))
+    }
+
+    func testJoinerOnlyRepliesRefusedAndRunsCapped() {
+        XCTAssertNil(NotchModel.validFreeText("\u{200D}\u{200C}\u{FE0F}\u{FE0E}"))
+        XCTAssertNil(NotchModel.validFreeText(" \u{200D} "))
+        XCTAssertEqual(NotchModel.validFreeText("a\u{200D}\u{200D}\u{FE0F}b"), "a\u{200D}b")
+        XCTAssertEqual(NotchModel.validFreeText("\u{200D}a"), "a")
+        XCTAssertEqual(NotchModel.validFreeText("\u{2764}\u{FE0F}"), "\u{2764}\u{FE0F}")
+        XCTAssertEqual(NotchModel.validFreeText("a\u{0B}b\u{0C}c"), "a b c")
+    }
+
+    func testManyFamilyEmojiAccepted() {
+        let fam = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}"
+        let s = String(repeating: fam, count: 130)
+        XCTAssertEqual(NotchModel.validFreeText(s), s)
+        XCTAssertNil(NotchModel.freeTextProblem(s))
+        XCTAssertTrue(NotchModel.freeTextProblem(String(repeating: "x", count: 501))!.contains("Too long"))
+        XCTAssertTrue(NotchModel.freeTextProblem("x" + String(repeating: "\u{202E}", count: 8100) + "x")!.contains("Too long"))
+    }
+
+    func testClearReplyFocusBumpsResetToken() {
+        let m = NotchModel()
+        let t = m.replyFocusReset
+        m.clearReplyFocus()
+        XCTAssertNotEqual(m.replyFocusReset, t)
     }
 }

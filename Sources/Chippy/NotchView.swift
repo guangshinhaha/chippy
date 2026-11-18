@@ -379,7 +379,7 @@ struct NotchView: View {
                         QuestionCard(req: req, repo: model.repoLabel(cwd: req.cwd, project: req.project).text, mark: model.identity(cwd: req.cwd, project: req.project), initial: model.partials[req.id] ?? PartialAnswers(),
                                      progress: { model.savePartial(req.id, step: $0, answers: $1, byUser: $2) },
                                      send: { model.answer(req.id, selections: $0, texts: $1) }, handBack: { model.handBack(req.id) },
-                                     freeText: model.freeTextReplyEnabled, initialTexts: model.draftTexts(req.id),
+                                     freeText: model.freeTextReplyEnabled, focusReset: model.replyFocusReset, initialTexts: model.draftTexts(req.id),
                                      draft: { model.setDraft(req.id, question: $0, text: $1) }, replyFocus: { model.setReplyFieldFocused($0, id: req.id) }).id(req.id).reveal(0.12)
                     } else if let plan = req.plan {
                         PlanCard(req: req, plan: plan, repo: model.repoLabel(cwd: req.cwd, project: req.project).text, mark: model.identity(cwd: req.cwd, project: req.project), startExpanded: model.expandedPlans.contains(req.id), expand: { model.setPlanExpanded(req.id, $0) }) { model.resolve(req.id, $0) }.id(req.id).reveal(0.12)
@@ -658,6 +658,8 @@ struct QuestionCard: View {
     var freeText = false
     let draft: (String, String) -> Void
     let replyFocus: (Bool) -> Void
+    /// Changes when AppKit dropped the field's focus behind SwiftUI's back; resets `fieldFocused` so the next click re-focuses.
+    var focusReset = 0
     @FocusState private var fieldFocused: Bool
     /// Typed text per question text; replaces the selection for that question. Memory only (the model keeps the drafts).
     @State private var texts: [String: String]
@@ -675,9 +677,9 @@ struct QuestionCard: View {
 
     init(req: PendingRequest, repo: String? = nil, mark: SessionIdentity? = nil, initial: PartialAnswers = PartialAnswers(), progress: @escaping (Int, [String: Set<String>], Bool) -> Void = { _, _, _ in },
          send: @escaping ([String: Set<String>], [String: String]) -> NotchModel.Answered, handBack: @escaping () -> Void,
-         freeText: Bool = false, initialTexts: [String: String] = [:], draft: @escaping (String, String) -> Void = { _, _ in }, replyFocus: @escaping (Bool) -> Void = { _ in }) {
+         freeText: Bool = false, focusReset: Int = 0, initialTexts: [String: String] = [:], draft: @escaping (String, String) -> Void = { _, _ in }, replyFocus: @escaping (Bool) -> Void = { _ in }) {
         self.req = req; self.repo = repo; self.mark = mark; self.progress = progress; self.send = send; self.handBack = handBack
-        self.freeText = freeText; self.draft = draft; self.replyFocus = replyFocus
+        self.freeText = freeText; self.focusReset = focusReset; self.draft = draft; self.replyFocus = replyFocus
         _texts = State(initialValue: initialTexts)
         _step = State(initialValue: min(initial.step, max((req.questions?.count ?? 1) - 1, 0)))
         _answers = State(initialValue: initial.answers)
@@ -740,6 +742,7 @@ struct QuestionCard: View {
             }
         }
         .onChange(of: fieldFocused) { replyFocus($0) }
+        .onChange(of: focusReset) { _ in fieldFocused = false }
         .onDisappear { replyFocus(false) }
     }
 
