@@ -136,7 +136,8 @@ enum Gallery {
         func p(_ ev: String, _ extra: String = "") -> HookPayload { HookPayload(json: Data(#"{"session_id":"a","hook_event_name":"\#(ev)","cwd":"/demo/api-server","chippy_branch":"fix/login-timeout"\#(extra)}"#.utf8))! }
         let noisy = CommandLine.arguments.contains("--noisy-prompt") // sample text only
         let prompt = noisy ? "<task-notification><task-id>b7x2</task-id><summary>Background command finished</summary></task-notification> Fix the login timeout bug" : "Fix the login timeout bug"
-        model.apply(p("UserPromptSubmit", ",\"prompt\":\"\(prompt)\""))
+        let promptJSON = (try? JSONEncoder().encode(prompt)).flatMap { String(data: $0, encoding: .utf8) } ?? "\"\"" // escaped
+        model.apply(p("UserPromptSubmit", ",\"prompt\":\(promptJSON)"))
         model.apply(p("Stop", ",\"last_assistant_message\":\"\(reply.replacingOccurrences(of: "\n", with: "\\n"))\""))
         model.toggleOpen()
         let m = NotchMetrics(width: 185, height: 32)

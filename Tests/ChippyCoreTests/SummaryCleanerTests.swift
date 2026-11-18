@@ -19,8 +19,42 @@ final class SummaryCleanerTests: XCTestCase {
     func testPlainAngleTextKept() {
         XCTAssertEqual(SummaryCleaner.cleanPrompt("is a < b and <div> ok"), "is a < b and <div> ok")
     }
-    func testUnclosedBlockDoesNotEatProse() {
-        XCTAssertEqual(SummaryCleaner.cleanPrompt("<system-reminder> hello"), "hello")
+    func testUnclosedBlockIsDroppedEntirely() {
+        XCTAssertNil(SummaryCleaner.cleanPrompt("<system-reminder> hello"))
+        XCTAssertEqual(SummaryCleaner.cleanPrompt("Fix it <task-notification><task-id>b1</task-id> still going"), "Fix it")
+    }
+    func testArbitraryHyphenTagsKept() {
+        XCTAssertEqual(SummaryCleaner.cleanPrompt("Fix the <my-component> bug"), "Fix the <my-component> bug")
+    }
+    func testLongBlockCleanedBeforeTruncation() {
+        let block = "<task-notification><summary>" + String(repeating: "secret ", count: 60) + "</summary></task-notification>"
+        let p = HookPayload(json: Data((#"{"session_id":"s","hook_event_name":"UserPromptSubmit","cwd":"/a","prompt":"\#(block) Fix it"}"#).utf8))!
+        var store = SessionStore()
+        store.apply(p)
+        XCTAssertEqual(store.rows.first?.lastPrompt, "Fix it")
+    }
+    func testAsksYouAndDecisionAgree() {
+        for r in ["Merge it?**", "(Merge it?)", "Merge it?)", "**Merge it?**"] {
+            let d = DoneItem(sessionId: "s", project: "p", branch: nil, files: 0, added: 0, removed: 0, reply: "Done. " + r, prompt: nil, at: Date())
+            XCTAssertTrue(d.asksYou, r)
+            XCTAssertEqual(d.decision, "Merge it?", r)
+            XCTAssertEqual(d.replyWithoutDecision, "Done.", r)
+        }
+    }
+    func testDecisionTrimmedFromReply() {
+        let d = DoneItem(sessionId: "s", project: "p", branch: nil, files: 0, added: 0, removed: 0, reply: "Fixed it.\n\nShip it?", prompt: nil, at: Date())
+        XCTAssertEqual(d.replyWithoutDecision, "Fixed it.")
+    }
+    func testAbbreviationsAndVersionsDoNotSplit() {
+        XCTAssertEqual(SummaryCleaner.closingDecision("Done. Should I use a cache, e.g. Redis, or upgrade to v2. Then retry?"),
+                       "Should I use a cache, e.g. Redis, or upgrade to v2. Then retry?")
+        XCTAssertEqual(SummaryCleaner.closingDecision("Done. Bump to 1.5 or keep it?"), "Bump to 1.5 or keep it?")
+    }
+    func testFenceParityOverWholeText() {
+        let big = "```\ncode\n```\n" + String(repeating: "x. ", count: 3000) + "Go on?"
+        XCTAssertEqual(SummaryCleaner.closingDecision(big), "Go on?")
+        let open = "```\ncode " + String(repeating: "x. ", count: 3000) + "Go on?"
+        XCTAssertNil(SummaryCleaner.closingDecision(open))
     }
     func testNestedAndCaseInsensitive() {
         XCTAssertNil(SummaryCleaner.cleanPrompt("<SYSTEM-REMINDER>a<system-reminder>b</system-reminder></SYSTEM-REMINDER>"))
@@ -67,6 +101,6 @@ final class SummaryCleanerTests: XCTestCase {
     func testDoneItemWiring() {
         let d = DoneItem(sessionId: "s", project: "p", branch: nil, files: 0, added: 0, removed: 0, reply: "Done. Merge it?", prompt: "<task-id>x</task-id>", at: Date())
         XCTAssertEqual(d.decision, "Merge it?")
-        XCTAssertEqual(d.cleanPrompt, "x")
+        XCTAssertEqual(SummaryCleaner.cleanPrompt(d.prompt), "x")
     }
 }

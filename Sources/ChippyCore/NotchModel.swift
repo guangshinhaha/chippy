@@ -513,18 +513,27 @@ public struct DoneItem: Identifiable, Equatable {
     public let added: Int
     public let removed: Int
     public let reply: String?
+    /// Already cleaned of system markup where it is stored (SessionStore).
     public let prompt: String?
     public let at: Date
     public var host: HostInfo? = nil
+    /// Claude ended on a question: the thread is waiting for you, not just done. Computed once, at build.
+    public let asksYou: Bool
+    /// The closing question as its own line (#98a); nil when there is none. Computed once, at build.
+    public let decision: String?
+    /// The reply with the decision sentence trimmed off, for when the decision is shown on its own line.
+    public let replyWithoutDecision: String
 
-    /// Claude ended on a question: the thread is waiting for you, not just done.
-    public var asksYou: Bool { reply?.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("?") ?? false }
-
-    /// The prompt with system-notification markup stripped; nil when nothing readable remains (#98a).
-    public var cleanPrompt: String? { SummaryCleaner.cleanPrompt(prompt) }
-
-    /// The closing question Claude is waiting on, as its own line (#98a). nil when the reply does not end on one.
-    public var decision: String? { SummaryCleaner.closingDecision(reply) }
+    public init(sessionId: String, project: String, branch: String?, files: Int, added: Int, removed: Int,
+                reply: String?, prompt: String?, at: Date, host: HostInfo? = nil) {
+        self.sessionId = sessionId; self.project = project; self.branch = branch
+        self.files = files; self.added = added; self.removed = removed
+        self.reply = reply; self.prompt = prompt; self.at = at; self.host = host
+        asksYou = SummaryCleaner.endsOnQuestion(reply)
+        let s = SummaryCleaner.splitDecision(reply)
+        decision = s.decision
+        replyWithoutDecision = s.rest
+    }
 
     /// First non-empty line of the reply, for the one-line glance.
     public var headline: String {

@@ -48,7 +48,7 @@ public struct SessionStore {
             rows[i].status = .idle; rows[i].detail = "Session started"
         case "UserPromptSubmit":
             rows[i].status = .working; rows[i].detail = "Thinking"
-            rows[i].lastPrompt = p.prompt.map { String($0.prefix(140)) }
+            rows[i].lastPrompt = SummaryCleaner.cleanPrompt(p.prompt).map { String($0.prefix(140)) } // clean BEFORE truncating: a cut block would leak
         case "PreToolUse", "PostToolUse":
             rows[i].status = .working
             if let tool = p.toolName { rows[i].detail = describe(tool, p) }

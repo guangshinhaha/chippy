@@ -388,7 +388,7 @@ struct ApprovalCard: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(req.branch.map { "\(req.project) · \($0)" } ?? req.project)
                 .font(.caption.bold()).foregroundStyle(.white.opacity(0.85))
-            if let p = SummaryCleaner.cleanPrompt(req.lastPrompt) {
+            if let p = req.lastPrompt {
                 Text("“\(p)”").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
             }
             if let intent = req.intent {
@@ -562,7 +562,7 @@ struct QuestionCard: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(req.branch.map { "\(req.project) · \($0)" } ?? req.project)
                 .font(.caption.bold()).foregroundStyle(.white.opacity(0.85))
-            if let p = SummaryCleaner.cleanPrompt(req.lastPrompt) {
+            if let p = req.lastPrompt {
                 Text("You asked: \(p)").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
             }
             // Short card: hugs its content. Tall one: this part scrolls at a FIXED height (a flexible one would
@@ -629,7 +629,7 @@ struct DoneCard: View {
     let dismiss: () -> Void
 
     private var replyText: AttributedString {
-        let r = item.reply ?? ""
+        let r = (full && item.decision != nil) ? item.replyWithoutDecision : (item.reply ?? "")
         return (try? AttributedString(markdown: r, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(r)
     }
 
@@ -642,14 +642,14 @@ struct DoneCard: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(item.identity + (item.asksYou ? " · waiting for your reply" : " · finished"))
                 .font(.caption.bold()).foregroundStyle(item.asksYou ? Color.orange : .white)
-            if full, let p = item.cleanPrompt {
+            if full, let p = item.prompt {
                 Text("You asked: \(p)").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
             }
             if full, let d = item.decision {
                 Text("Needs your call: \(d)").font(.caption.bold()).foregroundStyle(.orange)
                     .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
             }
-            if let r = item.reply, !r.isEmpty {
+            if let r = item.reply, !r.isEmpty, !(full && item.decision != nil && item.replyWithoutDecision.isEmpty) {
                 if full {
                     // Short reply: just the text (the card hugs it). Long reply: scrolls inside a capped area.
                     // The scroll fallback has a FIXED height: a flexible one fills whatever the panel offers,
