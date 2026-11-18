@@ -127,7 +127,7 @@ final class SilencePolicyTests: XCTestCase {
         let m = model(); m.silence = { SilenceState(focus: true) }
         m.apply(HookPayload(json: Data(#"{"session_id":"d","hook_event_name":"Stop","cwd":"/x/q"}"#.utf8))!)
         XCTAssertEqual(m.doneItems.count, 1)
-        XCTAssertFalse(m.peeking); XCTAssertEqual(m.density, .collapsed); XCTAssertNotNil(m.badge)
+        XCTAssertFalse(m.peeking); XCTAssertEqual(m.density, .collapsed); XCTAssertNil(m.badge); XCTAssertTrue(m.badgeDot) // #101: finished-only is a dot
         let n = model()
         n.apply(HookPayload(json: Data(#"{"session_id":"d","hook_event_name":"Stop","cwd":"/x/q"}"#.utf8))!)
         XCTAssertTrue(n.peeking)

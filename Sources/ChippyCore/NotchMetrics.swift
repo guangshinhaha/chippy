@@ -41,6 +41,19 @@ public struct NotchMetrics: Equatable {
 
     /// The tallest the expanded card ever gets (the `contentHeight` cap in `size`).
     public static let maxExpandedHeight: CGFloat = 560
+    // Shared by NotchView's expanded card and `WaitingList.chrome`, so the fit logic and the drawing cannot drift apart.
+    /// Gap under the camera before the header row.
+    public static let cameraInset: CGFloat = 2
+    /// The tallest camera housing we plan for (the real one is measured per screen).
+    public static let tallestCamera: CGFloat = 40
+    /// Spacing between the expanded card's stacked parts.
+    public static let cardSpacing: CGFloat = 8
+    /// The header row (icon placeholder 28 * 1.4, gear 28).
+    public static let cardHeaderHeight: CGFloat = 28 * 1.4
+    /// The "↑↓ move" hint under the list (top padding + one caption2 line).
+    public static let keyHintHeight: CGFloat = 20
+    /// Added to the measured content height to get the shape's height.
+    public static let shapePadding: CGFloat = 10
 
     /// Height of the strip beside the camera, where collapsed and compact content lives.
     public var band: CGFloat { max(height + 2, 30) }
@@ -69,7 +82,7 @@ public struct NotchMetrics: Equatable {
             if isTab { return size(for: .collapsed) }
             guard compactFits else { return size(for: .collapsed) }
             return CGSize(width: width + 2 * min(190, gap), height: band + 14)
-        case .expanded: return CGSize(width: max(width + 220, tall ? 460 : 380), height: contentHeight > 0 ? min(max(contentHeight + 10, 120), Self.maxExpandedHeight) : (tall ? 470 : 300) + (height - 28))
+        case .expanded: return CGSize(width: max(width + 220, tall ? 460 : 380), height: contentHeight > 0 ? min(max(contentHeight + Self.shapePadding, 120), Self.maxExpandedHeight) : (tall ? 470 : 300) + (height - 28))
         }
     }
 

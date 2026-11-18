@@ -71,11 +71,29 @@ struct CountBadge: View {
     /// Tap opens the waiting list (#53). The hit area is larger than the 16pt capsule.
     var onTap: () -> Void = {}
     var needsYou = false
+    var dotLabel = "Finished threads waiting, nothing needs you"
     var deadline: (start: Date, end: Date)? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pulse = false
 
-    var body: some View {
+    @ViewBuilder var body: some View {
+        if text.isEmpty { dot } else { counted }
+    }
+
+    /// Only finished items wait (#101): a plain dot, no number. Same tap target and wing limit as the count.
+    private var dot: some View {
+        Circle().fill(.white.opacity(0.92)).frame(width: 8, height: 8)
+            .reveal(0.08)
+            .frame(minWidth: min(24, max(maxWidth, 16)), maxWidth: max(maxWidth, 16), minHeight: 24)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onTap)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(dotLabel)
+            .accessibilityHint("Opens the list of everything waiting")
+            .accessibilityAddTraits(.isButton)
+    }
+
+    private var counted: some View {
         // Ring and VoiceOver label are both computed from this tick's date, so they never disagree or go stale.
         TimelineView(CountdownSchedule(end: needsYou ? deadline?.end : nil, step: reduceMotion ? 1 : 0.5)) { ctx in
             badge(now: ctx.date)
@@ -209,9 +227,11 @@ struct NotchView: View {
     /// Glance text: who finished (repo · branch), so several threads can be told apart.
     private var compactText: String {
         // Only when the icon says "needs you" too: live work (icon: working) wins over the chip text.
-        if model.state == .needsYou, let t = model.terminalItems.last, model.pending.isEmpty, t.at >= (model.doneItems.last?.at ?? .distantPast) { return t.glance }
+        if model.state == .needsYou, let t = model.terminalItems.last, model.pending.isEmpty, t.at >= (model.doneItems.last?.at ?? .distantPast) {
+            return t.glance(repo: model.repoLabel(cwd: t.cwd, project: t.project).text)
+        }
         guard let d = model.doneItems.last else { return model.state.title }
-        return d.glance(showReply: model.showReplyInGlance)
+        return d.glance(showReply: model.showReplyInGlance, repo: model.repoLabel(cwd: d.cwd, project: d.project).text)
     }
 
     static let terminalCardCap = 2
@@ -220,7 +240,7 @@ struct NotchView: View {
 
     /// Terminal chips as cards (at most `terminalCardCap`, then a "N more" row, so the panel's measured height stays within its cap beside done cards).
     @ViewBuilder private var terminalCards: some View {
-        ForEach(model.terminalItems.reversed().prefix(Self.terminalCardCap)) { t in TerminalCard(item: t) { model.dismissTerminal(t.sessionId) }.reveal(0.12) }
+        ForEach(model.terminalItems.reversed().prefix(Self.terminalCardCap)) { t in TerminalCard(item: t, repo: model.repoLabel(cwd: t.cwd, project: t.project).text) { model.dismissTerminal(t.sessionId) }.reveal(0.12) }
         let hidden = model.terminalItems.count - Self.terminalCardCap
         if hidden > 0 {
             Text("\(hidden) more asked in terminal").font(.caption2).foregroundStyle(.white.opacity(0.6)).reveal(0.12)
@@ -228,7 +248,7 @@ struct NotchView: View {
     }
 
     @ViewBuilder private func doneCards(limit: Int, full: Bool = false) -> some View {
-        ForEach(model.doneItems.reversed().prefix(limit)) { d in DoneCard(item: d, full: full) { model.dismissDone(d.sessionId) }.reveal(0.12) }
+        ForEach(model.doneItems.reversed().prefix(limit)) { d in DoneCard(item: d, repo: model.repoLabel(cwd: d.cwd, project: d.project).text, full: full) { model.dismissDone(d.sessionId) }.reveal(0.12) }
     }
 
     /// Content beside the camera: icon in the left wing, text in the right wing, nothing under the cutout.
@@ -238,25 +258,25 @@ struct NotchView: View {
         switch model.density {
         case .collapsed:
             // The icon is drawn once, by NotchView.icon. Finished items waiting show a small count.
-            if let badge = model.badge, m.isTab {
+            if let badge = model.badge ?? (model.badgeDot ? "" : nil), m.isTab {
                 VStack(spacing: 0) {
                     Color.clear.frame(height: m.band)
                     let off = (m.width + NotchMetrics.glanceIcon) / 2 + NotchMetrics.badgeGap // past the centred icon
                     HStack(spacing: 0) {
                         Color.clear.frame(width: off)
                         CountBadge(text: badge, maxWidth: m.width - off - 8, onTap: { model.openBadge() },
-                                   needsYou: model.badgeNeedsYou, deadline: model.foldedDeadline) // stays inside the tab
+                                   needsYou: model.badgeNeedsYou, dotLabel: model.badgeDotLabel, deadline: model.foldedDeadline) // stays inside the tab
                         Spacer(minLength: 0)
                     }.frame(height: NotchMetrics.tabHeight)
                 }
                 .frame(maxHeight: .infinity, alignment: .top)
-            } else if let badge = model.badge {
+            } else if let badge = model.badge ?? (model.badgeDot ? "" : nil) {
                 let wing = m.wing(for: .collapsed)
                 HStack(spacing: 0) {
                     Color.clear.frame(width: wing)
                     Color.clear.frame(width: m.width)
                     CountBadge(text: badge, maxWidth: wing - 8, onTap: { model.openBadge() },
-                                   needsYou: model.badgeNeedsYou, deadline: model.foldedDeadline).frame(width: wing)
+                                   needsYou: model.badgeNeedsYou, dotLabel: model.badgeDotLabel, deadline: model.foldedDeadline).frame(width: wing)
                 }
                 .frame(height: m.band, alignment: .center)
                 .frame(maxHeight: .infinity, alignment: .top)
@@ -301,8 +321,8 @@ struct NotchView: View {
             .frame(maxHeight: .infinity, alignment: .top)
             .reveal(0.08)
         case .expanded:
-            VStack(alignment: .leading, spacing: 8) {
-                Spacer().frame(height: box.metrics.height + 2)
+            VStack(alignment: .leading, spacing: NotchMetrics.cardSpacing) {
+                Spacer().frame(height: box.metrics.height + NotchMetrics.cameraInset)
                 HStack(spacing: 10) {
                     Color.clear.frame(width: 28 * 1.4, height: 28 * 1.4) // where NotchView.icon sits
                     VStack(alignment: .leading, spacing: 0) {
@@ -322,26 +342,27 @@ struct NotchView: View {
                     .help("Chippy menu")
                     .accessibilityLabel("Chippy menu")
                 }
+                .frame(height: NotchMetrics.cardHeaderHeight)
                 .reveal(0.08)
                 if model.listOpen {
                     WaitingListView(model: model).reveal(0.12)
                 } else if let req = model.shownPending {
                     if req.questions != nil {
-                        QuestionCard(req: req, initial: model.partials[req.id] ?? PartialAnswers(),
+                        QuestionCard(req: req, repo: model.repoLabel(cwd: req.cwd, project: req.project).text, initial: model.partials[req.id] ?? PartialAnswers(),
                                      progress: { model.savePartial(req.id, step: $0, answers: $1, byUser: $2) },
                                      send: { model.answer(req.id, selections: $0) }, handBack: { model.handBack(req.id) }).id(req.id).reveal(0.12)
                     } else {
-                        ApprovalCard(req: req) { model.resolve(req.id, $0) }.reveal(0.12)
+                        ApprovalCard(req: req, repo: model.repoLabel(cwd: req.cwd, project: req.project).text) { model.resolve(req.id, $0) }.reveal(0.12)
                     }
                 } else if let d = model.shownDone {
-                    DoneCard(item: d, full: true) { model.dismissDone(d.sessionId) }.reveal(0.12)
+                    DoneCard(item: d, repo: model.repoLabel(cwd: d.cwd, project: d.project).text, full: true) { model.dismissDone(d.sessionId) }.reveal(0.12)
                 } else if model.restOpen {
                     terminalCards
                     doneCards(limit: 3)
                     // Recent first, and only when no chip is showing (the chips already say the same), so the card stays short.
                     if model.doneItems.isEmpty && model.terminalItems.isEmpty {
                         if model.recent.items.isEmpty { Text("Nothing finished recently.").font(.caption).foregroundStyle(.white.opacity(0.6)) }
-                        else { RecentListView(items: model.recent.items).reveal(0.12) }
+                        else { RecentListView(items: model.recent.items, label: { model.repoLabel(cwd: $0.cwd, project: $0.project).text }).reveal(0.12) }
                     }
                     if model.sessions.isEmpty && model.recent.items.isEmpty { Text("No agent sessions.").font(.caption).foregroundStyle(.white.opacity(0.6)) }
                     ForEach(model.sessions.prefix(Self.sessionRowCap)) { row in
@@ -372,11 +393,13 @@ struct ContentHeightKey: PreferenceKey {
 
 struct ApprovalCard: View {
     let req: PendingRequest
+    /// The resolved repo label, as the list rows show it; the project name until given.
+    var repo: String? = nil
     let decide: (Decision) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(req.branch.map { "\(req.project) · \($0)" } ?? req.project)
+            Text(req.branch.map { "\(repo ?? req.project) · \($0)" } ?? (repo ?? req.project))
                 .font(.caption.bold()).foregroundStyle(.white.opacity(0.85))
             if let p = req.lastPrompt, !p.isEmpty {
                 Text("“\(p)”").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
@@ -477,6 +500,8 @@ private struct QuestionBodyHeight: PreferenceKey {
 
 struct QuestionCard: View {
     let req: PendingRequest
+    /// The resolved repo label, as the list rows show it; the project name until given.
+    var repo: String? = nil
     /// Progress kept by the model, so leaving this card (to the list) and coming back resumes it.
     let progress: (Int, [String: Set<String>], Bool) -> Void // the Bool: a real user change (false: re-seed or disappear)
     /// The card stays up only for `.refused`.
@@ -492,9 +517,9 @@ struct QuestionCard: View {
     @State private var bodyHeight: CGFloat = 0
     private static let maxBodyHeight: CGFloat = 330
 
-    init(req: PendingRequest, initial: PartialAnswers = PartialAnswers(), progress: @escaping (Int, [String: Set<String>], Bool) -> Void = { _, _, _ in },
+    init(req: PendingRequest, repo: String? = nil, initial: PartialAnswers = PartialAnswers(), progress: @escaping (Int, [String: Set<String>], Bool) -> Void = { _, _, _ in },
          send: @escaping ([String: Set<String>]) -> NotchModel.Answered, handBack: @escaping () -> Void) {
-        self.req = req; self.progress = progress; self.send = send; self.handBack = handBack
+        self.req = req; self.repo = repo; self.progress = progress; self.send = send; self.handBack = handBack
         _step = State(initialValue: min(initial.step, max((req.questions?.count ?? 1) - 1, 0)))
         _answers = State(initialValue: initial.answers)
     }
@@ -550,7 +575,7 @@ struct QuestionCard: View {
         let qs = req.questions ?? []
         let q = qs[min(step, qs.count - 1)]
         VStack(alignment: .leading, spacing: 6) {
-            Text(req.branch.map { "\(req.project) · \($0)" } ?? req.project)
+            Text(req.branch.map { "\(repo ?? req.project) · \($0)" } ?? (repo ?? req.project))
                 .font(.caption.bold()).foregroundStyle(.white.opacity(0.85))
             if let p = req.lastPrompt, !p.isEmpty {
                 Text("You asked: \(p)").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
@@ -615,6 +640,8 @@ struct QuestionCard: View {
 
 struct DoneCard: View {
     let item: DoneItem
+    /// The resolved repo label, as the list rows show it; the project name until given.
+    var repo: String? = nil
     var full = false
     let dismiss: () -> Void
 
@@ -630,7 +657,7 @@ struct DoneCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(item.identity + (item.asksYou ? " · waiting for your reply" : " · finished"))
+            Text(item.identityLine(repo: repo ?? item.project) + (item.asksYou ? " · waiting for your reply" : " · finished"))
                 .font(.caption.bold()).foregroundStyle(item.asksYou ? Color.orange : .white)
             if full, let p = item.prompt, !p.isEmpty {
                 Text("You asked: \(p)").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
@@ -671,11 +698,12 @@ struct DoneCard: View {
 /// A question or approval that went to the terminal. Repo name only, never the question or command (PDPA, #30).
 struct TerminalCard: View {
     let item: TerminalItem
+    var repo: String? = nil
     let dismiss: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(item.glance).font(.caption.bold()).foregroundStyle(.white.opacity(0.85))
+            Text(item.glance(repo: repo ?? item.project)).font(.caption.bold()).foregroundStyle(.white.opacity(0.85))
             HStack {
                 Text("Claude is waiting for you there").font(.caption2).foregroundStyle(.white.opacity(0.6))
                 Spacer()
@@ -690,6 +718,9 @@ struct TerminalCard: View {
 /// instead of appearing to do nothing.
 struct OpenTerminalButton: View {
     let host: HostInfo?
+    /// Fixed wording (the terminal rows say "Jump to terminal"); nil names the app ("Open Orca").
+    var title: String? = nil
+    var kind: ChipButton.Kind = .neutral
     var onOpened: () -> Void = {}
     @State private var failed = false
     @State private var offSpace = false
@@ -704,8 +735,8 @@ struct OpenTerminalButton: View {
     }
 
     var body: some View {
-        ChipButton(title: offSpace ? "On another Space" : failed ? "Couldn't open" : "Open \(appName)",
-                   hint: offSpace ? "\(appName) is frontmost; switch Space" : failed ? "switch to it yourself" : nil, kind: .neutral) {
+        ChipButton(title: offSpace ? "On another Space" : failed ? "Couldn't open" : (title ?? "Open \(appName)"),
+                   hint: offSpace ? "\(appName) is frontmost; switch Space" : failed ? "switch to it yourself" : nil, kind: (offSpace || failed) ? .neutral : kind) {
             guard !busy else { return }
             busy = true; failed = false; offSpace = false; token += 1
             let mine = token
@@ -750,6 +781,8 @@ struct NotchShape: Shape {
 /// reply, prompt, question or command (PDPA #30). `RecentItem` cannot hold them.
 struct RecentListView: View {
     let items: [RecentItem]
+    /// The one resolved repo label, as the list rows show it.
+    var label: (RecentItem) -> String = { $0.project }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 15)) { ctx in // one timeline for the whole list
@@ -761,58 +794,126 @@ struct RecentListView: View {
 
     private func row(_ item: RecentItem, now: Date) -> some View {
         let age = WaitingList.age(since: item.at, now: now)
+        let repo = label(item)
         return HStack(spacing: 10) {
             Image(systemName: "checkmark.circle").font(.caption).foregroundStyle(.white.opacity(0.5)).frame(width: 18)
-            Text(item.project).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle)
+            Text(repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle)
             Spacer(minLength: 8)
             Text(age).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.55))
             if TerminalJump.available(item.host) { OpenTerminalButton(host: item.host) }
         }
         .padding(.horizontal, 10).frame(minHeight: 32)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(item.project), finished \(age) ago")
+        .accessibilityLabel("\(repo), finished \(age) ago")
     }
 }
 
-/// The waiting list (#53): one row per approval, question and finished chip. Each row shows only the repo, a
-/// type icon and the age, never the question or command (PDPA #30). Arrows, Return and Esc are handled by the panel.
+/// The waiting list (#53, #101): NEEDS YOU on top (act on these), FINISHED below (FYI). Rows show only the repo, a worktree
+/// tag, a verb-led label and the age, never the question or command (PDPA #30). Arrows, Return and Esc are handled by the panel.
 struct WaitingListView: View {
     @ObservedObject var model: NotchModel
 
+    private func section(_ title: String, count: Int, clearAll: (() -> Void)? = nil) -> some View {
+        HStack {
+            Text("\(title) (\(count))").font(.caption2.weight(.bold)).foregroundStyle(.white.opacity(0.5)).tracking(0.6)
+            Spacer(minLength: 0)
+            if let clearAll {
+                Button(action: clearAll) { Text("Clear all").font(.caption2).foregroundStyle(.white.opacity(0.6)).padding(.horizontal, 6).frame(minHeight: 22).contentShape(Rectangle()) }
+                    .buttonStyle(.plain).help("Move every finished thread to Recent").accessibilityLabel("Clear all finished")
+            }
+        }
+        .padding(.horizontal, 10).frame(height: WaitingList.sectionHeaderHeight)
+        .accessibilityAddTraits(.isHeader)
+    }
+
+    private func needsRows(_ layout: WaitingLayout) -> some View {
+        VStack(spacing: 0) {
+            ForEach(layout.needs) { item in
+                NeedsRow(item: item, selected: model.listSelection == item.target, host: model.terminalItems.first { .terminal($0.sessionId) == item.target }?.host,
+                         open: { model.activate(item.target) },
+                         handled: { if case .terminal(let sid) = item.target { model.dismissTerminal(sid) } })
+                    .frame(height: WaitingList.needsRowHeight).id(item.target)
+            }
+        }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(model.waitingItems) { item in
-                WaitingRow(item: item, selected: model.listSelection == item.target) { model.activate(item.target) }
+        let layout = model.waitingLayout
+        VStack(alignment: .leading, spacing: WaitingList.sectionGap) {
+            if !layout.needs.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    section("NEEDS YOU", count: layout.needs.count)
+                    if layout.needsScrolls {
+                        ScrollViewReader { proxy in
+                            ScrollView { needsRows(layout) }.frame(height: layout.needsHeight)
+                                .onChange(of: model.listSelection) { if let t = $0 { withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(t) } } }
+                        }
+                    } else { needsRows(layout) }
+                }
+            }
+            if layout.totalFinished > 0 {
+                VStack(alignment: .leading, spacing: 0) {
+                    section("FINISHED", count: layout.totalFinished, clearAll: { model.dismissDone(nil) })
+                    ForEach(layout.finished) { item in
+                        FinishedRow(item: item, selected: model.listSelection == item.target,
+                                    open: { model.activate(item.target) }, dismiss: { if case .done(let sid) = item.target { model.dismissDone(sid) } })
+                            .frame(height: WaitingList.finishedRowHeight)
+                    }
+                    if layout.hiddenFinished > 0 {
+                        Text("+\(layout.hiddenFinished) more").font(.caption2).foregroundStyle(.white.opacity(0.5))
+                            .padding(.leading, 10).frame(height: WaitingList.moreRowHeight, alignment: .leading)
+                            .accessibilityLabel("\(layout.hiddenFinished) more finished, clear some to see them")
+                    }
+                }
             }
             Text("↑↓ move · Return open · Esc close")
-                .font(.caption2).foregroundStyle(.white.opacity(0.4)).padding(.top, 6).padding(.leading, 4)
+                .font(.caption2).foregroundStyle(.white.opacity(0.4)).padding(.leading, 4)
+                .frame(height: NotchMetrics.keyHintHeight, alignment: .bottomLeading)
         }
     }
 }
 
-struct WaitingRow: View {
+/// "repo" with the worktree as a small secondary tag (only linked worktrees have one).
+struct RepoTitle: View {
+    let repo: String
+    let worktree: String?
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle).layoutPriority(1)
+            if let worktree {
+                Text(worktree).font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1).truncationMode(.middle)
+                    .padding(.horizontal, 5).padding(.vertical, 1).background(Capsule().fill(Color.white.opacity(0.12)))
+                    .frame(maxWidth: 110, alignment: .leading).layoutPriority(0)
+            }
+        }
+    }
+}
+
+private func rowBackground(selected: Bool, hover: Bool) -> some View {
+    RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(selected ? 0.18 : hover ? 0.1 : 0))
+}
+
+/// A row you act on: verb-led label, one primary button (terminal rows add "Handled").
+struct NeedsRow: View {
     let item: WaitingItem
     let selected: Bool
+    let host: HostInfo?
     let open: () -> Void
+    let handled: () -> Void
     @State private var hover = false
 
     private var symbol: String {
         switch item.kind {
         case .approval: return "hand.raised.fill"
         case .question: return "questionmark.bubble.fill"
-        case .done: return "checkmark.circle.fill"
         case .terminal: return "terminal.fill"
+        case .done: return "checkmark.circle.fill"
         }
     }
-    private var tint: Color {
-        switch item.kind {
-        case .approval: return .orange
-        case .question: return .cyan
-        case .done: return .green
-        case .terminal: return .purple
-        }
-    }
-    private var kindName: String { item.kind == .done ? "finished" : item.kind == .terminal ? "asked in terminal" : item.kind == .question ? "question" : "approval" }
+    private var tint: Color { item.kind == .approval ? .orange : item.kind == .question ? .cyan : .purple }
+
+    private var actionTitle: String { item.kind == .question ? "Answer" : "Review" }
+    private var subject: String { "\(item.repo)\(item.worktree.map { ", worktree \($0)" } ?? "")" }
 
     /// One 15s timeline per row feeds both the visible age and the VoiceOver label, so they never disagree.
     var body: some View {
@@ -822,19 +923,74 @@ struct WaitingRow: View {
     private func row(age: String) -> some View {
         HStack(spacing: 10) {
             Image(systemName: symbol).font(.caption).foregroundStyle(tint).frame(width: 18)
-            Text(item.repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle)
-            Spacer(minLength: 8)
-            Text(age).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.55))
+            VStack(alignment: .leading, spacing: 2) {
+                RepoTitle(repo: item.repo, worktree: item.worktree)
+                Text("\(item.label) · \(age)").font(.caption2).foregroundStyle(tint.opacity(0.95)).lineLimit(1).truncationMode(.tail)
+            }
+            .layoutPriority(1) // the names give way last-but-one; the buttons keep their size
+            Spacer(minLength: 6)
+            HStack(spacing: 6) {
+                if item.kind == .terminal {
+                    if TerminalJump.available(host) {
+                        OpenTerminalButton(host: host, title: "Jump", kind: .primary).accessibilityLabel("Jump to terminal, \(subject)")
+                    }
+                    ChipButton(title: "Handled", kind: .quiet, action: handled).accessibilityLabel("Handled, \(subject)")
+                } else {
+                    ChipButton(title: actionTitle, kind: .primary, action: open).accessibilityLabel("\(actionTitle), \(subject)")
+                }
+            }
+            .fixedSize()
+            .layoutPriority(2)
         }
-        .padding(.horizontal, 10).frame(minHeight: 32)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(selected ? 0.18 : hover ? 0.1 : 0)))
+        .padding(.horizontal, 10)
+        .background(rowBackground(selected: selected, hover: hover))
         .contentShape(Rectangle())
         .onHover { hover = $0 }
         .onTapGesture(perform: open)
         .animation(.easeOut(duration: 0.12), value: selected)
         .animation(.easeOut(duration: 0.12), value: hover)
+        .accessibilityElement(children: .contain) // the labelled buttons stay reachable inside the row
+        .accessibilityLabel("\(subject), \(item.label), \(age)")
+        .accessibilityAction(named: item.kind == .terminal ? "Open in list" : actionTitle, open)
+    }
+}
+
+/// One line, FYI: repo, outcome, age. No buttons; the whole row opens, and an x shows on hover.
+struct FinishedRow: View {
+    let item: WaitingItem
+    let selected: Bool
+    let open: () -> Void
+    let dismiss: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 15)) { ctx in row(age: WaitingList.age(since: item.at, now: ctx.date)) }
+    }
+
+    private func row(age: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark.circle").font(.caption).foregroundStyle(.white.opacity(0.45)).frame(width: 18)
+            RepoTitle(repo: item.repo, worktree: item.worktree)
+            Text(item.asksYou ? "asks you" : "finished").font(.caption2).foregroundStyle(item.asksYou ? Color.orange : .white.opacity(0.5)).lineLimit(1).fixedSize()
+            Spacer(minLength: 6)
+            Text(age).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.5))
+            Button(action: dismiss) {
+                Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.white.opacity(0.7)).frame(width: 20, height: 24).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).opacity(hover || selected ? 1 : 0).allowsHitTesting(hover || selected).help("Dismiss (moves to Recent)").accessibilityLabel("Dismiss")
+        }
+        .padding(.horizontal, 10)
+        .background(rowBackground(selected: selected, hover: hover))
+        .contentShape(Rectangle())
+        .onHover { hover = $0 }
+        .onTapGesture(perform: open)
+        .animation(.easeOut(duration: 0.12), value: selected)
+        .animation(.easeOut(duration: 0.12), value: hover)
+        // One button for the row; Dismiss is its own action, not a nested element inside a button.
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(item.repo), \(kindName), \(age)")
+        .accessibilityLabel("\(item.repo)\(item.worktree.map { ", worktree \($0)" } ?? ""), \(item.asksYou ? "asks you" : "finished"), \(age)")
         .accessibilityAddTraits(.isButton)
+        .accessibilityAction(.default, open)
+        .accessibilityAction(named: "Dismiss", dismiss)
     }
 }
