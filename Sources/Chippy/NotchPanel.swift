@@ -216,11 +216,22 @@ final class NotchPanel: NSPanel {
             onMenu?(NSPoint(x: frame.midX, y: hitRect.minY + 8), true) // the shape's bottom edge (the hit rect adds an 8pt margin)
             return
         }
+        // A click on the reply field takes key focus (without activating the app) so it can type. Only that click:
+        // nowhere else does Chippy take the keyboard from the terminal.
+        if event.type == .leftMouseDown, !isKeyWindow, model.freeTextReplyEnabled, model.shownPending?.questions != nil,
+           var v = contentView?.hitTest(event.locationInWindow) {
+            while !(v is NSTextField || v is NSTextView), let up = v.superview { v = up }
+            if v is NSTextField || v is NSTextView { makeKey() }
+        }
         super.sendEvent(event)
     }
 
     /// Esc (when the notch has focus) folds an open detail.
-    override func cancelOperation(_ sender: Any?) { model.closeDetail() }
+    /// While a text field has focus (#94) Esc only leaves it: the card stays and the draft is kept.
+    override func cancelOperation(_ sender: Any?) {
+        if firstResponder is NSText { makeFirstResponder(nil); return }
+        model.closeDetail()
+    }
 
     /// The list is keyboard-driven, so it must not outlive key focus: losing key (another window took it) closes it.
     /// Only a real hand-off counts (another app became frontmost since the list opened); transient losses, such as
@@ -228,6 +239,7 @@ final class NotchPanel: NSPanel {
     private var frontAtListOpen: pid_t?
     override func resignKey() {
         super.resignKey()
+        if firstResponder is NSText { makeFirstResponder(nil) } // keystrokes now go elsewhere: drop the field's focus (the draft stays)
         guard model.listOpen, !inMenuTracking else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
             guard let self, self.model.listOpen, !self.inMenuTracking, !self.isKeyWindow else { return }
@@ -238,6 +250,7 @@ final class NotchPanel: NSPanel {
 
     /// The waiting list is keyboard-driven (#53): arrows move, Return opens. Other keys pass through untouched.
     override func keyDown(with event: NSEvent) {
+        if firstResponder is NSText { super.keyDown(with: event); return } // typing: never a list or card key
         guard model.listOpen, event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { super.keyDown(with: event); return }
         switch event.keyCode {
         case 125: model.moveSelection(1)           // down

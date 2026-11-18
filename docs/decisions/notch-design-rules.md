@@ -70,3 +70,10 @@ Source: web research on Apple's Live Activities HIG and existing Claude Code not
 - In memory on `SessionRow.activity` only: not logged, not persisted. Cleared on Stop, SessionStart and SessionEnd (the row goes).
 - Passive: it adds no card, pending item, peek, sound or fold timer and does not change density; it only shows when the panel is already open. Rows are fixed 18pt, so they sit inside the existing `sessionRowCap` budget.
 - Gallery: `Chippy --render-glance out.png`.
+
+## Free-text reply (#94, experimental, default off)
+- Menu flag `freeTextReply`. A field on single-select question cards only; typed text replaces the selection. Multi-select refuses typed text.
+- Focus only by click (the panel takes key just for that click, without activating the app); Chippy never auto-focuses it, so terminal keystrokes are never taken.
+- While the field has focus: Esc only leaves the field (card and draft stay), the card hotkeys (⌃⌥ digits, Y/N/A) are unregistered, Return sends and never activates a list row.
+- Draft: memory only in `NotchModel`, keyed by request and question; survives refresh, fold and a newer question; cleared on send, hand-back or gone. Never logged (`record` says "answered" only).
+- Invalid or over-length (500) text is not sent: the card says so and "Answer in terminal" is the way out.

@@ -280,6 +280,8 @@ public final class NotchModel: ObservableObject {
         if folds.keys.contains(where: { !pendingIds.contains($0) }) {
             folds = folds.filter { pendingIds.contains($0.key) }
         }
+        if drafts.keys.contains(where: { !pendingIds.contains($0) }) { drafts = drafts.filter { pendingIds.contains($0.key) } }
+        if pending.isEmpty, replyFieldFocused { replyFieldFocused = false }
         if !expandedPlans.isSubset(of: pendingIds) { expandedPlans.formIntersection(pendingIds) }
         if pending.isEmpty { if folded { folded = false } }
         else if !folded, foldDue(now: clock()) { folded = true }
@@ -447,6 +449,26 @@ public final class NotchModel: ObservableObject {
         return !plan.canExpand || expandedPlans.contains(req.id)
     }
 
+    /// Experimental (#94): a text field on single-select question cards. Off by default; while off, `texts` is ignored.
+    public var freeTextReplyEnabled = false
+    /// Longest free-text reply sent from the notch; longer goes to the terminal.
+    public static let freeTextLimit = 500
+
+    /// Typed-but-unsent text, per request id then question. Memory only: never written to disk, logged or published
+    /// (so a keystroke does not re-render the notch). Dropped when the request is sent, handed back or gone.
+    private var drafts: [String: [String: String]] = [:]
+    public func draft(_ id: String, question: String) -> String { drafts[id]?[question] ?? "" }
+    public func draftTexts(_ id: String) -> [String: String] { drafts[id] ?? [:] }
+    public func setDraft(_ id: String, question: String, text: String) {
+        guard pending.contains(where: { $0.id == id }) else { return }
+        if !text.isEmpty { folds[id]?.pin() } // typing is engagement: the card must not fold away under the cursor
+        if text.isEmpty { drafts[id]?[question] = nil; if drafts[id]?.isEmpty == true { drafts[id] = nil } }
+        else { drafts[id, default: [:]][question] = text }
+    }
+    /// True while the reply field has keyboard focus: the panel then owns Esc and the card hotkeys stand down.
+    @Published public private(set) var replyFieldFocused = false
+    public func setReplyFieldFocused(_ on: Bool) { if replyFieldFocused != on { replyFieldFocused = on } }
+
     /// Experimental (#91): off by default. While off, ExitPlanMode goes to the terminal prompt untouched.
     public var planCardEnabled = false
 
@@ -610,6 +632,7 @@ public final class NotchModel: ObservableObject {
         if now.timeIntervalSince(r.createdAt) >= wait - 1 { noteTerminal(r, now: now) }
         connections.removeValue(forKey: r.id)?.respond(nil)
         echoInputs.removeValue(forKey: r.id)
+        drafts[r.id] = nil
         record(r, channel: .terminal, decision: "none", now: now)
     }
 
@@ -743,9 +766,10 @@ public final class NotchModel: ObservableObject {
     public enum Answered: Equatable { case sent, refused, gone }
 
     @discardableResult
-    public func answer(_ id: String, selections: [String: Set<String>], now: Date = Date()) -> Answered {
+    public func answer(_ id: String, selections: [String: Set<String>], texts: [String: String] = [:], now: Date = Date()) -> Answered {
         guard let i = pending.firstIndex(where: { $0.id == id }), connections[id] != nil, echoInputs[id] != nil,
-              let answers = Self.joined(pending[i].questions ?? [], selections) else { return .refused }
+              let answers = Self.joined(pending[i].questions ?? [], selections, texts: freeTextReplyEnabled ? texts : [:]) else { return .refused }
+        drafts[id] = nil
         let conn = connections.removeValue(forKey: id)!
         var input = echoInputs.removeValue(forKey: id)!
         let req = pending.remove(at: i)
@@ -758,11 +782,25 @@ public final class NotchModel: ObservableObject {
         return .sent
     }
 
+    /// A typed reply, validated (#94): no newline, hidden scalars stripped (`ApprovalIntent.clean`), trimmed, 1...freeTextLimit
+    /// characters. Nil means it cannot go through the hook, so it goes to the terminal.
+    public static func validFreeText(_ raw: String) -> String? {
+        for u in raw.unicodeScalars where [0x0A, 0x0D, 0x2028, 0x2029, 0x85].contains(u.value) { return nil }
+        let t = ApprovalIntent.clean(raw.trimmingCharacters(in: .whitespacesAndNewlines))
+        return (1...freeTextLimit).contains(t.count) ? t : nil
+    }
+
     /// One joined answer string per question, or nil unless every question has a valid selection.
-    static func joined(_ qs: [AskQuestion], _ selections: [String: Set<String>]) -> [String: String]? {
+    /// A typed text replaces the selection for that question, single-select only; an invalid one refuses the whole answer.
+    static func joined(_ qs: [AskQuestion], _ selections: [String: Set<String>], texts: [String: String] = [:]) -> [String: String]? {
         guard !qs.isEmpty else { return nil }
         var out: [String: String] = [:]
         for q in qs {
+            if let raw = texts[q.question] {
+                guard !q.multiSelect, let t = validFreeText(raw) else { return nil }
+                out[q.question] = t
+                continue
+            }
             guard let chosen = selections[q.question], !chosen.isEmpty, chosen.isSubset(of: Set(q.options.map(\.label))),
                   q.multiSelect || chosen.count == 1 else { return nil }
             out[q.question] = q.options.map(\.label).filter(chosen.contains).joined(separator: ", ")
@@ -775,6 +813,7 @@ public final class NotchModel: ObservableObject {
         guard let i = pending.firstIndex(where: { $0.id == id }), let conn = connections.removeValue(forKey: id) else { return }
         let req = pending.remove(at: i)
         echoInputs.removeValue(forKey: id)
+        drafts[id] = nil
         let stale = conn.peerGone // the hook already gave up or the terminal answered: nothing was handed back
         conn.respond(nil)
         record(req, channel: .terminal, decision: stale ? "none" : "handed_back", now: now)
