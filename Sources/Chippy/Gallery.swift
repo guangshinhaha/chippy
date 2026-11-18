@@ -129,6 +129,45 @@ enum Gallery {
               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
         try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
     }
+    /// `Chippy --render-waiting out.png`: the waiting list (#53) with an approval, a question and three done chips
+    /// (sample repos only; note the rows never show the command or question), second row highlighted; plus the
+    /// collapsed badge it opens from.
+    @MainActor
+    static func renderWaiting(to path: String) {
+        func fresh() -> NotchModel { NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("gal.jsonl"))) }
+        func conn() -> Connection { Connection.detached() }
+        let now = Date()
+        let model = fresh()
+        for (i, repo) in ["docs-site", "billing-api", "mobile-app"].enumerated() {
+            model.apply(HookPayload(json: Data(#"{"session_id":"d\#(i)","hook_event_name":"Stop","cwd":"/demo/\#(repo)"}"#.utf8))!, now: now.addingTimeInterval(Double(i - 3) * 240))
+        }
+        model.receiveApproval(HookPayload(json: Data(#"{"session_id":"a","hook_event_name":"PermissionRequest","cwd":"/demo/api-server","tool_name":"Bash","tool_input":{"command":"rm -rf build && npm publish"}}"#.utf8))!, conn())
+        let q: [String: Any] = ["session_id": "q", "cwd": "/demo/login-page", "hook_event_name": "PermissionRequest", "tool_name": "AskUserQuestion",
+            "tool_input": ["questions": [["question": "Which auth method?", "header": "Auth", "multiSelect": false, "options": [["label": "SSO", "description": ""], ["label": "Magic link", "description": ""]]]]]]
+        model.receiveApproval(HookPayload(json: try! JSONSerialization.data(withJSONObject: q))!, conn())
+        model.openList()
+        model.moveSelection(1)
+        let m = NotchMetrics.sample14
+        let sz = m.size(for: .expanded)
+        let b = box(m)
+        let badge = seededModel(count: 3, density: .collapsed, cwd: "/demo/docs-site")
+        let all = HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                NotchView(model: model, box: b).frame(width: sz.width, height: 330)
+                Text("Waiting list: approval, question, 3 done (2nd row selected)").font(.caption2).foregroundStyle(.secondary)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                NotchView(model: badge, box: box(m)).frame(width: m.size(for: .collapsed).width, height: m.size(for: .collapsed).height)
+                Text("Collapsed + badge: tap opens the list").font(.caption2).foregroundStyle(.secondary)
+            }
+        }.padding(16).background(Color(white: 0.25))
+        let r = ImageRenderer(content: all)
+        r.scale = 2
+        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
+              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
+        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path) height=\(b.contentHeight)")
+    }
+
     /// `Chippy --render-tab out.png`: no room beside the camera (menu extras hug the notch), so the indicator is a tab below it.
     /// A mock menu bar with items touching both edges and the camera in red; wings (room) vs tab (no room), per density.
     @MainActor
