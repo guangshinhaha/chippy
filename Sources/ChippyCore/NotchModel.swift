@@ -281,7 +281,6 @@ public final class NotchModel: ObservableObject {
             folds = folds.filter { pendingIds.contains($0.key) }
         }
         if drafts.keys.contains(where: { !pendingIds.contains($0) }) { drafts = drafts.filter { pendingIds.contains($0.key) } }
-        if pending.isEmpty, replyFieldFocused { replyFieldFocused = false }
         if !expandedPlans.isSubset(of: pendingIds) { expandedPlans.formIntersection(pendingIds) }
         if pending.isEmpty { if folded { folded = false } }
         else if !folded, foldDue(now: clock()) { folded = true }
@@ -290,6 +289,7 @@ public final class NotchModel: ObservableObject {
         else if case .done? = focus { shownId = nil } // leaving for a done detail: back to the queue head afterwards
         else if case .pending(let id)? = focus { shownId = id } // a jump makes that card the remembered one, so answering it falls back to rank-first
         else if shownId.map({ id in !pendingIds.contains(id) }) ?? true { shownId = rankedPending.first?.id }
+        if replyFocusOwner != nil, !replyFieldFocused { replyFocusOwner = nil } // the owning card left the screen (swap, list, fold, flag off, answered)
         if doneItems.isEmpty && terminalItems.isEmpty { doneOpen = false }
         if !pending.isEmpty { restOpen = false } // an approval or question takes over; a passive chip just joins the open panel
         if !pending.isEmpty || doneOpen || listOpen || restOpen { peek.cancel() } // the user (or an approval) took over: no peek to resume on close
@@ -450,14 +450,13 @@ public final class NotchModel: ObservableObject {
     }
 
     /// Experimental (#94): a text field on single-select question cards. Off by default; while off, `texts` is ignored.
-    public var freeTextReplyEnabled = false
+    @Published public var freeTextReplyEnabled = false { didSet { if !freeTextReplyEnabled, replyFocusOwner != nil { replyFocusOwner = nil } } }
     /// Longest free-text reply sent from the notch; longer goes to the terminal.
     public static let freeTextLimit = 500
 
     /// Typed-but-unsent text, per request id then question. Memory only: never written to disk, logged or published
     /// (so a keystroke does not re-render the notch). Dropped when the request is sent, handed back or gone.
     private var drafts: [String: [String: String]] = [:]
-    public func draft(_ id: String, question: String) -> String { drafts[id]?[question] ?? "" }
     public func draftTexts(_ id: String) -> [String: String] { drafts[id] ?? [:] }
     public func setDraft(_ id: String, question: String, text: String) {
         guard pending.contains(where: { $0.id == id }) else { return }
@@ -465,9 +464,19 @@ public final class NotchModel: ObservableObject {
         if text.isEmpty { drafts[id]?[question] = nil; if drafts[id]?.isEmpty == true { drafts[id] = nil } }
         else { drafts[id, default: [:]][question] = text }
     }
-    /// True while the reply field has keyboard focus: the panel then owns Esc and the card hotkeys stand down.
-    @Published public private(set) var replyFieldFocused = false
-    public func setReplyFieldFocused(_ on: Bool) { if replyFieldFocused != on { replyFieldFocused = on } }
+    /// The request id whose reply field holds keyboard focus (nil: none). `replyFieldFocused` is derived from it.
+    @Published public private(set) var replyFocusOwner: String?
+    /// True only while the field of the question card ON SCREEN has focus and the flag is on: the panel then owns Esc and the
+    /// card hotkeys stand down. Derived, so a card swap, list, fold, flag-off or answer can never leave it stuck true.
+    public var replyFieldFocused: Bool {
+        guard freeTextReplyEnabled, let o = replyFocusOwner, let s = shownPending, s.id == o, s.questions != nil else { return false }
+        return true
+    }
+    /// The card's field gained (`on`) or lost focus. A stale card's blur never clears another card's focus.
+    public func setReplyFieldFocused(_ on: Bool, id: String) {
+        if on { guard freeTextReplyEnabled, shownPending?.id == id, shownPending?.questions != nil else { return }; if replyFocusOwner != id { replyFocusOwner = id } }
+        else if replyFocusOwner == id { replyFocusOwner = nil }
+    }
 
     /// Experimental (#91): off by default. While off, ExitPlanMode goes to the terminal prompt untouched.
     public var planCardEnabled = false
@@ -632,7 +641,7 @@ public final class NotchModel: ObservableObject {
         if now.timeIntervalSince(r.createdAt) >= wait - 1 { noteTerminal(r, now: now) }
         connections.removeValue(forKey: r.id)?.respond(nil)
         echoInputs.removeValue(forKey: r.id)
-        drafts[r.id] = nil
+        drafts[r.id] = nil; if replyFocusOwner == r.id { replyFocusOwner = nil }
         record(r, channel: .terminal, decision: "none", now: now)
     }
 
@@ -769,7 +778,7 @@ public final class NotchModel: ObservableObject {
     public func answer(_ id: String, selections: [String: Set<String>], texts: [String: String] = [:], now: Date = Date()) -> Answered {
         guard let i = pending.firstIndex(where: { $0.id == id }), connections[id] != nil, echoInputs[id] != nil,
               let answers = Self.joined(pending[i].questions ?? [], selections, texts: freeTextReplyEnabled ? texts : [:]) else { return .refused }
-        drafts[id] = nil
+        drafts[id] = nil; if replyFocusOwner == id { replyFocusOwner = nil }
         let conn = connections.removeValue(forKey: id)!
         var input = echoInputs.removeValue(forKey: id)!
         let req = pending.remove(at: i)
@@ -782,12 +791,26 @@ public final class NotchModel: ObservableObject {
         return .sent
     }
 
-    /// A typed reply, validated (#94): no newline, hidden scalars stripped (`ApprovalIntent.clean`), trimmed, 1...freeTextLimit
-    /// characters. Nil means it cannot go through the hook, so it goes to the terminal.
+    /// A typed reply, validated (#94): no newline; tabs become spaces; hidden and bidi scalars stripped; trimmed. The typed
+    /// spacing is KEPT (not collapsed). The limit applies to the typed (trimmed) length. Nil means it goes to the terminal.
     public static func validFreeText(_ raw: String) -> String? {
         for u in raw.unicodeScalars where [0x0A, 0x0D, 0x2028, 0x2029, 0x85].contains(u.value) { return nil }
-        let t = ApprovalIntent.clean(raw.trimmingCharacters(in: .whitespacesAndNewlines))
-        return (1...freeTextLimit).contains(t.count) ? t : nil
+        let typed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard typed.count <= freeTextLimit, typed.unicodeScalars.count <= freeTextLimit * 2 else { return nil } // also bounds hidden padding
+        var out = String.UnicodeScalarView()
+        for u in typed.unicodeScalars {
+            if u.value == 0x09 { out.append(" ") } else if !ApprovalIntent.isHidden(u) { out.append(u) }
+        }
+        let t = String(out).trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? nil : t
+    }
+
+    /// Why typed text cannot be sent, for the card's hint; nil when it is fine.
+    public static func freeTextProblem(_ raw: String) -> String? {
+        if validFreeText(raw) != nil { return nil }
+        if raw.trimmingCharacters(in: .whitespacesAndNewlines).count > freeTextLimit { return "Too long (max \(freeTextLimit) characters). Shorten it, or use Answer in terminal." }
+        if raw.unicodeScalars.contains(where: { [0x0A, 0x0D, 0x2028, 0x2029, 0x85].contains($0.value) }) { return "One line only. Use Answer in terminal for more." }
+        return "Type a reply first, or pick an option."
     }
 
     /// One joined answer string per question, or nil unless every question has a valid selection.
@@ -813,7 +836,7 @@ public final class NotchModel: ObservableObject {
         guard let i = pending.firstIndex(where: { $0.id == id }), let conn = connections.removeValue(forKey: id) else { return }
         let req = pending.remove(at: i)
         echoInputs.removeValue(forKey: id)
-        drafts[id] = nil
+        drafts[id] = nil; if replyFocusOwner == id { replyFocusOwner = nil }
         let stale = conn.peerGone // the hook already gave up or the terminal answered: nothing was handed back
         conn.respond(nil)
         record(req, channel: .terminal, decision: stale ? "none" : "handed_back", now: now)

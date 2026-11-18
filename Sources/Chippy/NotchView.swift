@@ -380,7 +380,7 @@ struct NotchView: View {
                                      progress: { model.savePartial(req.id, step: $0, answers: $1, byUser: $2) },
                                      send: { model.answer(req.id, selections: $0, texts: $1) }, handBack: { model.handBack(req.id) },
                                      freeText: model.freeTextReplyEnabled, initialTexts: model.draftTexts(req.id),
-                                     draft: { model.setDraft(req.id, question: $0, text: $1) }, replyFocus: { model.setReplyFieldFocused($0) }).id(req.id).reveal(0.12)
+                                     draft: { model.setDraft(req.id, question: $0, text: $1) }, replyFocus: { model.setReplyFieldFocused($0, id: req.id) }).id(req.id).reveal(0.12)
                     } else if let plan = req.plan {
                         PlanCard(req: req, plan: plan, repo: model.repoLabel(cwd: req.cwd, project: req.project).text, mark: model.identity(cwd: req.cwd, project: req.project), startExpanded: model.expandedPlans.contains(req.id), expand: { model.setPlanExpanded(req.id, $0) }) { model.resolve(req.id, $0) }.id(req.id).reveal(0.12)
                     } else {
@@ -663,6 +663,8 @@ struct QuestionCard: View {
     @State private var texts: [String: String]
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var step: Int
+    /// Why Return did nothing on the field (empty, too long, one line), shown under it on the step where it happened.
+    @State private var hint: String?
     /// Chosen labels per question text.
     @State private var answers: [String: Set<String>]
     @State private var lastToggle: (index: Int, at: Date)?
@@ -722,7 +724,7 @@ struct QuestionCard: View {
     /// While focused: Return sends, Esc only drops focus (the draft stays), card hotkeys stand down (AppDelegate).
     @ViewBuilder private func replyField(_ q: AskQuestion) -> some View {
         let text = texts[q.question] ?? ""
-        let tooLong = !text.isEmpty && NotchModel.validFreeText(text) == nil && text.trimmingCharacters(in: .whitespacesAndNewlines).count > NotchModel.freeTextLimit
+        let tooLong = text.trimmingCharacters(in: .whitespacesAndNewlines).count > NotchModel.freeTextLimit
         VStack(alignment: .leading, spacing: 2) {
             TextField("Or type a reply", text: Binding(get: { texts[q.question] ?? "" }, set: { setText($0, q) }))
                 .textFieldStyle(.plain).font(.caption).foregroundStyle(.white)
@@ -732,25 +734,32 @@ struct QuestionCard: View {
                 .padding(.horizontal, 10).padding(.vertical, 5)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: fieldFocused ? 0.26 : 0.18)))
                 .accessibilityLabel("Type a reply")
-            if tooLong {
-                Text("Too long to send from here. Use Answer in terminal.").font(.caption2).foregroundStyle(.orange)
+            if let msg = hint ?? (tooLong ? NotchModel.freeTextProblem(text) : nil) {
+                Text(msg).font(.caption2).foregroundStyle(.orange)
             }
         }
         .onChange(of: fieldFocused) { replyFocus($0) }
-        .onDisappear { if fieldFocused { replyFocus(false) } }
+        .onDisappear { replyFocus(false) }
     }
 
     private func setText(_ new: String, _ q: AskQuestion) {
-        // A newline cannot be sent; Return submits instead of inserting one.
-        let t = new.filter { !$0.isNewline }
+        // A newline or tab cannot be sent and Return submits: each becomes a space (words stay apart), then the text is kept as typed.
+        let t = String(new.map { ($0.isNewline || $0 == "\t") ? " " : $0 })
         texts[q.question] = t.isEmpty ? nil : t
         draft(q.question, t)
+        hint = nil
         progress(step, answers, true) // typing is engagement: pins the card
-        if !t.isEmpty, answers[q.question] != nil { answers[q.question] = nil } // typed text replaces the selection
+        // Typed text replaces the selection, but only real text: spaces alone must not clear a pick.
+        if !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, answers[q.question] != nil { answers[q.question] = nil }
     }
 
     private func submitText(_ q: AskQuestion) {
-        guard !sent, let t = texts[q.question], NotchModel.validFreeText(t) != nil else { return }
+        guard !sent else { return }
+        let t = texts[q.question] ?? ""
+        if NotchModel.validFreeText(t) == nil {
+            if t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !(answers[q.question] ?? []).isEmpty { fieldFocused = false; advance(); return } // a pick stands
+            hint = NotchModel.freeTextProblem(t); return
+        }
         fieldFocused = false
         advance()
     }
@@ -791,7 +800,7 @@ struct QuestionCard: View {
             ChipButton(title: "Answer in terminal", kind: .quiet) { if !sent { sent = true; handBack() } }
             TourCaption(sessionId: req.sessionId, step: .question)
         }
-        .onChange(of: step) { leadExpanded = false; lastToggle = nil; ShortcutBus.steps.send((req.id, $0)); progress($0, answers, true) }
+        .onChange(of: step) { fieldFocused = false; replyFocus(false); hint = nil; leadExpanded = false; lastToggle = nil; ShortcutBus.steps.send((req.id, $0)); progress($0, answers, true) }
         .onChange(of: answers) { progress(step, $0, false) } // every selection is saved at once; pinning is pick()'s job, so a re-seed never pins
         .onDisappear { if !sent { progress(step, answers, false) } } // leaving the card keeps what was answered
         .onAppear { if step > 0 { ShortcutBus.steps.send((req.id, step)) } }
@@ -810,6 +819,8 @@ struct QuestionCard: View {
         guard !sent, !qs.isEmpty else { return } // a double-click or key repeat must not answer the next question too
         let q = qs[min(step, qs.count - 1)]
         guard q.options.indices.contains(index) else { return }
+        fieldFocused = false; replyFocus(false) // a pick moves on: the next question's field must start unfocused
+        hint = nil
         let label = q.options[index].label
         progress(step, answers, true) // a tap or key is an interaction (it pins the card) even when the pick changes nothing
         if q.multiSelect {

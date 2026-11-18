@@ -113,6 +113,11 @@ final class NotchPanel: NSPanel {
             self.frontAtListOpen = NSWorkspace.shared.frontmostApplication?.processIdentifier
             self.makeKey() // only on the open transition
         }.store(in: &bag)
+        // The field only ever got key status by a click (#94): when its focus ends (Return, Esc, card gone/swapped, flag off)
+        // the panel gives key status back at once, so the next keystroke goes to the terminal, not to Chippy.
+        model.$replyFocusOwner.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] owner in
+            if owner == nil { self?.releaseKeyAfterReply() }
+        }.store(in: &bag)
         model.$tall.dropFirst().removeDuplicates().receive(on: RunLoop.main).sink { [weak self] _ in self?.dock(self?.model.density ?? .collapsed) }.store(in: &bag)
         dock(model.density)
         orderFrontRegardless()
@@ -229,8 +234,17 @@ final class NotchPanel: NSPanel {
     /// Esc (when the notch has focus) folds an open detail.
     /// While a text field has focus (#94) Esc only leaves it: the card stays and the draft is kept.
     override func cancelOperation(_ sender: Any?) {
-        if firstResponder is NSText { makeFirstResponder(nil); return }
+        if firstResponder is NSText { makeFirstResponder(nil); releaseKeyAfterReply(); return }
         model.closeDetail()
+    }
+
+    /// Gives key status back after the reply field ends. A non-activating panel that stays key keeps eating the terminal's
+    /// keystrokes, so it leaves the key window (order out, then back in front without key). The open list needs key, so it keeps it.
+    private func releaseKeyAfterReply() {
+        guard isKeyWindow, !model.listOpen, !model.replyFieldFocused else { return }
+        if firstResponder is NSText { makeFirstResponder(nil) }
+        orderOut(nil)
+        orderFrontRegardless()
     }
 
     /// The list is keyboard-driven, so it must not outlive key focus: losing key (another window took it) closes it.

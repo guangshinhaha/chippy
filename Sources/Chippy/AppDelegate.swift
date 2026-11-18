@@ -87,7 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         pendingWatch = Publishers.MergeMany([model.$pending.map { _ in () }.eraseToAnyPublisher(), model.$listOpen.map { _ in () }.eraseToAnyPublisher(),
                                       model.$focus.map { _ in () }.eraseToAnyPublisher(), model.$folded.map { _ in () }.eraseToAnyPublisher(), model.$partials.map { _ in () }.eraseToAnyPublisher(),
                                       model.$expandedPlans.map { _ in () }.eraseToAnyPublisher(),
-                                      model.$replyFieldFocused.map { _ in () }.eraseToAnyPublisher()])
+                                      model.$replyFocusOwner.map { _ in () }.eraseToAnyPublisher(), model.$freeTextReplyEnabled.map { _ in () }.eraseToAnyPublisher()])
             .receive(on: DispatchQueue.main).sink { [weak self] in self?.syncShortcuts() }
     }
 
@@ -112,7 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else if req.isPlanApproval {
             registerPlanKeys(req)
         } else {
-            hotKeys.register(ShortcutKeys.approval)
+            registerKeys(ShortcutKeys.approval)
         }
     }
 
@@ -128,13 +128,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let desired = keys.map { $0.action }
         if lastDesiredKeys == desired { return } // same desired set and it registered in full: no churn
-        lastDesiredKeys = hotKeys.register(keys) ? desired : nil
+        lastDesiredKeys = registerKeys(keys) ? desired : nil
     }
 
     /// Digits for the question on screen only, so an unused digit isn't swallowed.
     private func registerQuestionKeys(_ req: PendingRequest) {
         let counts = (req.questions ?? []).map { $0.options.count }
-        hotKeys.register(ShortcutKeys.question(optionCount: ShortcutGate.optionCount(step: questionStep, counts: counts)))
+        registerKeys(ShortcutKeys.question(optionCount: ShortcutGate.optionCount(step: questionStep, counts: counts)))
+    }
+
+    /// The one door to HotKeys.register: while the reply field has focus (#94) no card key may be registered, whoever asks
+    /// (sync, the step sink, a plan toggle), so a typed digit or Y/N can never be swallowed.
+    @discardableResult
+    private func registerKeys(_ keys: [(keyCode: Int, action: ShortcutAction)]) -> Bool {
+        if model.replyFieldFocused { hotKeys.unregister(); lastDesiredKeys = nil; return false }
+        return hotKeys.register(keys)
     }
 
     private func handleShortcut(_ action: ShortcutAction) {

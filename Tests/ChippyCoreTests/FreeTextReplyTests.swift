@@ -58,7 +58,7 @@ final class FreeTextReplyTests: XCTestCase {
         XCTAssertEqual(NotchModel.validFreeText("ab\u{202E}c\u{200B}d"), "abcd")
     }
 
-    func testSendsTypedTextVerbatimAndRecordsNothingOfIt() throws {
+    func testSendsTypedTextAsTypedAndRecordsNothingOfIt() throws {
         let m = model(); let (c, f) = pair()
         m.receiveApproval(qs([mq("Which?")]), c)
         let secret = "topsecretNRIC S1234567D"
@@ -99,11 +99,10 @@ final class FreeTextReplyTests: XCTestCase {
         let (c2, _) = pair()
         m.receiveApproval(qs([mq("Other")], session: "s2"), c2) // a newer question arrives
         m.sweep()                                              // refresh
-        XCTAssertEqual(m.draft(id, question: "Q"), "half typed")
         XCTAssertEqual(m.draftTexts(id), ["Q": "half typed"])
         XCTAssertEqual(m.answer(id, selections: [:], texts: m.draftTexts(id)), .sent)
         XCTAssertNotNil(reply(f))
-        XCTAssertEqual(m.draft(id, question: "Q"), "")
+        XCTAssertEqual(m.draftTexts(id), [:])
     }
 
     func testDraftClearsOnHandBackAndEmptyingAndUnknownIdIsIgnored() {
@@ -111,12 +110,12 @@ final class FreeTextReplyTests: XCTestCase {
         m.receiveApproval(qs([mq("Q")]), c)
         let id = m.pending[0].id
         m.setDraft("nope", question: "Q", text: "x")
-        XCTAssertEqual(m.draft("nope", question: "Q"), "")
+        XCTAssertEqual(m.draftTexts("nope"), [:])
         m.setDraft(id, question: "Q", text: "x"); m.setDraft(id, question: "Q", text: "")
         XCTAssertEqual(m.draftTexts(id), [:])
         m.setDraft(id, question: "Q", text: "again")
         m.handBack(id)
-        XCTAssertEqual(m.draft(id, question: "Q"), "")
+        XCTAssertEqual(m.draftTexts(id), [:])
     }
 
     func testHookGoneWhileTypingIsGoneAndDraftDropped() {
@@ -127,15 +126,80 @@ final class FreeTextReplyTests: XCTestCase {
         close(f); fds.removeAll { $0 == f }                    // the hook timed out and hung up
         XCTAssertEqual(m.answer(id, selections: [:], texts: ["Q": "late"]), .gone)
         XCTAssertTrue(m.pending.isEmpty)
-        XCTAssertEqual(m.draft(id, question: "Q"), "")
+        XCTAssertEqual(m.draftTexts(id), [:])
     }
 
     func testReplyFieldFocusFlagResetsWhenNothingIsPending() {
         let m = model(); let (c, _) = pair()
         m.receiveApproval(qs([mq("Q")]), c)
-        m.setReplyFieldFocused(true)
+        let id = m.pending[0].id
+        m.setReplyFieldFocused(true, id: id)
         XCTAssertTrue(m.replyFieldFocused)
-        m.handBack(m.pending[0].id)
+        m.handBack(id)
         XCTAssertFalse(m.replyFieldFocused)
+        XCTAssertNil(m.replyFocusOwner)
+    }
+
+    func testFocusIsFalseWhenAnotherCardTakesTheScreen() {
+        let m = model(); let (c, _) = pair(); let (c2, _) = pair()
+        m.receiveApproval(qs([mq("Q1")]), c)
+        m.receiveApproval(qs([mq("Q2")], session: "s2"), c2)
+        let a = m.shownPending!.id
+        let b = m.pending.first { $0.id != a }!.id
+        m.setReplyFieldFocused(true, id: a)
+        XCTAssertTrue(m.replyFieldFocused)
+        m.activate(.pending(b)) // card swap while another request stays pending
+        XCTAssertFalse(m.replyFieldFocused)
+        XCTAssertNil(m.replyFocusOwner)
+        m.activate(.pending(a)) // coming back must not resurrect focus
+        XCTAssertFalse(m.replyFieldFocused)
+        m.setReplyFieldFocused(true, id: b) // a field that is not on screen cannot take focus
+        XCTAssertFalse(m.replyFieldFocused)
+        m.setReplyFieldFocused(true, id: a)
+        m.setReplyFieldFocused(false, id: b) // a stale card's blur does not clear the live one
+        XCTAssertTrue(m.replyFieldFocused)
+    }
+
+    func testFocusClearsWhenFlagTurnedOffMidEditAndWhenListOpens() {
+        let m = model(); let (c, _) = pair()
+        m.receiveApproval(qs([mq("Q")]), c)
+        let id = m.pending[0].id
+        m.setReplyFieldFocused(true, id: id)
+        m.freeTextReplyEnabled = false
+        XCTAssertFalse(m.replyFieldFocused)
+        XCTAssertNil(m.replyFocusOwner)
+        m.freeTextReplyEnabled = true
+        XCTAssertFalse(m.replyFieldFocused) // turning it back on does not resurrect focus
+        m.setReplyFieldFocused(true, id: id)
+        m.openList()
+        XCTAssertFalse(m.replyFieldFocused)
+        XCTAssertNil(m.replyFocusOwner)
+    }
+
+    func testFocusClearsWhenAnswered() {
+        let m = model(); let (c, _) = pair()
+        m.receiveApproval(qs([mq("Q")]), c)
+        let id = m.pending[0].id
+        m.setReplyFieldFocused(true, id: id)
+        XCTAssertEqual(m.answer(id, selections: [:], texts: ["Q": "hi"]), .sent)
+        XCTAssertFalse(m.replyFieldFocused)
+        XCTAssertNil(m.replyFocusOwner)
+    }
+
+    func testTypedSpacingIsKeptAndLimitUsesTypedLength() {
+        XCTAssertEqual(NotchModel.validFreeText("  a  b   c "), "a  b   c")
+        XCTAssertEqual(NotchModel.validFreeText("a\tb"), "a b")
+        XCTAssertEqual(NotchModel.validFreeText(String(repeating: "x", count: 500)), String(repeating: "x", count: 500))
+        XCTAssertNil(NotchModel.validFreeText(String(repeating: "x ", count: 251))) // 501 typed after trim
+        XCTAssertNil(NotchModel.validFreeText("x" + String(repeating: "\u{202E}", count: 1100) + "x")) // hidden padding is bounded
+        let q = AskQuestion.parse(["questions": [mq("Q")]])!
+        XCTAssertEqual(NotchModel.joined(q, [:], texts: ["Q": "two  spaces"]), ["Q": "two  spaces"])
+    }
+
+    func testProblemHintsSayWhatIsWrong() {
+        XCTAssertNil(NotchModel.freeTextProblem("fine"))
+        XCTAssertTrue(NotchModel.freeTextProblem("   ")!.contains("Type a reply"))
+        XCTAssertTrue(NotchModel.freeTextProblem(String(repeating: "x", count: 501))!.contains("Too long"))
+        XCTAssertTrue(NotchModel.freeTextProblem("a\nb")!.contains("One line"))
     }
 }
