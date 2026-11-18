@@ -31,23 +31,50 @@ public enum SettingsInstaller {
         return Int(parts[i + 1])
     }
 
-    /// Why a chippy PermissionRequest hook in `settings` is stale, empty when it is fine or absent.
-    public enum Staleness: Equatable { case missingQuestionFlag, timeoutTooShort }
+    /// Why a chippy hook in `settings` is stale, empty when it is fine or absent.
+    public enum Staleness: Equatable { case missingQuestionFlag, timeoutTooShort, missingPermissionRequest }
 
     public static func staleness(_ settings: [String: Any]) -> [Staleness] {
-        let entries = (settings["hooks"] as? [String: Any])?["PermissionRequest"] as? [Any] ?? []
-        var out: [Staleness] = []
-        for entry in entries {
-            for h in (entry as? [String: Any])?["hooks"] as? [Any] ?? [] {
-                guard let hook = h as? [String: Any], let cmd = hook["command"] as? String, cmd.contains("chippy-hook") else { continue }
-                let q = flagValue("--question-timeout", in: cmd)
-                let a = flagValue("--timeout", in: cmd) ?? legacyApprovalTimeout
-                if q == nil, !out.contains(.missingQuestionFlag) { out.append(.missingQuestionFlag) }
-                let need = hookTimeout(approvalTimeout: a, questionTimeout: q ?? 0)
-                if (hook["timeout"] as? Int ?? 0) < need, !out.contains(.timeoutTooShort) { out.append(.timeoutTooShort) }
+        let hooks = settings["hooks"] as? [String: Any] ?? [:]
+        func chippyHooks(_ ev: String) -> [[String: Any]] {
+            var out: [[String: Any]] = []
+            for entry in hooks[ev] as? [Any] ?? [] {
+                for h in (entry as? [String: Any])?["hooks"] as? [Any] ?? [] {
+                    if let hook = h as? [String: Any], let cmd = hook["command"] as? String, cmd.contains("chippy-hook") { out.append(hook) }
+                }
             }
+            return out
+        }
+        let mine = chippyHooks("PermissionRequest")
+        var out: [Staleness] = []
+        if mine.isEmpty {
+            // chippy-hook is installed for other events but its approval relay is gone.
+            if hooks.keys.contains(where: { $0 != "PermissionRequest" && !chippyHooks($0).isEmpty }) { out.append(.missingPermissionRequest) }
+            return out
+        }
+        for hook in mine {
+            let cmd = hook["command"] as? String ?? ""
+            let q = flagValue("--question-timeout", in: cmd)
+            // No --timeout means the relay uses its current default, not the legacy one.
+            let a = flagValue("--timeout", in: cmd) ?? defaultApprovalTimeout
+            if q == nil, !out.contains(.missingQuestionFlag) { out.append(.missingQuestionFlag) }
+            let need = hookTimeout(approvalTimeout: a, questionTimeout: q ?? 0)
+            // NSNumber so 130.0 (a JSON double) counts as an int.
+            let have = (hook["timeout"] as? NSNumber)?.intValue ?? 0
+            if have < need, !out.contains(.timeoutTooShort) { out.append(.timeoutTooShort) }
         }
         return out
+    }
+
+    /// True when `path` will not exist later: a translocated, mounted-volume or temp-dir copy. build/ is fine.
+    public static func isTransientPath(_ path: String, tempDir: String = NSTemporaryDirectory()) -> Bool {
+        let p = (path as NSString).standardizingPath
+        let t = (tempDir as NSString).standardizingPath
+        if p.contains("/AppTranslocation/") || p.hasPrefix("/Volumes/") { return true }
+        for root in [t, "/tmp", "/private/tmp", "/var/folders", "/private/var/folders"] where !root.isEmpty && root != "/" {
+            if p == root || p.hasPrefix(root + "/") { return true }
+        }
+        return false
     }
 
     public static func merged(_ settings: [String: Any], binary: String, events: [String] = hookEvents,
