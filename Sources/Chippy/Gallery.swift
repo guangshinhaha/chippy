@@ -496,7 +496,7 @@ enum Gallery {
     /// A model with the waiting list open: `needs` rows (approval, question, terminal ask in turn) and `finished` chips.
     /// `names` are cwd folder names under /work; the injected cache turns the worktree-style ones into repo + worktree.
     @MainActor
-    private static func listModel(needs: Int, finished: Int, names: [String]? = nil, kinds: [String]? = nil, asksYou: Bool = false) -> NotchModel {
+    private static func listModel(needs: Int, finished: Int, names: [String]? = nil, kinds: [String]? = nil, asksYou: Bool = false, replies: [String]? = nil) -> NotchModel {
         let cache = RepoIdentityCache(resolver: { cwd in
             let n = (cwd as NSString).lastPathComponent
             switch n {
@@ -513,7 +513,7 @@ enum Gallery {
         let now = Date()
         for i in 0..<finished {
             let name = names.map { $0[(needs + i) % $0.count] } ?? pool[(needs + i + 3) % pool.count]
-            let reply = asksYou && i == 0 ? "Done.\n\nShould I also bump the version?" : "Done."
+            let reply = replies.map { $0[i % $0.count] } ?? (asksYou && i == 0 ? "Done.\n\nShould I also bump the version?" : "Done.")
             model.apply(HookPayload(json: try! JSONSerialization.data(withJSONObject: ["session_id": "f\(i)", "hook_event_name": "Stop", "cwd": "/work/\(name)", "last_assistant_message": reply]))!,
                         now: now.addingTimeInterval(Double(i - finished) * 300 - 60))
         }
@@ -541,7 +541,7 @@ enum Gallery {
     private static func listHeight(_ model: NotchModel) -> CGFloat {
         let l = model.waitingLayout
         let needs = l.needs.isEmpty ? 0 : WaitingList.sectionHeaderHeight + l.needsHeight
-        let fin = l.totalFinished == 0 ? 0 : WaitingList.sectionHeaderHeight + CGFloat(l.finished.count) * WaitingList.finishedRowHeight + (l.hiddenFinished > 0 ? WaitingList.moreRowHeight : 0)
+        let fin = l.totalFinished == 0 ? 0 : WaitingList.sectionHeaderHeight + (l.expanded ? l.finishedHeight : CGFloat(l.finished.count) * WaitingList.finishedRowHeight) + (l.hasToggle ? WaitingList.moreRowHeight : 0)
         let gap = (needs > 0 && fin > 0) ? WaitingList.sectionGap : 0
         return min(WaitingList.chrome + needs + gap + fin + 10, NotchMetrics.maxExpandedHeight)
     }
@@ -585,6 +585,24 @@ enum Gallery {
         let all = VStack(alignment: .leading, spacing: 20) { grid; HStack(alignment: .top, spacing: 16) { six; caps } }.padding(16).background(Color(white: 0.25))
         let r = ImageRenderer(content: all)
         writePNG(r, to: path)
+    }
+
+    /// `Chippy --render-finished-overflow out.png`: 8 finished rows with outcome snippets, collapsed ("+5 more") and expanded
+    /// (scrolling FINISHED region, "Show fewer"), alone and beside 3 needs-you rows.
+    @MainActor
+    static func renderFinishedOverflow(to path: String) {
+        let replies = ["Fixed the login redirect and added a regression test", "# Summary\n\nBumped the SDK to 4.2 and regenerated the lockfile", "```\nnpm test\n```",
+                       "Merged the migration; staging is green", "Done.", "Refactored the billing service into three smaller modules with no behaviour change at all", "Added the kiosk idle timeout", "Docs updated"]
+        func cell(needs: Int, expanded: Bool) -> some View {
+            let m = listModel(needs: needs, finished: 8, replies: replies)
+            if expanded { m.toggleFinished() }
+            return listCell(m, "\(needs) needs x 8 finished, \(expanded ? "expanded" : "collapsed")")
+        }
+        let all = VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 16) { cell(needs: 0, expanded: false); cell(needs: 0, expanded: true) }
+            HStack(alignment: .top, spacing: 16) { cell(needs: 3, expanded: false); cell(needs: 3, expanded: true) }
+        }.padding(16).background(Color(white: 0.25))
+        writePNG(ImageRenderer(content: all.environment(\.staticRender, true)), to: path)
     }
 
     /// `Chippy --render-identity out.png` (#89): rows for two worktrees of one repo (same mark, different worktree tag) beside

@@ -830,6 +830,8 @@ struct SummaryView: View {
     /// Shown when the parser yields no doc (e.g. "---", an empty fence, a table): the raw text, clipped, never blank.
     private let fallback: String?
     @State private var open = false
+    @State private var detailsHeight: CGFloat = 0
+    static let maxDetailsHeight: CGFloat = 240
 
     init(reply: String?, decision: String? = nil, compact: Bool = false) {
         self.decision = decision; self.compact = compact
@@ -897,7 +899,7 @@ struct SummaryView: View {
                     .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
             }
             if !compact, let d, !d.details.isEmpty {
-                Button { open.toggle() } label: {
+                Button { open.toggle(); if !open { detailsHeight = 0 } } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold)).rotationEffect(.degrees(open ? 90 : 0))
                         Text(open ? "Hide details" : "Show details").font(.caption2)
@@ -905,12 +907,16 @@ struct SummaryView: View {
                 }.buttonStyle(.plain)
                 .accessibilityLabel(open ? "Hide details" : "Show details")
                 if open {
-                    // Short: the card hugs it. Long: scrolls in a FIXED-height area (a flexible one fills what the
-                    // panel offers, the panel grows to fit it, and the card keeps expanding).
-                    ViewThatFits(in: .vertical) {
-                        detailsBody
-                        ScrollView { detailsBody }.frame(height: 240)
-                    }.frame(maxHeight: 240)
+                    // Measured, not ViewThatFits + maxHeight: that flexible frame claims the full 240pt it is offered,
+                    // leaving a blank gap under a short body. Invisible until measured, so no first-frame jump.
+                    let content = detailsBody
+                        .fixedSize(horizontal: false, vertical: true)
+                        .background(GeometryReader { g in Color.clear.preference(key: QuestionBodyHeight.self, value: g.size.height) })
+                    Group {
+                        if detailsHeight > Self.maxDetailsHeight { ScrollView { content }.frame(height: Self.maxDetailsHeight) } else { content }
+                    }
+                    .opacity(detailsHeight > 0 ? 1 : 0)
+                    .onPreferenceChange(QuestionBodyHeight.self) { detailsHeight = $0 }
                 }
             }
         }
@@ -1086,9 +1092,18 @@ struct RecentListView: View {
     }
 }
 
-/// The waiting list (#53, #101): NEEDS YOU on top (act on these), FINISHED below (FYI). Rows show only the repo, a worktree
-/// tag, a verb-led label and the age, never the question or command (PDPA #30). Arrows, Return and Esc are handled by the panel.
+/// The waiting list (#53, #101): NEEDS YOU on top (act on these), FINISHED below (FYI). NEEDS YOU rows show the repo, a worktree
+/// tag, a verb-led label (tool name or question count) and the age, never the question or command (PDPA #30). FINISHED rows add
+/// the first line of the reply (60 chars at most, the outcome only, in memory, never logged), or "finished" when there is none.
+/// Arrows, Return and Esc are handled by the panel.
+private struct StaticRenderKey: EnvironmentKey { static let defaultValue = false }
+extension EnvironmentValues {
+    var staticRender: Bool { get { self[StaticRenderKey.self] } set { self[StaticRenderKey.self] = newValue } }
+}
+
 struct WaitingListView: View {
+    /// True only in the gallery's still renders (ImageRenderer draws a ScrollView blank).
+    @Environment(\.staticRender) private var staticRender
     @ObservedObject var model: NotchModel
 
     private func section(_ title: String, count: Int, clearAll: (() -> Void)? = nil) -> some View {
@@ -1115,6 +1130,29 @@ struct WaitingListView: View {
         }
     }
 
+    private func finishedRows(_ layout: WaitingLayout) -> some View {
+        VStack(spacing: 0) {
+            ForEach(layout.finished) { item in
+                FinishedRow(item: item, mark: model.identity(item: item), selected: model.listSelection == item.target,
+                            open: { model.activate(item.target) }, dismiss: { if case .done(let sid) = item.target { model.dismissDone(sid) } })
+                    .frame(height: WaitingList.finishedRowHeight).id(item.target)
+            }
+        }
+    }
+
+    /// "+N more" (collapsed) or "Show fewer" (expanded): a real row, reachable by arrows, Return or click.
+    private func moreRow(_ layout: WaitingLayout) -> some View {
+        let selected = model.listSelection == .moreToggle
+        let text = layout.expanded ? "Show fewer" : "+\(layout.hiddenFinished) more"
+        return Text(text).font(.caption2).foregroundStyle(.white.opacity(selected ? 0.9 : 0.55))
+            .padding(.horizontal, 10).frame(maxWidth: .infinity, minHeight: WaitingList.moreRowHeight, maxHeight: WaitingList.moreRowHeight, alignment: .leading)
+            .background(rowBackground(selected: selected, hover: false))
+            .contentShape(Rectangle()).onTapGesture { model.toggleFinished() }
+            .accessibilityLabel(layout.expanded ? "Show fewer finished" : "\(layout.hiddenFinished) more finished, show all")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction(.default) { model.toggleFinished() }
+    }
+
     var body: some View {
         let layout = model.waitingLayout
         VStack(alignment: .leading, spacing: WaitingList.sectionGap) {
@@ -1124,7 +1162,7 @@ struct WaitingListView: View {
                     if layout.needsScrolls {
                         ScrollViewReader { proxy in
                             ScrollView { needsRows(layout) }.frame(height: layout.needsHeight)
-                                .onChange(of: model.listSelection) { if let t = $0 { withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(t) } } }
+                                .onChange(of: model.listSelection) { if let t = $0, t != .moreToggle { withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(t) } } }
                         }
                     } else { needsRows(layout) }
                 }
@@ -1132,16 +1170,15 @@ struct WaitingListView: View {
             if layout.totalFinished > 0 {
                 VStack(alignment: .leading, spacing: 0) {
                     section("FINISHED", count: layout.totalFinished, clearAll: { model.dismissDone(nil) })
-                    ForEach(layout.finished) { item in
-                        FinishedRow(item: item, mark: model.identity(item: item), selected: model.listSelection == item.target,
-                                    open: { model.activate(item.target) }, dismiss: { if case .done(let sid) = item.target { model.dismissDone(sid) } })
-                            .frame(height: WaitingList.finishedRowHeight)
-                    }
-                    if layout.hiddenFinished > 0 {
-                        Text("+\(layout.hiddenFinished) more").font(.caption2).foregroundStyle(.white.opacity(0.5))
-                            .padding(.leading, 10).frame(height: WaitingList.moreRowHeight, alignment: .leading)
-                            .accessibilityLabel("\(layout.hiddenFinished) more finished, clear some to see them")
-                    }
+                    if layout.expanded, staticRender {
+                        finishedRows(layout).frame(height: layout.finishedHeight, alignment: .top).clipped() // gallery only: ImageRenderer draws ScrollView blank
+                    } else if layout.expanded {
+                        ScrollViewReader { proxy in
+                            ScrollView { finishedRows(layout) }.frame(height: layout.finishedHeight)
+                                .onChange(of: model.listSelection) { if let t = $0, t != .moreToggle { withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(t) } } }
+                        }
+                    } else { finishedRows(layout) }
+                    if layout.hasToggle { moreRow(layout) }
                 }
             }
             Text("↑↓ move · Return open · Esc close")
@@ -1319,8 +1356,11 @@ struct FinishedRow: View {
     private func row(age: String) -> some View {
         HStack(spacing: 10) {
             Image(systemName: "checkmark.circle").font(.caption).foregroundStyle(.white.opacity(0.45)).frame(width: 18)
-            RepoTitle(repo: item.repo, worktree: item.worktree, mark: mark)
-            Text(item.asksYou ? "asks you" : "finished").font(.caption2).foregroundStyle(item.asksYou ? Color.orange : .white.opacity(0.5)).lineLimit(1).fixedSize()
+            RepoTitle(repo: item.repo, worktree: item.worktree, mark: mark).layoutPriority(1)
+            if item.asksYou { Text("asks you").font(.caption2).foregroundStyle(Color.orange).lineLimit(1).fixedSize() }
+            // The repo label wins space first, but the snippet (or "finished") keeps a floor so the row never reads as empty.
+            Text(item.snippet ?? "finished").font(.caption2).foregroundStyle(.white.opacity(0.5)).lineLimit(1).truncationMode(.tail)
+                .frame(minWidth: 36, alignment: .leading)
             Spacer(minLength: 6)
             Text(age).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.5))
             Button(action: dismiss) {
@@ -1337,7 +1377,7 @@ struct FinishedRow: View {
         .animation(.easeOut(duration: 0.12), value: hover)
         // One button for the row; Dismiss is its own action, not a nested element inside a button.
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(mark.map { "\($0.spoken), " } ?? "")\(item.repo)\(item.worktree.map { ", worktree \($0)" } ?? ""), \(item.asksYou ? "asks you" : "finished"), \(age)")
+        .accessibilityLabel("\(mark.map { "\($0.spoken), " } ?? "")\(item.repo)\(item.worktree.map { ", worktree \($0)" } ?? ""), \(item.asksYou ? "asks you, " : "")\(item.snippet ?? "finished"), \(age)")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction(.default, open)
         .accessibilityAction(named: "Dismiss", dismiss)
