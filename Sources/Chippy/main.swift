@@ -16,6 +16,11 @@ if let i = args.firstIndex(of: "--render-question"), i + 1 < args.count {
     exit(0)
 }
 
+if let i = args.firstIndex(of: "--render-approval"), i + 1 < args.count {
+    MainActor.assumeIsolated { Gallery.renderApproval(to: args[i + 1]) }
+    exit(0)
+}
+
 if let i = args.firstIndex(of: "--render-tab"), i + 1 < args.count {
     MainActor.assumeIsolated { Gallery.renderTab(to: args[i + 1]) }
     exit(0)
