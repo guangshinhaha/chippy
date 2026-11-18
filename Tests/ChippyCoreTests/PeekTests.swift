@@ -97,15 +97,15 @@ final class PeekTests: XCTestCase {
     func testDoneChipPeeksTenSecondsThenCollapsesButStays() {
         let m = model(); let now = Date()
         m.apply(ev("Stop"), now: now)
-        XCTAssertEqual(m.density, .compact); XCTAssertTrue(m.visible)
+        XCTAssertEqual(m.density, .compact); XCTAssertFalse(m.resting)
         t = 9.9; m.sweep(); XCTAssertEqual(m.density, .compact)
         t = 10; m.sweep()
-        XCTAssertEqual(m.density, .collapsed); XCTAssertTrue(m.visible)
+        XCTAssertEqual(m.density, .collapsed); XCTAssertFalse(m.resting)
         XCTAssertEqual(m.doneItems.count, 1)           // still reachable, dismissable
         XCTAssertEqual(m.badge, "1")
         m.toggleOpen(); XCTAssertEqual(m.density, .expanded); XCTAssertTrue(m.doneOpen)
         m.closeDetail(); XCTAssertEqual(m.density, .collapsed)
-        m.dismissDone(); XCTAssertNil(m.badge); XCTAssertFalse(m.visible)
+        m.dismissDone(); XCTAssertNil(m.badge); XCTAssertTrue(m.resting)
     }
 
     func testHoverHoldsPeekAndLeaveResumes() {

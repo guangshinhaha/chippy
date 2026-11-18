@@ -45,6 +45,20 @@ public struct NotchMetrics: Equatable {
     /// Height of the strip beside the camera, where collapsed and compact content lives.
     public var band: CGFloat { max(height + 2, 30) }
 
+    /// Width of the resting tab on a screen with no notch (nothing to hang from, so a small pill at top-centre).
+    public static let flatRestingWidth: CGFloat = 36
+
+    /// The resting indicator (#85): always a tab, never wings (wings would cover other apps' menus).
+    /// Notch: the tab hanging under the camera. No notch: a small pill the height of the menu bar, centred.
+    public var restingSize: CGSize {
+        hasNotch ? CGSize(width: width, height: band + Self.tabHeight) : CGSize(width: Self.flatRestingWidth, height: max(height, Self.glanceIcon + 4))
+    }
+
+    /// Size of the shape for a density, or of the resting tab when `resting` (only meaningful for collapsed).
+    public func size(for density: Density, resting: Bool, tall: Bool = false, contentHeight: CGFloat = 0) -> CGSize {
+        resting && density == .collapsed ? restingSize : size(for: density, tall: tall, contentHeight: contentHeight)
+    }
+
     /// `contentHeight` is the measured height of the expanded card, so the shape hugs it instead of leaving dead space.
     public func size(for density: Density, tall: Bool = false, contentHeight: CGFloat = 0) -> CGSize {
         switch density {

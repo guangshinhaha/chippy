@@ -28,8 +28,6 @@ public final class NotchModel: ObservableObject {
     /// When true (debug menu), live sessions don't drive state/density.
     @Published public var debugLock = false { didSet { refresh() } }
     @Published public private(set) var pending: [PendingRequest] = []
-    /// The user clicked the notch open to look at sessions (menu peek); closed again by another click.
-    @Published public private(set) var pinnedOpen = false
     /// Finished threads waiting to be acknowledged. Sticky: they stay until dismissed, the thread moves on, or they age out.
     @Published public private(set) var doneItems: [DoneItem] = []
     /// Questions/approvals that fell back to the terminal (#42). Sticky until the session's next event or `doneSeconds`.
@@ -38,8 +36,12 @@ public final class NotchModel: ObservableObject {
     @Published public private(set) var doneOpen = false
     /// The done detail is open: the panel grows so the whole reply can be read.
     @Published public private(set) var tall = false
-    /// The notch only appears when something needs the user: an approval, a finished thread, or a menu-bar peek.
-    @Published public private(set) var visible = false
+    /// Nothing needs the user: the notch rests as a small tab holding the mascot (never fully hidden, #85).
+    @Published public private(set) var resting: Bool
+    /// The resting tab was clicked open (#85): Recent list plus the menu gear. Only a click opens it.
+    @Published public private(set) var restOpen = false
+    /// Last finished threads after their chip went away. Memory only, capped, repo + age only (PDPA).
+    @Published public private(set) var recent = RecentList()
     /// Off by default (PDPA): the glance shows only `repo · finished`; the reply stays behind the click.
     @Published public var showReplyInGlance = UserDefaults.standard.bool(forKey: "showReplyInGlance") {
         didSet { UserDefaults.standard.set(showReplyInGlance, forKey: "showReplyInGlance") }
@@ -78,6 +80,7 @@ public final class NotchModel: ObservableObject {
         self.clock = clock
         self.state = state
         self.density = density
+        self.resting = density == .collapsed // no chips yet, same as refresh()
         self.always = always
         self.log = log
     }
@@ -85,7 +88,7 @@ public final class NotchModel: ObservableObject {
     private func refresh() {
         let waiting = WaitingList.items(pending: pending, done: doneItems, terminal: terminalItems) // computed once per refresh
         if waiting != waitingItems { waitingItems = waiting }
-        guard !debugLock else { visible = true; return }
+        guard !debugLock else { resting = false; return }
         if waiting.isEmpty { listOpen = false }
         if listOpen { let sel = WaitingList.reconcile(listSelection, in: waiting); if sel != listSelection { listSelection = sel } }
         if let f = focus, !waiting.contains(where: { $0.target == f }) { // the jumped-to item went away
@@ -94,21 +97,23 @@ public final class NotchModel: ObservableObject {
         }
         let pendingIds = Set(pending.map(\.id))
         if partials.keys.contains(where: { !pendingIds.contains($0) }) { partials = partials.filter { pendingIds.contains($0.key) } }
-        if sessions.isEmpty { pinnedOpen = false }
         if doneItems.isEmpty { peek.cancel() }
         if doneItems.isEmpty && terminalItems.isEmpty { doneOpen = false }
-        if !pending.isEmpty || pinnedOpen || doneOpen || listOpen { peek.cancel() } // the user (or an approval) took over: no peek to resume on close
+        if !pending.isEmpty { restOpen = false } // an approval or question takes over; a passive chip just joins the open panel
+        if !pending.isEmpty || doneOpen || listOpen || restOpen { peek.cancel() } // the user (or an approval) took over: no peek to resume on close
         let p = peek.isPeeking(now: clock())
         if p != peeking { peeking = p }
         let live = store.derivedState
         // A terminal chip never hides live work: working wins over it, it wins over done.
         state = !pending.isEmpty ? .needsYou : (live == .working ? .working : (!terminalItems.isEmpty ? .needsYou : (doneItems.isEmpty ? live : .done)))
         // Terminal cards share the panel, so the tall one-card reply view only applies when none are showing.
-        tall = !listOpen && (shownDone != nil || (pending.isEmpty && !pinnedOpen && doneOpen && !doneItems.isEmpty && terminalItems.isEmpty))
-        if !pending.isEmpty || pinnedOpen || doneOpen || listOpen { density = .expanded; visible = true }
-        else if !terminalItems.isEmpty { density = .compact; visible = true }
-        else if !doneItems.isEmpty { density = peeking ? .compact : .collapsed; visible = true }
-        else { density = .collapsed; visible = false }
+        tall = !listOpen && (shownDone != nil || (pending.isEmpty && !restOpen && doneOpen && !doneItems.isEmpty && terminalItems.isEmpty))
+        let r: Bool
+        if !pending.isEmpty || doneOpen || listOpen || restOpen { density = .expanded; r = false }
+        else if !terminalItems.isEmpty { density = .compact; r = false }
+        else if !doneItems.isEmpty { density = peeking ? .compact : .collapsed; r = false }
+        else { density = .collapsed; r = true }
+        if r != resting { resting = r }
     }
 
     /// Everything waiting, in list order (see `WaitingList.items`). Recomputed once per `refresh`.
@@ -158,7 +163,7 @@ public final class NotchModel: ObservableObject {
     /// Jump to one waiting item: its card, or for a done chip the existing detail.
     public func activate(_ target: WaitingTarget) {
         guard waitingItems.contains(where: { $0.target == target }) else { return }
-        listOpen = false; pinnedOpen = false
+        listOpen = false; restOpen = false
         focus = target
         switch target {
         case .done: doneOpen = true
@@ -181,20 +186,22 @@ public final class NotchModel: ObservableObject {
 
     /// The pointer entered or left the island: a running peek holds while it is over and resumes when it leaves.
     /// Ignored while expanded, and it never re-opens an expired peek.
+    /// Hover never wakes the sleeping mascot (only a click or a hook event does), or the sleeping pose could not be seen.
     public func setHover(_ inside: Bool, now: Date = Date()) {
-        wake(now: now)
         hovering = inside
         guard density != .expanded else { return }
         peek.setHover(inside, now: clock())
     }
 
     /// Click on the notch. A waiting approval ignores it. A done chip opens its detail (click again to go back);
-    /// otherwise it opens or closes the session peek.
+    /// otherwise it opens or closes the rest panel (Recent, sessions, menu gear).
     public func toggleOpen(now: Date = Date()) {
         wake(now: now)
         guard pending.isEmpty, !listOpen else { return }
         if focus != nil { focus = nil; doneOpen = false; refresh(); return } // one gesture folds a jumped-to detail; focus and doneOpen never drift
-        if (!doneItems.isEmpty || !terminalItems.isEmpty) && !pinnedOpen { doneOpen.toggle() } else { pinnedOpen.toggle() }
+        if restOpen { restOpen = false; refresh(); return }
+        if doneItems.isEmpty && terminalItems.isEmpty { restOpen = true; refresh(); return } // click on the resting tab
+        doneOpen.toggle() // a chip is showing: its detail
         refresh()
     }
 
@@ -203,15 +210,24 @@ public final class NotchModel: ObservableObject {
         if listOpen { closeList(); return }
         if case .pending? = focus { return } // the approval or question the user jumped to stays up until answered
         if focus != nil { focus = nil; doneOpen = false; refresh(); return } // back out of a jumped-to done or terminal detail
-        guard pending.isEmpty, doneOpen || pinnedOpen else { return }
-        doneOpen = false; pinnedOpen = false
+        guard pending.isEmpty, doneOpen || restOpen else { return }
+        doneOpen = false; restOpen = false
         refresh()
     }
 
     /// Acknowledge one finished thread, or all of them.
-    public func dismissDone(_ sessionId: String? = nil) {
+    public func dismissDone(_ sessionId: String? = nil, now: Date = Date()) {
+        retire(doneItems.filter { sessionId == nil || $0.sessionId == sessionId }, now: now)
         if let sessionId { doneItems.removeAll { $0.sessionId == sessionId } } else { doneItems.removeAll() }
         refresh()
+    }
+
+    /// A finished chip is leaving (dismissed or expired): keep a metadata-only trace in Recent.
+    private func retire(_ items: [DoneItem], now: Date = Date()) {
+        guard !items.isEmpty else { return }
+        var r = recent
+        for d in items where !Tour.isDemo(d.sessionId) { r.add(RecentItem(d), now: now) }
+        if r != recent { recent = r } // assign only on change: a no-op write still notifies
     }
 
     /// Acknowledge one terminal chip, or all of them.
@@ -369,7 +385,10 @@ public final class NotchModel: ObservableObject {
         let gone = pending.filter { connections[$0.id]?.peerGone ?? true }
         let expired = doneItems.contains { now.timeIntervalSince($0.at) > Self.doneSeconds }
             || terminalItems.contains { now.timeIntervalSince($0.at) > Self.doneSeconds }
+        var r = recent
+        if r.prune(now: now) { recent = r }
         if expired { // assign only on change: a no-op write still notifies
+            retire(doneItems.filter { now.timeIntervalSince($0.at) > Self.doneSeconds }, now: now)
             doneItems.removeAll { now.timeIntervalSince($0.at) > Self.doneSeconds }
             terminalItems.removeAll { now.timeIntervalSince($0.at) > Self.doneSeconds }
             refresh()
@@ -404,6 +423,7 @@ public final class NotchModel: ObservableObject {
             }
         case let e where Self.boundaryEvents.contains(e) || Self.toolEvents.contains(e):
             // Only the thread itself moving on (new prompt, tool use after a Stop, or ending) clears its chip; another thread's activity must not.
+            retire(doneItems.filter { $0.sessionId == payload.sessionId }, now: now) // resumed or ended: the finished chip leaves
             doneItems.removeAll { $0.sessionId == payload.sessionId }
             if payload.event == "SessionEnd" { onSessionEnd?(payload.sessionId) }
         default: break

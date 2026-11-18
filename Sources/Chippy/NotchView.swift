@@ -64,7 +64,7 @@ struct NotchView: View {
 
     /// The shape's resting size for the current state. The window never changes; only this does.
     private var target: CGSize {
-        var s = box.metrics.size(for: model.density, tall: model.tall, contentHeight: box.contentHeight)
+        var s = box.metrics.size(for: model.density, resting: model.resting, tall: model.tall, contentHeight: box.contentHeight)
         if model.density == .collapsed && box.hover && !reduceMotion { s.width += 6 }
         return s
     }
@@ -109,7 +109,7 @@ struct NotchView: View {
         let open = model.density == .expanded
         return ChipmunkView(state: model.state, sleeping: model.asleep).frame(width: big, height: big)
             .scaleEffect(open ? 1 : small / big, anchor: .topLeading)
-            .offset(x: iconX(open: open, small: small, size: size), y: open ? m.height + 2 : m.isTab ? m.band + (NotchMetrics.tabHeight - small) / 2 : (m.band - small) / 2)
+            .offset(x: iconX(open: open, small: small, size: size), y: open ? m.height + 2 : iconY(small: small, size: size))
             .frame(width: size.width, height: size.height, alignment: .topLeading)
             .allowsHitTesting(false)
     }
@@ -117,8 +117,16 @@ struct NotchView: View {
     /// Wings: the left edge. Tab: centred when collapsed, left of the glance text when compact.
     private func iconX(open: Bool, small: CGFloat, size: CGSize) -> CGFloat {
         if open { return 16 }
-        guard box.metrics.isTab else { return 10 }
+        guard box.metrics.isTab || model.resting else { return 10 }
         return model.density == .compact ? 12 : (size.width - small) / 2
+    }
+
+    /// Resting is always a tab (never wings): under the camera on a notch, a flat pill at top-centre without one.
+    private func iconY(small: CGFloat, size: CGSize) -> CGFloat {
+        let m = box.metrics
+        if model.resting && !m.hasNotch { return max(0, (size.height - small) / 2) }
+        if m.isTab || model.resting { return m.band + (NotchMetrics.tabHeight - small) / 2 }
+        return (m.band - small) / 2
     }
 
     private func report(_ h: CGFloat) {
@@ -139,6 +147,7 @@ struct NotchView: View {
     }
 
     private var headerTitle: String {
+        if model.restOpen && model.doneItems.isEmpty && model.terminalItems.isEmpty { return "Recent" }
         if model.listOpen { return "Waiting · \(model.waitingItems.count)" }
         if model.shownPending == nil, model.shownDone != nil { return model.pending.isEmpty ? "Done" : "Finished" }
         if model.pending.isEmpty { return model.state.title }
@@ -148,6 +157,8 @@ struct NotchView: View {
     }
 
     static let terminalCardCap = 2
+    /// Session rows in the peek, so the card's measured height stays within its cap.
+    static let sessionRowCap = 4
 
     /// Terminal chips as cards (at most `terminalCardCap`, then a "N more" row, so the panel's measured height stays within its cap beside done cards).
     @ViewBuilder private var terminalCards: some View {
@@ -240,6 +251,13 @@ struct NotchView: View {
                         ChipButton(title: "All \(model.waitingItems.count)", kind: .neutral) { model.openList() }
                             .accessibilityHint("Opens the list of everything waiting")
                     }
+                    Button(action: box.openMenu) {
+                        Image(systemName: "gearshape.fill").font(.callout).foregroundStyle(.white.opacity(0.7))
+                            .frame(width: 28, height: 28).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Chippy menu")
+                    .accessibilityLabel("Chippy menu")
                 }
                 .reveal(0.08)
                 if model.listOpen {
@@ -254,15 +272,23 @@ struct NotchView: View {
                     }
                 } else if let d = model.shownDone {
                     DoneCard(item: d, full: true) { model.dismissDone(d.sessionId) }.reveal(0.12)
-                } else if model.pinnedOpen {
+                } else if model.restOpen {
                     terminalCards
                     doneCards(limit: 3)
-                    if model.sessions.isEmpty { Text("No agent sessions.").font(.caption).foregroundStyle(.white.opacity(0.6)) }
-                    ForEach(model.sessions) { row in
+                    // Recent first, and only when no chip is showing (the chips already say the same), so the card stays short.
+                    if model.doneItems.isEmpty && model.terminalItems.isEmpty {
+                        if model.recent.items.isEmpty { Text("Nothing finished recently.").font(.caption).foregroundStyle(.white.opacity(0.6)) }
+                        else { RecentListView(items: model.recent.items).reveal(0.12) }
+                    }
+                    if model.sessions.isEmpty && model.recent.items.isEmpty { Text("No agent sessions.").font(.caption).foregroundStyle(.white.opacity(0.6)) }
+                    ForEach(model.sessions.prefix(Self.sessionRowCap)) { row in
                         VStack(alignment: .leading, spacing: 1) {
                             Text("\(row.project) · \(row.headline)").font(.caption.bold()).foregroundStyle(.white)
                             Text(row.detail).font(.caption2).foregroundStyle(.white.opacity(0.6))
                         }
+                    }
+                    if model.sessions.count > Self.sessionRowCap {
+                        Text("\(model.sessions.count - Self.sessionRowCap) more sessions").font(.caption2).foregroundStyle(.white.opacity(0.6))
                     }
                 } else {
                     terminalCards
@@ -649,6 +675,34 @@ struct NotchShape: Shape {
                        control: CGPoint(x: rect.minX, y: rect.maxY))
         p.closeSubpath()
         return p
+    }
+}
+
+/// Recent (#85): the last finished threads after their chip went away. Repo, age and an Open button only; never the
+/// reply, prompt, question or command (PDPA #30). `RecentItem` cannot hold them.
+struct RecentListView: View {
+    let items: [RecentItem]
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 15)) { ctx in // one timeline for the whole list
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(items) { item in row(item, now: ctx.date) }
+            }
+        }
+    }
+
+    private func row(_ item: RecentItem, now: Date) -> some View {
+        let age = WaitingList.age(since: item.at, now: now)
+        return HStack(spacing: 10) {
+            Image(systemName: "checkmark.circle").font(.caption).foregroundStyle(.white.opacity(0.5)).frame(width: 18)
+            Text(item.project).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle)
+            Spacer(minLength: 8)
+            Text(age).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.55))
+            if TerminalJump.available(item.host) { OpenTerminalButton(host: item.host) }
+        }
+        .padding(.horizontal, 10).frame(minHeight: 32)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(item.project), finished \(age) ago")
     }
 }
 
