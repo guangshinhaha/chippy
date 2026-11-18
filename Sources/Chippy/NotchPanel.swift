@@ -203,7 +203,7 @@ final class NotchPanel: NSPanel {
     private func syncMouse() {
         let inside = hitRect.contains(NSEvent.mouseLocation)
         if ignoresMouseEvents == inside { ignoresMouseEvents = !inside }
-        if metrics.hover != inside { metrics.hover = inside } // an ignoring window gets no hover-exit, so hover comes from here
+        if metrics.hover != inside { metrics.hover = inside; model.setHover(inside) } // the peek holds while hovered; an ignoring window gets no hover-exit, so hover comes from here
     }
 
     /// Where the pointer counts as "on the island": the larger of the old and new shape while it is moving.

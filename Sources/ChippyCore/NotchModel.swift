@@ -43,6 +43,10 @@ public final class NotchModel: ObservableObject {
         didSet { UserDefaults.standard.set(showReplyInGlance, forKey: "showReplyInGlance") }
     }
     public static let doneSeconds: TimeInterval = 600
+    /// A finished chip is shown compact while peeking, then the island settles to collapsed (chip stays in `doneItems`).
+    @Published public private(set) var peeking = false
+    private var peek = PeekGate()
+    private let clock: () -> TimeInterval
     private var store = SessionStore()
     private var connections: [String: Connection] = [:]
     private var questionInputs: [String: [String: Any]] = [:]
@@ -50,7 +54,9 @@ public final class NotchModel: ObservableObject {
     private let log: EventLog
 
     public init(state: ChippyState = .idle, density: Density = .collapsed,
-                always: AlwaysStore = AlwaysStore(), log: EventLog = EventLog()) {
+                always: AlwaysStore = AlwaysStore(), log: EventLog = EventLog(),
+                clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.clock = clock
         self.state = state
         self.density = density
         self.always = always
@@ -60,14 +66,27 @@ public final class NotchModel: ObservableObject {
     private func refresh() {
         guard !debugLock else { visible = true; return }
         if sessions.isEmpty { pinnedOpen = false }
-        if doneItems.isEmpty { doneOpen = false }
+        if doneItems.isEmpty { doneOpen = false; peek.cancel() }
+        peeking = peek.isPeeking(now: clock())
         let live = store.derivedState
         state = !pending.isEmpty ? .needsYou : (live == .working ? .working : (doneItems.isEmpty ? live : .done))
         tall = pending.isEmpty && !pinnedOpen && doneOpen
         if !pending.isEmpty || pinnedOpen || doneOpen { density = .expanded; visible = true }
-        else if !doneItems.isEmpty { density = .compact; visible = true }
+        else if !doneItems.isEmpty { density = peeking ? .compact : .collapsed; visible = true }
         else { density = .collapsed; visible = false }
     }
+
+    /// Count shown on the collapsed notch while finished items wait (nil at 0, "9+" over 9).
+    public var badge: String? { PeekGate.badge(count: doneItems.count) }
+
+    /// The pointer entered or left the island: a peek holds while it is over, and restarts when it leaves.
+    public func setHover(_ inside: Bool) {
+        peek.setHover(inside, now: clock())
+        refresh()
+    }
+
+    /// Ends an expired peek. Called by the app's 0.5s sweep.
+    public func tick() { if peeking { refresh() } }
 
     /// Click on the notch. A waiting approval ignores it. A done chip opens its detail (click again to go back);
     /// otherwise it opens or closes the session peek.
@@ -183,6 +202,7 @@ public final class NotchModel: ObservableObject {
                 doneItems.removeAll { $0.sessionId == r.id }
                 doneItems.append(DoneItem(sessionId: r.id, project: r.project, branch: r.branch,
                                           files: r.filesEdited.count, added: r.added, removed: r.removed, reply: r.lastReply, prompt: r.lastPrompt, at: now, host: r.host))
+                peek.start(now: clock())
             }
         case "UserPromptSubmit", "SessionEnd", "PreToolUse", "PostToolUse":
             // Only the thread itself moving on (new prompt, tool use after a Stop, or ending) clears its chip; another thread's activity must not.

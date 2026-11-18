@@ -50,7 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 conn.respond(nil)
             }
         }
-        sweeper = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.model.sweep() }
+        sweeper = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.model.sweep(); self?.model.tick() }
         do { try server.start(); self.server = server }
         catch { NSLog("Chippy: socket start failed: \(error)") }
     }

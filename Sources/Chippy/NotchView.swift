@@ -31,6 +31,16 @@ extension View {
     func reveal(_ delay: Double) -> some View { modifier(Reveal(delay: delay)) }
 }
 
+/// Small count of finished items waiting, shown on the collapsed notch ("9+" caps it).
+struct CountBadge: View {
+    let text: String
+    var body: some View {
+        Text(text).font(.system(size: 10, weight: .bold, design: .rounded).monospacedDigit()).foregroundStyle(.black)
+            .padding(.horizontal, 5).frame(minWidth: 16, minHeight: 16)
+            .background(Capsule().fill(.white.opacity(0.92)))
+    }
+}
+
 struct NotchView: View {
     @ObservedObject var model: NotchModel
     @ObservedObject var box: MetricsBox
@@ -123,7 +133,31 @@ struct NotchView: View {
         let m = box.metrics
         switch model.density {
         case .collapsed:
-            Color.clear.frame(height: m.band) // the icon is drawn once, by NotchView.icon
+            // The icon is drawn once, by NotchView.icon. Finished items waiting show a small count.
+            if let badge = model.badge, m.isTab {
+                VStack(spacing: 0) {
+                    Color.clear.frame(height: m.band)
+                    HStack(spacing: 0) {
+                        Color.clear.frame(width: (box.metrics.width + 18 * 1.4) / 2 + 8) // past the centred icon
+                        CountBadge(text: badge)
+                        Spacer(minLength: 0)
+                    }.frame(height: NotchMetrics.tabHeight)
+                }
+                .frame(maxHeight: .infinity, alignment: .top)
+                .reveal(0.08)
+            } else if let badge = model.badge {
+                let wing = m.wing(for: .collapsed)
+                HStack(spacing: 0) {
+                    Color.clear.frame(width: wing)
+                    Color.clear.frame(width: m.width)
+                    CountBadge(text: badge).frame(width: wing)
+                }
+                .frame(height: m.band, alignment: .center)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .reveal(0.08)
+            } else {
+                Color.clear.frame(height: m.band)
+            }
         case .compact where m.isTab:
             // No room beside the camera: the glance lives in a tab under it (icon is drawn by NotchView.icon).
             VStack(spacing: 0) {

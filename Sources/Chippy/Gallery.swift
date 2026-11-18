@@ -59,6 +59,17 @@ enum Gallery {
                     }
                 }
             }
+            // After a peek ends with finished items waiting: the collapsed notch carries a count badge.
+            HStack(alignment: .top, spacing: 12) {
+                ForEach(devices.filter { $0.1.hasNotch }, id: \.0) { name, m in
+                    let model = NotchModel(state: .done, density: .collapsed)
+                    let _ = { for i in 0..<3 { model.apply(HookPayload(json: Data(#"{"session_id":"s\#(i)","hook_event_name":"Stop","cwd":"/x/chippy"}"#.utf8))!) }; model.density = .collapsed }()
+                    VStack(alignment: .leading, spacing: 4) {
+                        NotchView(model: model, box: box(m)).frame(width: m.size(for: .collapsed).width, height: m.size(for: .collapsed).height)
+                        Text("\(name) / Collapsed + badge (3)").font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+            }
         }.padding(16).background(Color(white: 0.25))
         let all = VStack(spacing: 0) { view; variants }
         let r = ImageRenderer(content: all)
@@ -113,10 +124,10 @@ enum Gallery {
     /// A mock menu bar with items touching both edges and the camera in red; wings (room) vs tab (no room), per density.
     @MainActor
     static func renderTab(to path: String) {
-        func row(_ title: String, _ left: CGFloat, _ right: CGFloat, _ d: Density) -> some View {
+        func row(_ title: String, _ left: CGFloat, _ right: CGFloat, _ d: Density, waiting n: Int = 1) -> some View {
             var m = NotchMetrics.sample14; m.leftGap = left; m.rightGap = right
             let model = NotchModel(state: .done, density: d)
-            let _ = { model.apply(HookPayload(json: Data(#"{"session_id":"s","hook_event_name":"Stop","cwd":"/demo/api-server","chippy_branch":"main"}"#.utf8))!); model.density = d }()
+            let _ = { for i in 0..<n { model.apply(HookPayload(json: Data(#"{"session_id":"s\#(i)","hook_event_name":"Stop","cwd":"/demo/api-server","chippy_branch":"main"}"#.utf8))!) }; model.density = d }()
             let w = NotchMetrics.sample14.size(for: .compact).width
             return VStack(alignment: .leading, spacing: 4) {
                 ZStack(alignment: .top) {
@@ -143,6 +154,14 @@ enum Gallery {
             HStack(spacing: 12) {
                 row("no room: tab / collapsed", 4, 4, .collapsed)
                 row("no room: tab / compact", 4, 4, .compact)
+            }
+            HStack(spacing: 12) { // after a peek ends: collapsed with the count of waiting items
+                row("wings / collapsed + badge (1)", .infinity, .infinity, .collapsed, waiting: 1)
+                row("wings / collapsed + badge (12 -> 9+)", .infinity, .infinity, .collapsed, waiting: 12)
+            }
+            HStack(spacing: 12) {
+                row("tab / collapsed + badge (3)", 4, 4, .collapsed, waiting: 3)
+                row("tab / collapsed + badge (12 -> 9+)", 4, 4, .collapsed, waiting: 12)
             }
         }.padding(16).background(Color(white: 0.25))
         let r = ImageRenderer(content: all)
