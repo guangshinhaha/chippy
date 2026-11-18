@@ -51,12 +51,9 @@ enum MenuBarProbe {
         return frames.isEmpty ? nil : frames
     }
 
-    static func gaps(notchWidth: CGFloat, notchHeight: CGFloat, displayID: CGDirectDisplayID, frontPID: pid_t?) -> (CGFloat, CGFloat) {
-        let screen = CGDisplayBounds(displayID) // this screen's own frame in CG space, wherever it sits
-        let notch = MenuBarGap.notchRect(screen: screen, width: notchWidth, height: notchHeight)
-        let app = frontPID.flatMap(appMenuFrames(pid:))
-        let g = MenuBarGap.wings(items: windowFrames(screenWidth: screen.width) + (app ?? []), notch: notch, screen: screen, leftMeasured: app != nil)
-        return (g.left, g.right)
+    /// Raw frames, off the main thread. `app` is nil when Accessibility is untrusted or the read came back empty.
+    static func read(frontPID: pid_t?, screenWidth: CGFloat) -> (windows: [CGRect], app: [CGRect]?, trusted: Bool) {
+        (windowFrames(screenWidth: screenWidth), frontPID.flatMap(appMenuFrames(pid:)), AXIsProcessTrusted())
     }
 }
 
@@ -73,12 +70,13 @@ final class NotchPanel: NSPanel {
     private let model: NotchModel
     let metrics = MetricsBox()
     private var bag = Set<AnyCancellable>()
-    /// `measured` is the latest stable reading; `gaps` is what the shape uses. They meet only when idle.
-    private var measured: (CGFloat, CGFloat) = (.infinity, .infinity)
+    /// `gate` decides when a reading becomes the gap the shape uses; `gaps` is that applied value.
+    private var gate = GapGate()
     private var gaps: (CGFloat, CGFloat) = (.infinity, .infinity)
     private var gapTimer: Timer?
-    private var debounce: DispatchWorkItem?
-    private var lastDensityChange = Date.distantPast
+    /// Last good read of the frontmost app's menus; an empty or stale read right after activation keeps it.
+    private var lastAppMenus: [CGRect]?
+    private var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
 
     init(model: NotchModel) {
         self.model = model
@@ -97,9 +95,10 @@ final class NotchPanel: NSPanel {
         startPointerTracking()
         model.$density.receive(on: RunLoop.main).sink { [weak self] d in
             guard let self else { return }
-            self.lastDensityChange = Date()
-            if d != .expanded { self.gaps = self.measured } // a new gap is applied as the density changes, not under an open card
+            // A stable pending gap rides along with this (already animating) density change, never under an open card.
+            if let g = self.gate.densityChanged(expanded: d == .expanded, now: self.now) { self.gaps = g }
             self.dock(d)
+            self.schedulePoll(after: 0.85)
         }.store(in: &bag)
         metrics.$contentHeight.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] _ in self?.dock(self?.model.density ?? .collapsed) }.store(in: &bag)
         model.$tall.dropFirst().receive(on: RunLoop.main).sink { [weak self] _ in self?.dock(self?.model.density ?? .collapsed) }.store(in: &bag)
@@ -109,9 +108,11 @@ final class NotchPanel: NSPanel {
         }.store(in: &bag)
         dock(model.density)
         let nc = NSWorkspace.shared.notificationCenter
-        for n in [NSWorkspace.didActivateApplicationNotification, NSWorkspace.activeSpaceDidChangeNotification] {
-            nc.publisher(for: n).receive(on: RunLoop.main).sink { [weak self] _ in self?.remeasure() }.store(in: &bag)
-        }
+        nc.publisher(for: NSWorkspace.activeSpaceDidChangeNotification).receive(on: RunLoop.main).sink { [weak self] _ in self?.remeasure() }.store(in: &bag)
+        nc.publisher(for: NSWorkspace.didActivateApplicationNotification).receive(on: RunLoop.main).sink { [weak self] _ in
+            self?.remeasure()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self?.remeasure() } // the new app's menus may not be readable yet
+        }.store(in: &bag)
         remeasure()
         if model.visible { startGapTimer() }
         NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
@@ -134,29 +135,35 @@ final class NotchPanel: NSPanel {
               let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID else { return }
         let m = NotchMetrics.detect(screen)
         let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let bounds = CGDisplayBounds(id) // this screen's own frame in CG space, wherever it sits
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let g = MenuBarProbe.gaps(notchWidth: m.width, notchHeight: m.height, displayID: id, frontPID: front)
-            DispatchQueue.main.async { self?.consider(g) }
+            let r = MenuBarProbe.read(frontPID: front, screenWidth: bounds.width)
+            DispatchQueue.main.async { self?.consider(r, bounds: bounds, metrics: m) }
         }
     }
 
-    private func consider(_ g: (CGFloat, CGFloat)) {
-        if MenuBarGap.same(g, measured) { debounce?.cancel(); debounce = nil; return }
-        debounce?.cancel()
-        let w = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            self.measured = g
-            self.applyIfIdle()
-        }
-        debounce = w
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: w)
+    private func consider(_ r: (windows: [CGRect], app: [CGRect]?, trusted: Bool), bounds: CGRect, metrics m: NotchMetrics) {
+        // An empty or failed AX read keeps the last good one; only losing trust drops it (then the left is capped).
+        if !r.trusted { lastAppMenus = nil } else if let a = r.app, !a.isEmpty { lastAppMenus = a }
+        let barHeight = max(m.height, 24) + 2
+        let items = MenuBarGap.plausible(r.windows + (lastAppMenus ?? []), screen: bounds, menuBarHeight: barHeight)
+        let notch = MenuBarGap.notchRect(screen: bounds, width: m.width, height: m.height)
+        let g = MenuBarGap.wings(items: items, notch: notch, screen: bounds, leftMeasured: lastAppMenus != nil)
+        if let a = gate.observe((g.left, g.right), now: now) { apply(a) }
+        if gate.hasPending { schedulePoll(after: 0.45) }
     }
 
-    /// Never under an open card or mid-spring; otherwise a later density change picks the new gap up.
-    private func applyIfIdle() {
-        guard model.density != .expanded, Date().timeIntervalSince(lastDensityChange) > 0.8,
-              !MenuBarGap.same(gaps, measured) else { return }
-        gaps = measured
+    /// Re-evaluate a pending gap once the stability / settle windows have passed (it stays pending until then).
+    private func schedulePoll(after delay: TimeInterval) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, let a = self.gate.poll(now: self.now) else { return }
+            self.apply(a)
+        }
+    }
+
+    /// The shape and icon already spring on the metrics change (NotchView animates `size`), so this needs no extra animation.
+    private func apply(_ g: (CGFloat, CGFloat)) {
+        gaps = g
         dock(model.density)
     }
 

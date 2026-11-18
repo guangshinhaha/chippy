@@ -87,6 +87,7 @@ struct NotchView: View {
             .offset(x: open ? 16 : 10, y: open ? m.height + 2 : (m.band - small) / 2)
             .frame(width: size.width, height: size.height, alignment: .topLeading)
             .opacity(open || m.pillShowsIcon ? 1 : 0)
+            .animation(motion, value: m.pillShowsIcon) // the same spring as the shape; linear 0.01s under reduced motion
             .allowsHitTesting(false)
     }
 

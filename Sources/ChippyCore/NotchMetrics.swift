@@ -14,13 +14,13 @@ public struct NotchMetrics: Equatable {
 
     /// The pill is symmetric about the camera, so the narrower side sets both wings.
     private var gap: CGFloat { hasNotch ? min(leftGap, rightGap) : .infinity }
-    /// False when the gap is too small for glance content; compact then shows the collapsed pill.
     /// Narrowest wing that still holds the chipmunk (10pt inset + icon).
     public static let minIconWing: CGFloat = 36
     /// The collapsed pill's wing: its usual 48pt, clamped to the gap so it never covers an item.
     private var collapsedWing: CGFloat { min(48, max(gap, 0)) }
     /// False when the gap is smaller than the icon needs; the pill stays inside the gap but draws no icon.
     public var pillShowsIcon: Bool { collapsedWing >= Self.minIconWing }
+    /// False when the gap is under `MenuBarGap.minUsable` (60pt): compact then shows the collapsed pill instead.
     public var compactFits: Bool { gap >= MenuBarGap.minUsable }
 
     public static let none = NotchMetrics(width: 0, height: 24)
