@@ -102,6 +102,13 @@ public final class RepoIdentityCache {
 
     public var count: Int { lock.lock(); defer { lock.unlock() }; return labels.count }
 
+    /// True once a git read has answered for this cwd (an empty cwd never changes, so it counts as final).
+    public func isResolved(cwd: String) -> Bool {
+        if cwd.isEmpty { return true }
+        lock.lock(); defer { lock.unlock() }
+        return labels[cwd] != nil
+    }
+
     public func label(cwd: String, project: String = "") -> RepoLabel {
         let fb = RepoResolver.fallback(cwd: cwd, project: project)
         guard !cwd.isEmpty else { return fb }

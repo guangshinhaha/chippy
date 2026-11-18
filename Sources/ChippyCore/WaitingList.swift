@@ -21,13 +21,15 @@ public struct WaitingItem: Identifiable, Equatable {
     public let label: String
     /// Finished thread whose reply ends in a question (#98a): a tag only, it never joins NEEDS YOU.
     public let asksYou: Bool
+    /// False while `repo` is still a folder-name fallback (#89): its identity mark must not be stored yet.
+    public let resolved: Bool
     public var id: WaitingTarget { target }
 
     /// Needs you: something the user can act on. Finished rows are FYI.
     public var needsYou: Bool { kind != .done }
 
-    public init(target: WaitingTarget, kind: Kind, repo: String, worktree: String? = nil, at: Date, label: String? = nil, asksYou: Bool = false) {
-        self.target = target; self.kind = kind; self.repo = repo; self.worktree = worktree; self.at = at; self.asksYou = asksYou
+    public init(target: WaitingTarget, kind: Kind, repo: String, worktree: String? = nil, at: Date, label: String? = nil, asksYou: Bool = false, resolved: Bool = true) {
+        self.target = target; self.kind = kind; self.repo = repo; self.worktree = worktree; self.at = at; self.asksYou = asksYou; self.resolved = resolved
         self.label = label ?? WaitingList.defaultLabel(kind)
     }
 }
@@ -76,23 +78,24 @@ public enum WaitingList {
     /// `label` maps (cwd, project) to the row's repo + worktree (#101); the default is the project name alone.
     public static func items(pending: [PendingRequest], done: [DoneItem], terminal: [TerminalItem] = [],
                              timeout: (PendingRequest) -> TimeInterval,
-                             label: (_ cwd: String, _ project: String) -> RepoLabel = { RepoLabel(repo: $1.isEmpty ? "unknown" : $1) }) -> [WaitingItem] {
+                             label: (_ cwd: String, _ project: String) -> RepoLabel = { RepoLabel(repo: $1.isEmpty ? "unknown" : $1) },
+                             resolved: (_ cwd: String) -> Bool = { _ in true }) -> [WaitingItem] {
         // Keys computed once per request (arrival index last, so ties stay stable).
         let keyed = pending.enumerated().map { i, r in (r: r, kind: r.questions != nil ? 1 : 0, due: r.createdAt.addingTimeInterval(timeout(r)), i: i) }
         let blocking = keyed.sorted { ($0.kind, $0.due, $0.i) < ($1.kind, $1.due, $1.i) }.map { $0.r }.map { r -> WaitingItem in
             let l = label(r.cwd, r.project)
             return WaitingItem(target: .pending(r.id), kind: r.questions != nil ? .question : .approval,
-                               repo: l.repo, worktree: l.worktree, at: r.createdAt, label: actionLabel(r))
+                               repo: l.repo, worktree: l.worktree, at: r.createdAt, label: actionLabel(r), resolved: resolved(r.cwd))
         }
         // A request that fell back to the terminal is still waiting on you: it sorts with the blocking ones, after the live cards.
         let inTerminal = terminal.enumerated().sorted { ($0.element.at, $0.offset) < ($1.element.at, $1.offset) }.map { _, t -> WaitingItem in
             let l = label(t.cwd, t.project)
-            return WaitingItem(target: .terminal(t.sessionId), kind: .terminal, repo: l.repo, worktree: l.worktree, at: t.at)
+            return WaitingItem(target: .terminal(t.sessionId), kind: .terminal, repo: l.repo, worktree: l.worktree, at: t.at, resolved: resolved(t.cwd))
         }
         let finished = done.enumerated().sorted { ($0.element.at, $0.offset) > ($1.element.at, $1.offset) }.map { _, d -> WaitingItem in
             let l = label(d.cwd, d.project)
             return WaitingItem(target: .done(d.sessionId), kind: .done, repo: l.repo, worktree: l.worktree, at: d.at,
-                               label: d.asksYou ? "Asks you" : "Finished", asksYou: d.asksYou)
+                               label: d.asksYou ? "Asks you" : "Finished", asksYou: d.asksYou, resolved: resolved(d.cwd))
         }
         return blocking + inTerminal + finished
     }
