@@ -1,6 +1,6 @@
 import Foundation
 
-/// Approvals and questions open the notch with no click (#86), then fold after `duration` seconds into a pulsing
+/// One instance per request (the model keeps a dictionary). Approvals and questions open the notch with no click (#86), then fold after `duration` seconds into a pulsing
 /// "needs you" badge. The request stays pending; only the card goes away. The timer is a `PeekGate` (hover pauses
 /// it, a new request restarts it, a hover that is already resting on the island starts it paused). A card the user
 /// opened themselves is pinned and never folds. Pure; the clock is injected like `PeekGate`'s.
@@ -23,6 +23,13 @@ public struct NeedsMeFold: Equatable {
 
     /// The user opened the card (click, list jump, key): it stays until nothing is pending.
     public mutating func pin() { pinned = true; armed = false; gate.cancel() }
+
+    /// A selection pin was undone (the user cleared their answer): the card was never opened by hand, so it gets a full timer again.
+    public mutating func unpin(now: TimeInterval, hovering: Bool) {
+        guard pinned else { return }
+        pinned = false; armed = true
+        gate.start(now: now, hovering: hovering)
+    }
 
     public mutating func setHover(_ inside: Bool, now: TimeInterval) { gate.setHover(inside, now: now) }
 

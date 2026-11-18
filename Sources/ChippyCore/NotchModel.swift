@@ -63,7 +63,12 @@ public final class NotchModel: ObservableObject {
     private var peek = PeekGate()
     /// Approvals and questions fold into the needs-you badge after 15s (#86); they stay pending and answerable.
     @Published public private(set) var folded = false
-    private var fold = NeedsMeFold()
+    /// One timer per request, so a later request never restarts an earlier one's fold (the oldest decides).
+    private var folds: [String: NeedsMeFold] = [:]
+    /// Requests the user opened by hand (click, list jump, key, a panel already open on arrival) never fold.
+    private var userOpened = Set<String>()
+    /// Requests pinned only because the user picked an answer; clearing the picks undoes it.
+    private var answerPinned = Set<String>()
     /// Last pointer state from the panel, kept even while expanded so a new peek can start from it.
     private var hovering = false
     private let clock: () -> TimeInterval
@@ -101,9 +106,12 @@ public final class NotchModel: ObservableObject {
         let pendingIds = Set(pending.map(\.id))
         if partials.keys.contains(where: { !pendingIds.contains($0) }) { partials = partials.filter { pendingIds.contains($0.key) } }
         if doneItems.isEmpty { peek.cancel() }
-        if pending.isEmpty { fold.reset(); if folded { folded = false } }
-        else if case .pending? = focus { pinFold() } // a card the user jumped to never folds
-        else if !folded, fold.isDue(now: clock()) { folded = true }
+        if folds.keys.contains(where: { !pendingIds.contains($0) }) {
+            folds = folds.filter { pendingIds.contains($0.key) }
+            userOpened.formIntersection(pendingIds); answerPinned.formIntersection(pendingIds)
+        }
+        if pending.isEmpty { if folded { folded = false } }
+        else if !folded, foldDue(now: clock()) { folded = true }
         if doneItems.isEmpty && terminalItems.isEmpty { doneOpen = false }
         if !pending.isEmpty { restOpen = false } // an approval or question takes over; a passive chip just joins the open panel
         if !pending.isEmpty || doneOpen || listOpen || restOpen { peek.cancel() } // the user (or an approval) took over: no peek to resume on close
@@ -152,6 +160,7 @@ public final class NotchModel: ObservableObject {
     public func closeList() {
         guard listOpen else { return }
         listOpen = false
+        if case .pending? = focus { focus = nil } // a stale jump target must not outlive the list
         refresh()
     }
 
@@ -172,7 +181,7 @@ public final class NotchModel: ObservableObject {
         guard waitingItems.contains(where: { $0.target == target }) else { return }
         listOpen = false; restOpen = false
         focus = target
-        if case .pending = target { pinFold() }
+        if case .pending(let id) = target { open(ids: [id]) }
         switch target {
         case .done: doneOpen = true
         case .terminal: focus = nil; doneOpen = true // the shared card view lists every terminal chip
@@ -182,12 +191,17 @@ public final class NotchModel: ObservableObject {
     }
 
     /// Remember how far a multi-question card got.
-    public func savePartial(_ id: String, step: Int, answers: [String: Set<String>]) {
+    /// `byUser` is false for the card's own re-seed or disappear saves, which must never pin it (a fold is a disappear).
+    public func savePartial(_ id: String, step: Int, answers: [String: Set<String>], byUser: Bool = true) {
         guard pending.contains(where: { $0.id == id }) else { return }
         let new = PartialAnswers(step: step, answers: answers)
-        // Answering has begun: the card must not fold under the user's hand. Only a real change counts, because the card
-        // also saves on disappear (which is what a fold does) and that must not undo the fold.
-        if partials[id] != new, new != PartialAnswers() { pinFold() }
+        if byUser, partials[id] != new {
+            if answers.values.contains(where: { !$0.isEmpty }) { // answering has begun: the card must not fold under the user's hand
+                answerPinned.insert(id); folds[id]?.pin()
+            } else if answerPinned.remove(id) != nil, !userOpened.contains(id) { // cleared back to nothing: not opened by hand
+                folds[id]?.unpin(now: clock(), hovering: hovering)
+            }
+        }
         if partials[id] != new { partials[id] = new } // an unchanged write would still notify observers
 
     }
@@ -205,17 +219,25 @@ public final class NotchModel: ObservableObject {
             .min { $0.1 < $1.1 }.map { (start: $0.0, end: $0.1) }
     }
 
-    /// The user opened the card (or answered part of it): it stays open. Opens a folded card.
-    private func pinFold() {
-        guard !pending.isEmpty else { return }
-        fold.pin()
+    /// Pin these requests as opened by hand, and show the card if the notch was folded.
+    private func open(ids: [String]) {
+        for id in ids where pending.contains(where: { $0.id == id }) { userOpened.insert(id); folds[id]?.pin() }
         if folded { folded = false }
     }
+
+    /// The oldest request decides: it is due and the user has pinned none (a pinned card on screen is never folded away).
+    private func foldDue(now: TimeInterval) -> Bool {
+        guard let oldest = pending.first, !folds.values.contains(where: \.isPinned) else { return false }
+        return folds[oldest.id]?.isDue(now: now) ?? false
+    }
+
+    /// Hook-side wait for this request, so a card can show when the terminal takes over.
+    public func timeout(for r: PendingRequest) -> TimeInterval { r.questions != nil ? questionTimeout : approvalTimeout }
 
     /// Show the folded card (click on the notch, or a ⌃⌥ key). It never answers by itself, and it never refolds.
     public func unfold() {
         guard folded else { return }
-        pinFold()
+        open(ids: pending.map(\.id))
         refresh()
     }
 
@@ -224,7 +246,8 @@ public final class NotchModel: ObservableObject {
     /// Hover never wakes the sleeping mascot (only a click or a hook event does), or the sleeping pose could not be seen.
     public func setHover(_ inside: Bool, now: Date = Date()) {
         hovering = inside
-        fold.setHover(inside, now: clock()) // the fold timer holds while the pointer is over the island, expanded or not
+        for id in Array(folds.keys) { folds[id]?.setHover(inside, now: clock()) } // the timers hold while the pointer is over the island, expanded or not
+        if !pending.isEmpty { refresh() } // a fold that came due (or resumed) lands now, not at the next sweep
         guard density != .expanded else { return }
         peek.setHover(inside, now: clock())
     }
@@ -338,8 +361,15 @@ public final class NotchModel: ObservableObject {
             return
         }
         // A panel the user opened by click (rest panel, list, done detail) is theirs: the approval joins it and never folds.
-        fold.arrive(now: clock(), hovering: hovering, engaged: restOpen || listOpen || doneOpen)
-        if folded { folded = false }
+        let engaged = restOpen || listOpen || doneOpen
+        if folded { // a new request auto-expands; the earlier ones, shown again with it, get a fresh timer
+            folded = false
+            for id in Array(folds.keys) { folds[id]?.arrive(now: clock(), hovering: hovering, engaged: false) }
+        }
+        var f = NeedsMeFold()
+        f.arrive(now: clock(), hovering: hovering, engaged: engaged)
+        folds[req.id] = f
+        if engaged { userOpened.insert(req.id) }
         pending.append(req)
         connections[req.id] = conn
         if case .done? = focus { focus = nil; doneOpen = false } // a new blocking request takes over from a done detail
@@ -422,8 +452,9 @@ public final class NotchModel: ObservableObject {
     public func sweep(now: Date = Date()) {
         defer { updateSleep(now: now) } // after expiry + refresh, so it sees the settled state
         if peeking, !peek.isPeeking(now: clock()) { refresh() } // an expired peek settles to collapsed
-        if !folded, !pending.isEmpty, fold.isDue(now: clock()) { refresh() } // an expired needs-me timer folds the card
-        let gone = pending.filter { connections[$0.id]?.peerGone ?? true }
+        if !folded, !pending.isEmpty, foldDue(now: clock()) { refresh() } // an expired needs-me timer folds the card
+        // Gone: the hook hung up, or its wait is over (hover only holds the fold, never the hook's deadline).
+        let gone = pending.filter { r in (connections[r.id]?.peerGone ?? true) || now >= r.createdAt.addingTimeInterval(timeout(for: r)) }
         let expired = doneItems.contains { now.timeIntervalSince($0.at) > Self.doneSeconds }
             || terminalItems.contains { now.timeIntervalSince($0.at) > Self.doneSeconds }
         var r = recent

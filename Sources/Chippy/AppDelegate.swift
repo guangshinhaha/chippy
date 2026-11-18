@@ -76,8 +76,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func syncShortcuts() {
-        // Folded (#86): the card is not on screen, so a key only opens it; the answer needs a second press on the visible card.
-        if model.folded { shortcutCard = nil; hotKeys.register(ShortcutKeys.approval); return }
         guard let req = model.shownPending else { shortcutCard = nil; hotKeys.unregister(); return }
         let seed = min(model.partials[req.id]?.step ?? 0, max((req.questions?.count ?? 1) - 1, 0)) // re-seeded on every sync, step 0 included; never past the last question
         if shortcutCard?.id == req.id { // same card: keep keys and its shownAt
@@ -100,7 +98,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func handleShortcut(_ action: ShortcutAction) {
-        if model.folded { model.unfold(); return } // never answers a card the user cannot see
         // Only the card on screen, only once it has been visible long enough.
         guard let req = model.shownPending, let card = shortcutCard, card.id == req.id,
               ShortcutGate.allows(shownAt: card.shownAt) else { return }

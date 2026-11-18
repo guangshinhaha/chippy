@@ -213,4 +213,88 @@ final class NeedsMeFoldTests: XCTestCase {
         XCTAssertFalse(m.pending.contains { $0.id == id })
         XCTAssertEqual(m.terminalItems.count, 1); XCTAssertFalse(m.folded)
     }
+
+    // MARK: review follow-ups
+
+    func testLeavingTheIslandFoldsAtOnceWithoutWaitingForASweep() {
+        let m = model()
+        ask(m)
+        advance(m, 10); m.setHover(true)
+        clockNow += 100
+        m.setHover(false)                                    // 5s left: not due yet
+        XCTAssertFalse(m.folded)
+        clockNow += 5.1
+        m.setHover(true); m.setHover(false)                  // no sweep ran; a hover change re-evaluates
+        XCTAssertTrue(m.folded)
+    }
+
+    func testHoverNeverHoldsAHookDeadlineOpen() {
+        let m = model()
+        let id = ask(m)
+        m.setHover(true)
+        advance(m, 100); XCTAssertFalse(m.folded)            // held by the cursor
+        m.sweep(now: Date().addingTimeInterval(21))          // the hook's 20s wait is over
+        XCTAssertFalse(m.pending.contains { $0.id == id })   // dropped by the sweep path, no longer answerable
+        XCTAssertEqual(m.terminalItems.count, 1)
+    }
+
+    func testTimeoutForRequestMirrorsHookWait() {
+        let m = model(); ask(m)
+        XCTAssertEqual(m.timeout(for: m.pending[0]), TimeInterval(SettingsInstaller.defaultApprovalTimeout))
+    }
+
+    func testOldestRequestDecidesTheFold() {
+        let m = model()
+        ask(m)
+        advance(m, 10)
+        ask(m, "pwd")                                        // must not restart the first one's timer
+        advance(m, 4.9); XCTAssertFalse(m.folded)
+        advance(m, 0.2); XCTAssertTrue(m.folded)             // 15s after the FIRST, not the second
+    }
+
+    func testPickingAnAnswerPinsAndClearingItUnpins() {
+        let m = model()
+        let id = ask(m)
+        m.savePartial(id, step: 0, answers: ["Q?": ["x"]])
+        advance(m, 600); XCTAssertFalse(m.folded)            // picked: held open
+        m.savePartial(id, step: 0, answers: ["Q?": []])      // cleared back to nothing
+        advance(m, 14.9); XCTAssertFalse(m.folded)           // a full timer again
+        advance(m, 0.2); XCTAssertTrue(m.folded)
+    }
+
+    func testClearingAfterOpeningByHandStaysPinned() {
+        let m = model()
+        let id = ask(m)
+        m.openList(); m.activate(.pending(id))
+        m.savePartial(id, step: 0, answers: ["Q?": ["x"]])
+        m.savePartial(id, step: 0, answers: ["Q?": []])
+        advance(m, 600); XCTAssertFalse(m.folded)
+    }
+
+    func testReseedAndDisappearSavesNeverPin() {
+        let m = model()
+        let id = ask(m)
+        m.savePartial(id, step: 0, answers: ["Q?": ["x"]], byUser: false)
+        advance(m, 15.1)
+        XCTAssertTrue(m.folded)                               // the card's own save is not a user action
+    }
+
+    func testResolvedJumpTargetDoesNotPinLaterRequests() {
+        let m = model()
+        let a = ask(m)
+        m.openList(); m.activate(.pending(a))
+        m.resolve(a, .allow)
+        XCTAssertNil(m.focus)
+        ask(m, "pwd")
+        advance(m, 15.1)
+        XCTAssertTrue(m.folded)
+    }
+
+    func testClosingTheListClearsAPendingJumpTarget() {
+        let m = model()
+        let a = ask(m)
+        m.activate(.pending(a))
+        m.openList(); m.closeList()
+        XCTAssertNil(m.focus)
+    }
 }

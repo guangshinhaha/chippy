@@ -32,43 +32,77 @@ extension View {
     func reveal(_ delay: Double) -> some View { modifier(Reveal(delay: delay)) }
 }
 
-/// Small count of finished items waiting, shown on the collapsed notch ("9+" caps it).
+/// Dates for a countdown: every `step` seconds until `end`, then one last at `end`, so the view stops ticking once
+/// the deadline has passed. Without an `end` it is a single entry.
+struct CountdownSchedule: TimelineSchedule {
+    let end: Date?
+    let step: TimeInterval
+    func entries(from start: Date, mode: Mode) -> [Date] {
+        guard let end, end > start else { return [start] }
+        var out = [start]
+        var t = start.addingTimeInterval(step)
+        while t < end, out.count < 200 { out.append(t); t = t.addingTimeInterval(step) }
+        out.append(end)
+        return out
+    }
+}
+
+/// "times out in Ns" under the card title (#86): a card that is still open (a hovered one included) never hides
+/// that the hook will give up and the terminal take over.
+struct TimeoutNote: View {
+    let createdAt: Date
+    let timeout: TimeInterval
+    var body: some View {
+        TimelineView(CountdownSchedule(end: createdAt.addingTimeInterval(timeout), step: 1)) { ctx in
+            let left = Int(NeedsMeFold.timeLeft(createdAt: createdAt, timeout: timeout, now: ctx.date).rounded(.up))
+            if left > 0 {
+                Text("times out in \(left)s").font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.55))
+                    .accessibilityLabel("Times out to the terminal in \(left) seconds")
+            }
+        }
+    }
+}
+
+/// Small count of waiting items on the collapsed notch ("9+" caps it). Folded approvals or questions (#86) make it
+/// the needs-you badge: orange, a gentle pulse (none under Reduce Motion), and a ring draining to the moment the hook
+/// gives up and the terminal takes over.
 struct CountBadge: View {
     let text: String
     /// Never wider than this (the wing it sits in): the text shrinks to fit.
     let maxWidth: CGFloat
     /// Tap opens the waiting list (#53). The hit area is larger than the 16pt capsule.
     var onTap: () -> Void = {}
-    /// Folded approvals or questions (#86): needs-you colour, a gentle pulse (none under Reduce Motion), and a ring that
-    /// drains to the moment the hook gives up and the terminal takes over, so the badge never hides that it will time out.
     var needsYou = false
     var deadline: (start: Date, end: Date)? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pulse = false
 
-    private var ring: some View {
-        TimelineView(.periodic(from: .now, by: 0.5)) { ctx in
-            let f = deadline.map { max(0, min(1, $0.end.timeIntervalSince(ctx.date) / max($0.end.timeIntervalSince($0.start), 1))) } ?? 1
-            Capsule().trim(from: 0, to: f).stroke(.white.opacity(0.9), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
-        }
-    }
-
-    private var label: String {
-        guard needsYou else { return "\(text) finished waiting" }
-        let left = deadline.map { max(0, Int($0.end.timeIntervalSinceNow.rounded(.up))) }
-        return "\(text) waiting, needs you" + (left.map { ", times out to the terminal in \($0) seconds" } ?? "")
-    }
-
     var body: some View {
-        Text(text).font(.system(size: 10, weight: .bold, design: .rounded).monospacedDigit()).foregroundStyle(needsYou ? .white : .black)
+        // Ring and VoiceOver label are both computed from this tick's date, so they never disagree or go stale.
+        TimelineView(CountdownSchedule(end: needsYou ? deadline?.end : nil, step: reduceMotion ? 1 : 0.5)) { ctx in
+            badge(now: ctx.date)
+        }
+        .onAppear { updatePulse() }
+        .onChange(of: needsYou) { _ in updatePulse() }
+        .onChange(of: reduceMotion) { _ in updatePulse() }
+    }
+
+    private func badge(now: Date) -> some View {
+        let left = deadline.map { NeedsMeFold.timeLeft(createdAt: $0.start, timeout: $0.end.timeIntervalSince($0.start), now: now) }
+        let fraction = deadline.map { NeedsMeFold.fractionLeft(createdAt: $0.start, timeout: $0.end.timeIntervalSince($0.start), now: now) } ?? 1
+        let label = needsYou
+            ? "\(text) waiting, needs you" + (left.map { ", times out to the terminal in \(Int($0.rounded(.up))) seconds" } ?? "")
+            : "\(text) finished waiting"
+        let pulsing = needsYou && pulse && !reduceMotion
+        return Text(text).font(.system(size: 10, weight: .bold, design: .rounded).monospacedDigit()).foregroundStyle(needsYou ? .white : .black)
             .lineLimit(1).minimumScaleFactor(0.6)
             .padding(.horizontal, 4).frame(minWidth: 16, maxWidth: max(maxWidth, 16), minHeight: 16)
             .background(Capsule().fill(needsYou ? Color.orange : .white.opacity(0.92)))
-            .overlay { if needsYou { ring.padding(-2.5) } }
-            .scaleEffect(needsYou && pulse && !reduceMotion ? 1.12 : 1)
-            .opacity(needsYou && pulse && !reduceMotion ? 0.85 : 1)
-            .onAppear { startPulse() }
-            .onChange(of: needsYou) { _ in startPulse() }
+            .overlay {
+                if needsYou { Capsule().trim(from: 0, to: fraction).stroke(.white.opacity(0.9), style: StrokeStyle(lineWidth: 1.5, lineCap: .round)).padding(-2.5) }
+            }
+            .scaleEffect(pulsing ? 1.12 : 1)
+            .opacity(pulsing ? 0.85 : 1)
             .reveal(0.08)
             // A real, larger tap target (24pt), never wider than the wing / tab the badge lives in.
             .frame(minWidth: min(24, max(maxWidth, 16)), maxWidth: max(maxWidth, 16), minHeight: 24)
@@ -80,9 +114,14 @@ struct CountBadge: View {
             .accessibilityAddTraits(.isButton)
     }
 
-    private func startPulse() {
-        guard needsYou, !reduceMotion else { pulse = false; return }
-        withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { pulse = true }
+    /// Start the pulse, or end it for good: a repeating animation only stops when the value is set again under a
+    /// transaction that carries a different animation.
+    private func updatePulse() {
+        if needsYou && !reduceMotion {
+            withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { pulse = true }
+        } else {
+            withTransaction(Transaction(animation: .linear(duration: 0.01))) { pulse = false }
+        }
     }
 }
 
@@ -277,7 +316,10 @@ struct NotchView: View {
                 Spacer().frame(height: box.metrics.height + 2)
                 HStack(spacing: 10) {
                     Color.clear.frame(width: 28 * 1.4, height: 28 * 1.4) // where NotchView.icon sits
-                    Text(headerTitle).font(.headline.monospacedDigit()).foregroundStyle(.white)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(headerTitle).font(.headline.monospacedDigit()).foregroundStyle(.white)
+                        if !model.listOpen, let r = model.shownPending { TimeoutNote(createdAt: r.createdAt, timeout: model.timeout(for: r)) }
+                    }
                     Spacer(minLength: 0)
                     if model.waitingItems.count > 1 && !model.listOpen {
                         ChipButton(title: "All \(model.waitingItems.count)", kind: .neutral) { model.openList() }
@@ -297,7 +339,7 @@ struct NotchView: View {
                 } else if let req = model.shownPending {
                     if req.questions != nil {
                         QuestionCard(req: req, initial: model.partials[req.id] ?? PartialAnswers(),
-                                     progress: { model.savePartial(req.id, step: $0, answers: $1) },
+                                     progress: { model.savePartial(req.id, step: $0, answers: $1, byUser: $2) },
                                      send: { model.answer(req.id, selections: $0) }, handBack: { model.handBack(req.id) }).id(req.id).reveal(0.12)
                     } else {
                         ApprovalCard(req: req) { model.resolve(req.id, $0) }.reveal(0.12)
@@ -447,7 +489,7 @@ private struct QuestionBodyHeight: PreferenceKey {
 struct QuestionCard: View {
     let req: PendingRequest
     /// Progress kept by the model, so leaving this card (to the list) and coming back resumes it.
-    let progress: (Int, [String: Set<String>]) -> Void
+    let progress: (Int, [String: Set<String>], Bool) -> Void // the Bool: a real user change (false: re-seed or disappear)
     /// The card stays up only for `.refused`.
     let send: ([String: Set<String>]) -> NotchModel.Answered
     let handBack: () -> Void
@@ -461,7 +503,7 @@ struct QuestionCard: View {
     @State private var bodyHeight: CGFloat = 0
     private static let maxBodyHeight: CGFloat = 330
 
-    init(req: PendingRequest, initial: PartialAnswers = PartialAnswers(), progress: @escaping (Int, [String: Set<String>]) -> Void = { _, _ in },
+    init(req: PendingRequest, initial: PartialAnswers = PartialAnswers(), progress: @escaping (Int, [String: Set<String>], Bool) -> Void = { _, _, _ in },
          send: @escaping ([String: Set<String>]) -> NotchModel.Answered, handBack: @escaping () -> Void) {
         self.req = req; self.progress = progress; self.send = send; self.handBack = handBack
         _step = State(initialValue: min(initial.step, max((req.questions?.count ?? 1) - 1, 0)))
@@ -539,9 +581,9 @@ struct QuestionCard: View {
             ChipButton(title: "Answer in terminal", kind: .quiet) { if !sent { sent = true; handBack() } }
             TourCaption(sessionId: req.sessionId, step: .question)
         }
-        .onChange(of: step) { leadExpanded = false; lastToggle = nil; ShortcutBus.steps.send((req.id, $0)); progress($0, answers) }
-        .onChange(of: answers) { progress(step, $0) } // every selection, multi-select toggles included, is saved at once
-        .onDisappear { if !sent { progress(step, answers) } } // leaving the card keeps what was answered
+        .onChange(of: step) { leadExpanded = false; lastToggle = nil; ShortcutBus.steps.send((req.id, $0)); progress($0, answers, true) }
+        .onChange(of: answers) { progress(step, $0, true) } // every selection, multi-select toggles included, is saved at once
+        .onDisappear { if !sent { progress(step, answers, false) } } // leaving the card keeps what was answered
         .onAppear { if step > 0 { ShortcutBus.steps.send((req.id, step)) } }
         .onReceive(ShortcutBus.events) { e in
             // Keys take the same path as a tap, for this card only.
