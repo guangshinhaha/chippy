@@ -520,6 +520,12 @@ public struct DoneItem: Identifiable, Equatable {
     /// Claude ended on a question: the thread is waiting for you, not just done.
     public var asksYou: Bool { reply?.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("?") ?? false }
 
+    /// The prompt with system-notification markup stripped; nil when nothing readable remains (#98a).
+    public var cleanPrompt: String? { SummaryCleaner.cleanPrompt(prompt) }
+
+    /// The closing question Claude is waiting on, as its own line (#98a). nil when the reply does not end on one.
+    public var decision: String? { SummaryCleaner.closingDecision(reply) }
+
     /// First non-empty line of the reply, for the one-line glance.
     public var headline: String {
         let line = reply?.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
