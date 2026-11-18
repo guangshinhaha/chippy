@@ -4,7 +4,11 @@ import Foundation
 public enum SettingsInstaller {
     /// Events relayed to the notch. PermissionRequest runs before the permission prompt and may answer it.
     public static let hookEvents = ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "SessionEnd", "PermissionRequest"]
-    public static let defaultApprovalTimeout = 20
+    public static let defaultApprovalTimeout = 60
+
+    /// The default before #99. An exact `--timeout 20` is treated as that old default, with or without `--question-timeout`
+    /// (the previous release wrote `--timeout 20 --question-timeout 120`); any other value is the user's own and kept.
+    public static let legacyApprovalTimeout = 20
 
     /// Claude's questions (AskUserQuestion) get longer than approvals: a person has to read the options.
     public static let defaultQuestionTimeout = 120
@@ -28,6 +32,56 @@ public enum SettingsInstaller {
         return Int(parts[i + 1])
     }
 
+    /// Why a chippy hook in `settings` is stale, empty when it is fine or absent.
+    public enum Staleness: Equatable { case missingQuestionFlag, legacyApprovalTimeout, timeoutTooShort, missingPermissionRequest }
+
+    public static func staleness(_ settings: [String: Any]) -> [Staleness] {
+        let hooks = settings["hooks"] as? [String: Any] ?? [:]
+        func chippyHooks(_ ev: String) -> [[String: Any]] {
+            var out: [[String: Any]] = []
+            for entry in hooks[ev] as? [Any] ?? [] {
+                for h in (entry as? [String: Any])?["hooks"] as? [Any] ?? [] {
+                    if let hook = h as? [String: Any], let cmd = hook["command"] as? String, cmd.contains("chippy-hook") { out.append(hook) }
+                }
+            }
+            return out
+        }
+        let mine = chippyHooks("PermissionRequest")
+        var out: [Staleness] = []
+        if mine.isEmpty {
+            // chippy-hook is installed for other events but its approval relay is gone.
+            if hooks.keys.contains(where: { $0 != "PermissionRequest" && !chippyHooks($0).isEmpty }) { out.append(.missingPermissionRequest) }
+            return out
+        }
+        for hook in mine {
+            let cmd = hook["command"] as? String ?? ""
+            let qRaw = flagValue("--question-timeout", in: cmd)
+            let aRaw = flagValue("--timeout", in: cmd)
+            // No --timeout means the relay uses its current default, not the legacy one.
+            // Compare what the relay will actually wait: it clamps both values.
+            let a = min(max(aRaw ?? defaultApprovalTimeout, 1), maxApprovalTimeout)
+            let q = qRaw.map { min(max($0, 1), maxQuestionTimeout) }
+            if qRaw == nil, !out.contains(.missingQuestionFlag) { out.append(.missingQuestionFlag) }
+            if aRaw == legacyApprovalTimeout, !out.contains(.legacyApprovalTimeout) { out.append(.legacyApprovalTimeout) }
+            let need = hookTimeout(approvalTimeout: a, questionTimeout: q ?? 0)
+            // NSNumber so 130.0 (a JSON double) counts as an int.
+            let have = (hook["timeout"] as? NSNumber)?.intValue ?? 0
+            if have < need, !out.contains(.timeoutTooShort) { out.append(.timeoutTooShort) }
+        }
+        return out
+    }
+
+    /// True when `path` will not exist later: a translocated or temp-dir copy. build/ is fine.
+    public static func isTransientPath(_ path: String, tempDir: String = NSTemporaryDirectory()) -> Bool {
+        let p = (path as NSString).standardizingPath
+        let t = (tempDir as NSString).standardizingPath
+        if p.contains("/AppTranslocation/") { return true }
+        for root in [t, "/tmp", "/private/tmp", "/var/folders", "/private/var/folders"] where !root.isEmpty && root != "/" {
+            if p == root || p.hasPrefix(root + "/") { return true }
+        }
+        return false
+    }
+
     public static func merged(_ settings: [String: Any], binary: String, events: [String] = hookEvents,
                               approvalTimeout: Int = defaultApprovalTimeout,
                               questionTimeout: Int = defaultQuestionTimeout) -> [String: Any] {
@@ -48,8 +102,11 @@ public enum SettingsInstaller {
                             guard var hook = h as? [String: Any], (hook["command"] as? String)?.contains("chippy-hook") == true else { return h }
                             // Keep the user's own --timeout / --question-timeout; defaults only fill missing flags.
                             let old = hook["command"] as? String ?? ""
-                            let a = flagValue("--timeout", in: old) ?? approvalTimeout
-                            let q = flagValue("--question-timeout", in: old) ?? questionTimeout
+                            let qOld = flagValue("--question-timeout", in: old)
+                            var a = flagValue("--timeout", in: old) ?? approvalTimeout
+                            // Old default (an exact 20, with or without the question flag) moves to the new default.
+                            if a == legacyApprovalTimeout { a = approvalTimeout }
+                            let q = qOld ?? questionTimeout
                             hook["command"] = command(for: binary, approvalTimeout: a, questionTimeout: q)
                             hook["timeout"] = hookTimeout(approvalTimeout: a, questionTimeout: q)
                             return hook

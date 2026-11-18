@@ -33,6 +33,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         buildMenu()
         startServer()
         startShortcuts()
+        // The repair alert is modal: on first launch it waits until the tour is over.
+        if tour.willRunOnFirstLaunch {
+            tour.onFinish = { [weak self] in self?.offerHookRepair() }
+        } else {
+            DispatchQueue.main.async { [weak self] in self?.offerHookRepair() }
+        }
         tour.runOnFirstLaunch()
         keepAwake.start()
         // Clicks in any other app are "outside the notch": fold the detail back to its glance.
@@ -131,6 +137,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let tourItem = NSMenuItem(title: "Show me how it works", action: #selector(runTour), keyEquivalent: "")
         tourItem.target = self
         menu.addItem(tourItem)
+        repairItem.target = self; repairItem.isHidden = true
+        menu.addItem(repairItem)
         for i in keepAwake.menuItems() { menu.addItem(i) }
         menu.addItem(.separator())
 
@@ -180,7 +188,89 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.popUp(positioning: nil, at: NSPoint(x: centered ? p.x - menu.size.width / 2 : p.x, y: p.y), in: nil)
     }
 
+    // MARK: stale hook repair (#99)
+
+    private let repairItem = NSMenuItem(title: "Repair Claude hook…", action: #selector(repairHook), keyEquivalent: "")
+    private var offeredRepair = false
+    private let repairDismissedKey = "hookRepairDismissedReason"
+
+    private var claudeSettingsPath: String { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/settings.json").path }
+
+    private func hookStaleness() -> [SettingsInstaller.Staleness] {
+        guard let d = FileManager.default.contents(atPath: claudeSettingsPath),
+              let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return [] }
+        return SettingsInstaller.staleness(o)
+    }
+
+    private func repairReason(_ s: [SettingsInstaller.Staleness]) -> String {
+        if s.contains(.missingPermissionRequest) { return "Claude's hook for Chippy has no approval relay, so approvals and questions will not reach the notch." }
+        if s.contains(.legacyApprovalTimeout) { return "Claude's hook for Chippy still uses the old 20 second approval wait. A timeout of 20 will become 60; a custom value other than 20 is kept." }
+        if s.contains(.missingQuestionFlag) { return "Claude's hook for Chippy predates the longer question wait, so questions can be cut off early." }
+        return "Claude's hook timeout for Chippy is shorter than its wait, so Claude can cut off a question or approval early."
+    }
+
+    private func repairMenuTitle(_ s: [SettingsInstaller.Staleness]) -> String {
+        if s.contains(.missingPermissionRequest) { return "Repair Claude hook (approvals missing)…" }
+        if s.contains(.legacyApprovalTimeout) { return "Repair Claude hook (old 20s wait)…" }
+        if s.contains(.missingQuestionFlag) { return "Repair Claude hook (no question flag)…" }
+        return "Repair Claude hook (timeout too short)…"
+    }
+
+    private func offerHookRepair() {
+        let s = hookStaleness()
+        guard !s.isEmpty else { return }
+        // "Later" holds for this session and, keyed to the reason, across launches until the reason changes.
+        let key = s.map { "\($0)" }.joined(separator: ",")
+        guard !offeredRepair, UserDefaults.standard.string(forKey: repairDismissedKey) != key else { return }
+        offeredRepair = true
+        NSApp.activate(ignoringOtherApps: true)
+        let a = NSAlert()
+        a.messageText = "Claude's hook for Chippy is out of date"
+        a.informativeText = repairReason(s) + " Repair opens Terminal, shows the change, and asks before writing. A backup is kept."
+        a.addButton(withTitle: "Repair…"); a.addButton(withTitle: "Later")
+        if a.runModal() == .alertFirstButtonReturn { repairHook() } else { UserDefaults.standard.set(key, forKey: repairDismissedKey) }
+    }
+
+    private func repairFailed(_ why: String) {
+        NSApp.activate(ignoringOtherApps: true)
+        let a = NSAlert()
+        a.messageText = "Couldn't start the repair"
+        a.informativeText = why
+        a.runModal()
+    }
+
+    /// Runs the same `chippy-hook install` as the CLI (backup + diff + confirm) in Terminal.
+    @objc private func repairHook() {
+        guard let exe = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("chippy-hook") else {
+            return repairFailed("Chippy can't find its own chippy-hook tool.")
+        }
+        // A hook that points into a disk image, a translocated copy or a temp dir breaks once that goes away.
+        if SettingsInstaller.isTransientPath(exe.path) {
+            return repairFailed("Chippy is running from a temporary location. Move it to Applications, reopen it, then repair.")
+        }
+        let q = "'" + exe.path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        let script = FileManager.default.temporaryDirectory.appendingPathComponent("chippy-repair-hook-\(UUID().uuidString).command")
+        do {
+            // trap removes the script however Terminal ends it: normal exit, Ctrl-C, or closing the window.
+            let qs = "'" + script.path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+            try "#!/bin/zsh\ntrap \"rm -f -- \(qs)\" EXIT HUP INT TERM\n\(q) install\necho\nread -k 1 '?Press any key to close.'\n".write(to: script, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+        } catch {
+            return repairFailed("Couldn't write the repair script: \(error.localizedDescription)")
+        }
+        guard FileManager.default.isExecutableFile(atPath: script.path) else {
+            return repairFailed("The repair script isn't runnable.")
+        }
+        NSWorkspace.shared.open(script, configuration: NSWorkspace.OpenConfiguration()) { [weak self] _, err in
+            guard let err else { return }
+            DispatchQueue.main.async { self?.repairFailed("Couldn't open Terminal: \(err.localizedDescription)") }
+        }
+    }
+
     func menuWillOpen(_ menu: NSMenu) {
+        let stale = hookStaleness()
+        repairItem.isHidden = stale.isEmpty
+        if !stale.isEmpty { repairItem.title = repairMenuTitle(stale) }
         // The log can be large: read it off the main thread, and only when the file changed.
         // Keyed on mtime, size and today's date, so a new day recomputes.
         let url = EventLog().url
