@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import ChippyCore
 
@@ -17,23 +18,40 @@ final class PeekTests: XCTestCase {
         XCTAssertFalse(PeekGate().isPeeking(now: 0))
     }
 
-    func testHoverPausesAndLeaveRestartsFullCountdown() {
+    func testHoverPausesAndLeaveResumesWithRemainingTime() {
         var g = PeekGate()
         g.start(now: 0)
-        g.setHover(true, now: 5)
+        g.setHover(true, now: 4)
         XCTAssertTrue(g.isPeeking(now: 1000))      // held open while hovered
         g.setHover(false, now: 1000)
-        XCTAssertTrue(g.isPeeking(now: 1009.9))    // full 10s again, not the 5s that were left
-        XCTAssertFalse(g.isPeeking(now: 1010))
+        XCTAssertTrue(g.isPeeking(now: 1005.9))    // the 6s that were left
+        XCTAssertFalse(g.isPeeking(now: 1006))
     }
 
-    func testStartWhileHoveredStaysOpenUntilLeave() {
+    func testHoverNeverReopensAnExpiredOrIdlePeek() {
+        var g = PeekGate()
+        g.setHover(true, now: 0); g.setHover(false, now: 1)
+        XCTAssertFalse(g.isPeeking(now: 1))        // never started
+        g.start(now: 10)
+        g.setHover(true, now: 25)                  // after expiry (20)
+        XCTAssertFalse(g.isPeeking(now: 25))
+        g.setHover(false, now: 30)
+        XCTAssertFalse(g.isPeeking(now: 31))
+    }
+
+    func testHoverBeforeStartDoesNotHoldNewPeek() {
         var g = PeekGate()
         g.setHover(true, now: 0)
         g.start(now: 1)
-        XCTAssertTrue(g.isPeeking(now: 50))
-        g.setHover(false, now: 60)
-        XCTAssertFalse(g.isPeeking(now: 70))
+        XCTAssertTrue(g.isPeeking(now: 10.9))
+        XCTAssertFalse(g.isPeeking(now: 11))       // deadline is always set
+    }
+
+    func testRestartWhilePausedRunsAFullPeek() {
+        var g = PeekGate()
+        g.start(now: 0); g.setHover(true, now: 2)
+        g.start(now: 50)
+        XCTAssertFalse(g.isPeeking(now: 60))
     }
 
     func testNewMessageRestartsPeek() {
@@ -80,14 +98,44 @@ final class PeekTests: XCTestCase {
         m.dismissDone(); XCTAssertNil(m.badge); XCTAssertFalse(m.visible)
     }
 
-    func testHoverHoldsPeekAndLeaveRestarts() {
+    func testHoverHoldsPeekAndLeaveResumes() {
         let m = model()
         m.apply(ev("Stop"), now: Date())
         t = 4; m.setHover(true)
         t = 60; m.tick(); XCTAssertEqual(m.density, .compact)
         m.setHover(false)
-        t = 69.9; m.tick(); XCTAssertEqual(m.density, .compact)
-        t = 70; m.tick(); XCTAssertEqual(m.density, .collapsed)
+        t = 65.9; m.tick(); XCTAssertEqual(m.density, .compact)
+        t = 66; m.tick(); XCTAssertEqual(m.density, .collapsed)
+        m.setHover(true); m.setHover(false); t = 200; m.tick()
+        XCTAssertEqual(m.density, .collapsed)      // hovering the collapsed notch does not re-open it
+    }
+
+    func testHoverIgnoredWhileExpandedAndClosingDoesNotRestartPeek() {
+        let m = model()
+        m.apply(ev("Stop"), now: Date())
+        t = 3; m.setHover(true)                    // paused with 7s left
+        m.toggleOpen(); XCTAssertEqual(m.density, .expanded)
+        m.setHover(false)                          // ignored while expanded
+        m.closeDetail()
+        XCTAssertEqual(m.density, .collapsed)      // the peek does not come back
+        XCTAssertEqual(m.badge, "1")
+    }
+
+    func testTickDoesNotRefreshWhilePeekRuns() {
+        let m = model()
+        m.apply(ev("Stop"), now: Date())
+        var changes = 0
+        let c = m.objectWillChange.sink { changes += 1 }
+        t = 5; m.tick(); m.tick()
+        XCTAssertEqual(changes, 0)
+        t = 10; m.tick()
+        XCTAssertGreaterThan(changes, 0)
+        c.cancel()
+    }
+
+    func testMonotonicClockAdvances() {
+        let a = PeekGate.monotonicNow(), b = PeekGate.monotonicNow()
+        XCTAssertGreaterThanOrEqual(b, a); XCTAssertGreaterThan(a, 0)
     }
 
     func testNewMessageRestartsPeekInModel() {

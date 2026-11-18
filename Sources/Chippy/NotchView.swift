@@ -34,10 +34,14 @@ extension View {
 /// Small count of finished items waiting, shown on the collapsed notch ("9+" caps it).
 struct CountBadge: View {
     let text: String
+    /// Never wider than this (the wing it sits in): the text shrinks to fit.
+    let maxWidth: CGFloat
     var body: some View {
         Text(text).font(.system(size: 10, weight: .bold, design: .rounded).monospacedDigit()).foregroundStyle(.black)
-            .padding(.horizontal, 5).frame(minWidth: 16, minHeight: 16)
+            .lineLimit(1).minimumScaleFactor(0.6)
+            .padding(.horizontal, 4).frame(minWidth: 16, maxWidth: max(maxWidth, 16), minHeight: 16)
             .background(Capsule().fill(.white.opacity(0.92)))
+            .reveal(0.08)
     }
 }
 
@@ -90,7 +94,7 @@ struct NotchView: View {
     private func icon(_ size: CGSize) -> some View {
         let m = box.metrics
         let big: CGFloat = 28 * 1.4
-        let small: CGFloat = 18 * 1.4
+        let small = NotchMetrics.glanceIcon
         let open = model.density == .expanded
         return ChipmunkView(state: model.state).frame(width: big, height: big)
             .scaleEffect(open ? 1 : small / big, anchor: .topLeading)
@@ -138,23 +142,21 @@ struct NotchView: View {
                 VStack(spacing: 0) {
                     Color.clear.frame(height: m.band)
                     HStack(spacing: 0) {
-                        Color.clear.frame(width: (box.metrics.width + 18 * 1.4) / 2 + 8) // past the centred icon
-                        CountBadge(text: badge)
+                        Color.clear.frame(width: (box.metrics.width + NotchMetrics.glanceIcon) / 2 + NotchMetrics.badgeGap) // past the centred icon
+                        CountBadge(text: badge, maxWidth: 40)
                         Spacer(minLength: 0)
                     }.frame(height: NotchMetrics.tabHeight)
                 }
                 .frame(maxHeight: .infinity, alignment: .top)
-                .reveal(0.08)
             } else if let badge = model.badge {
                 let wing = m.wing(for: .collapsed)
                 HStack(spacing: 0) {
                     Color.clear.frame(width: wing)
                     Color.clear.frame(width: m.width)
-                    CountBadge(text: badge).frame(width: wing)
+                    CountBadge(text: badge, maxWidth: wing - 8).frame(width: wing)
                 }
                 .frame(height: m.band, alignment: .center)
                 .frame(maxHeight: .infinity, alignment: .top)
-                .reveal(0.08)
             } else {
                 Color.clear.frame(height: m.band)
             }
@@ -163,7 +165,7 @@ struct NotchView: View {
             VStack(spacing: 0) {
                 Color.clear.frame(height: m.band)
                 HStack(spacing: 6) {
-                    Color.clear.frame(width: 18 * 1.4 + 12)
+                    Color.clear.frame(width: NotchMetrics.glanceIcon + 12)
                     Text(compactText).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.tail)
                     if model.doneItems.count > 1 {
                         Text("+\(model.doneItems.count - 1)").font(.caption2).foregroundStyle(.white.opacity(0.6))

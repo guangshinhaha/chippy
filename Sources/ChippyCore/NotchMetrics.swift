@@ -14,6 +14,10 @@ public struct NotchMetrics: Equatable {
 
     /// The pill is symmetric about the camera, so the narrower side sets both wings.
     private var gap: CGFloat { hasNotch ? min(leftGap, rightGap) : .infinity }
+    /// The glance chipmunk's size; the badge and tab layout are measured from it.
+    public static let glanceIcon: CGFloat = 18 * 1.4
+    /// Gap between the glance icon and a badge beside it (tab mode).
+    public static let badgeGap: CGFloat = 8
     /// Narrowest wing that still holds the chipmunk (10pt inset + icon).
     public static let minIconWing: CGFloat = 36
     /// The collapsed pill's wing: its usual 48pt, clamped to the gap so it never covers an item.

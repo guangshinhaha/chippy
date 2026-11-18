@@ -55,7 +55,7 @@ public final class NotchModel: ObservableObject {
 
     public init(state: ChippyState = .idle, density: Density = .collapsed,
                 always: AlwaysStore = AlwaysStore(), log: EventLog = EventLog(),
-                clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+                clock: @escaping () -> TimeInterval = PeekGate.monotonicNow) {
         self.clock = clock
         self.state = state
         self.density = density
@@ -67,6 +67,7 @@ public final class NotchModel: ObservableObject {
         guard !debugLock else { visible = true; return }
         if sessions.isEmpty { pinnedOpen = false }
         if doneItems.isEmpty { doneOpen = false; peek.cancel() }
+        if !pending.isEmpty || pinnedOpen || doneOpen { peek.cancel() } // the user (or an approval) took over: no peek to resume on close
         peeking = peek.isPeeking(now: clock())
         let live = store.derivedState
         state = !pending.isEmpty ? .needsYou : (live == .working ? .working : (doneItems.isEmpty ? live : .done))
@@ -79,14 +80,15 @@ public final class NotchModel: ObservableObject {
     /// Count shown on the collapsed notch while finished items wait (nil at 0, "9+" over 9).
     public var badge: String? { PeekGate.badge(count: doneItems.count) }
 
-    /// The pointer entered or left the island: a peek holds while it is over, and restarts when it leaves.
+    /// The pointer entered or left the island: a running peek holds while it is over and resumes when it leaves.
+    /// Ignored while expanded, and it never re-opens an expired peek.
     public func setHover(_ inside: Bool) {
+        guard density != .expanded else { return }
         peek.setHover(inside, now: clock())
-        refresh()
     }
 
     /// Ends an expired peek. Called by the app's 0.5s sweep.
-    public func tick() { if peeking { refresh() } }
+    public func tick() { if peeking, !peek.isPeeking(now: clock()) { refresh() } }
 
     /// Click on the notch. A waiting approval ignores it. A done chip opens its detail (click again to go back);
     /// otherwise it opens or closes the session peek.
