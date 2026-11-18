@@ -37,13 +37,22 @@ struct CountBadge: View {
     let text: String
     /// Never wider than this (the wing it sits in): the text shrinks to fit.
     let maxWidth: CGFloat
+    /// Tap opens the waiting list (#53). The hit area is larger than the 16pt capsule.
+    var onTap: () -> Void = {}
     var body: some View {
         Text(text).font(.system(size: 10, weight: .bold, design: .rounded).monospacedDigit()).foregroundStyle(.black)
             .lineLimit(1).minimumScaleFactor(0.6)
             .padding(.horizontal, 4).frame(minWidth: 16, maxWidth: max(maxWidth, 16), minHeight: 16)
             .background(Capsule().fill(.white.opacity(0.92)))
             .reveal(0.08)
+            // A real, larger tap target (24pt), never wider than the wing / tab the badge lives in.
+            .frame(minWidth: min(24, max(maxWidth, 16)), maxWidth: max(maxWidth, 16), minHeight: 24)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onTap)
+            .accessibilityElement(children: .ignore)
             .accessibilityLabel("\(text) finished waiting")
+            .accessibilityHint("Opens the list of everything waiting")
+            .accessibilityAddTraits(.isButton)
     }
 }
 
@@ -130,9 +139,12 @@ struct NotchView: View {
     }
 
     private var headerTitle: String {
+        if model.listOpen { return "Waiting · \(model.waitingItems.count)" }
+        if model.shownPending == nil, model.shownDone != nil { return model.pending.isEmpty ? "Done" : "Finished" }
         if model.pending.isEmpty { return model.state.title }
         let n = model.pending.count
-        return n > 1 ? "Needs you · 1 of \(n)" : "Needs you"
+        let at = model.shownPending.flatMap { r in model.pending.firstIndex { $0.id == r.id } } ?? 0
+        return n > 1 ? "Needs you · \(at + 1) of \(n)" : "Needs you"
     }
 
     static let terminalCardCap = 2
@@ -163,7 +175,7 @@ struct NotchView: View {
                     let off = (m.width + NotchMetrics.glanceIcon) / 2 + NotchMetrics.badgeGap // past the centred icon
                     HStack(spacing: 0) {
                         Color.clear.frame(width: off)
-                        CountBadge(text: badge, maxWidth: m.width - off - 8) // stays inside the tab
+                        CountBadge(text: badge, maxWidth: m.width - off - 8, onTap: { model.openList() }) // stays inside the tab
                         Spacer(minLength: 0)
                     }.frame(height: NotchMetrics.tabHeight)
                 }
@@ -173,7 +185,7 @@ struct NotchView: View {
                 HStack(spacing: 0) {
                     Color.clear.frame(width: wing)
                     Color.clear.frame(width: m.width)
-                    CountBadge(text: badge, maxWidth: wing - 8).frame(width: wing)
+                    CountBadge(text: badge, maxWidth: wing - 8, onTap: { model.openList() }).frame(width: wing)
                 }
                 .frame(height: m.band, alignment: .center)
                 .frame(maxHeight: .infinity, alignment: .top)
@@ -223,14 +235,25 @@ struct NotchView: View {
                 HStack(spacing: 10) {
                     Color.clear.frame(width: 28 * 1.4, height: 28 * 1.4) // where NotchView.icon sits
                     Text(headerTitle).font(.headline.monospacedDigit()).foregroundStyle(.white)
+                    Spacer(minLength: 0)
+                    if model.waitingItems.count > 1 && !model.listOpen {
+                        ChipButton(title: "All \(model.waitingItems.count)", kind: .neutral) { model.openList() }
+                            .accessibilityHint("Opens the list of everything waiting")
+                    }
                 }
                 .reveal(0.08)
-                if let req = model.pending.first {
+                if model.listOpen {
+                    WaitingListView(model: model).reveal(0.12)
+                } else if let req = model.shownPending {
                     if req.questions != nil {
-                        QuestionCard(req: req, send: { model.answer(req.id, selections: $0) }, handBack: { model.handBack(req.id) }).id(req.id).reveal(0.12)
+                        QuestionCard(req: req, initial: model.partials[req.id] ?? PartialAnswers(),
+                                     progress: { model.savePartial(req.id, step: $0, answers: $1) },
+                                     send: { model.answer(req.id, selections: $0) }, handBack: { model.handBack(req.id) }).id(req.id).reveal(0.12)
                     } else {
                         ApprovalCard(req: req) { model.resolve(req.id, $0) }.reveal(0.12)
                     }
+                } else if let d = model.shownDone {
+                    DoneCard(item: d, full: true) { model.dismissDone(d.sessionId) }.reveal(0.12)
                 } else if model.pinnedOpen {
                     terminalCards
                     doneCards(limit: 3)
@@ -365,18 +388,27 @@ private struct QuestionBodyHeight: PreferenceKey {
 
 struct QuestionCard: View {
     let req: PendingRequest
+    /// Progress kept by the model, so leaving this card (to the list) and coming back resumes it.
+    let progress: (Int, [String: Set<String>]) -> Void
     /// The card stays up only for `.refused`.
     let send: ([String: Set<String>]) -> NotchModel.Answered
     let handBack: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var step = 0
+    @State private var step: Int
     /// Chosen labels per question text.
-    @State private var answers: [String: Set<String>] = [:]
+    @State private var answers: [String: Set<String>]
     @State private var lastToggle: (index: Int, at: Date)?
     @State private var sent = false
     @State private var leadExpanded = false
     @State private var bodyHeight: CGFloat = 0
     private static let maxBodyHeight: CGFloat = 330
+
+    init(req: PendingRequest, initial: PartialAnswers = PartialAnswers(), progress: @escaping (Int, [String: Set<String>]) -> Void = { _, _ in },
+         send: @escaping ([String: Set<String>]) -> NotchModel.Answered, handBack: @escaping () -> Void) {
+        self.req = req; self.progress = progress; self.send = send; self.handBack = handBack
+        _step = State(initialValue: min(initial.step, max((req.questions?.count ?? 1) - 1, 0)))
+        _answers = State(initialValue: initial.answers)
+    }
 
     @ViewBuilder private func questionBody(_ q: AskQuestion, _ count: Int) -> some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -449,7 +481,10 @@ struct QuestionCard: View {
             ChipButton(title: "Answer in terminal", kind: .quiet) { if !sent { sent = true; handBack() } }
             TourCaption(sessionId: req.sessionId, step: .question)
         }
-        .onChange(of: step) { leadExpanded = false; lastToggle = nil; ShortcutBus.steps.send((req.id, $0)) }
+        .onChange(of: step) { leadExpanded = false; lastToggle = nil; ShortcutBus.steps.send((req.id, $0)); progress($0, answers) }
+        .onChange(of: answers) { progress(step, $0) } // every selection, multi-select toggles included, is saved at once
+        .onDisappear { if !sent { progress(step, answers) } } // leaving the card keeps what was answered
+        .onAppear { if step > 0 { ShortcutBus.steps.send((req.id, step)) } }
         .onReceive(ShortcutBus.events) { e in
             // Keys take the same path as a tap, for this card only.
             guard e.requestId == req.id, case .option(let n) = e.action,
@@ -614,5 +649,70 @@ struct NotchShape: Shape {
                        control: CGPoint(x: rect.minX, y: rect.maxY))
         p.closeSubpath()
         return p
+    }
+}
+
+/// The waiting list (#53): one row per approval, question and finished chip. Each row shows only the repo, a
+/// type icon and the age, never the question or command (PDPA #30). Arrows, Return and Esc are handled by the panel.
+struct WaitingListView: View {
+    @ObservedObject var model: NotchModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(model.waitingItems) { item in
+                WaitingRow(item: item, selected: model.listSelection == item.target) { model.activate(item.target) }
+            }
+            Text("↑↓ move · Return open · Esc close")
+                .font(.caption2).foregroundStyle(.white.opacity(0.4)).padding(.top, 6).padding(.leading, 4)
+        }
+    }
+}
+
+struct WaitingRow: View {
+    let item: WaitingItem
+    let selected: Bool
+    let open: () -> Void
+    @State private var hover = false
+
+    private var symbol: String {
+        switch item.kind {
+        case .approval: return "hand.raised.fill"
+        case .question: return "questionmark.bubble.fill"
+        case .done: return "checkmark.circle.fill"
+        case .terminal: return "terminal.fill"
+        }
+    }
+    private var tint: Color {
+        switch item.kind {
+        case .approval: return .orange
+        case .question: return .cyan
+        case .done: return .green
+        case .terminal: return .purple
+        }
+    }
+    private var kindName: String { item.kind == .done ? "finished" : item.kind == .terminal ? "asked in terminal" : item.kind == .question ? "question" : "approval" }
+
+    /// One 15s timeline per row feeds both the visible age and the VoiceOver label, so they never disagree.
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 15)) { ctx in row(age: WaitingList.age(since: item.at, now: ctx.date)) }
+    }
+
+    private func row(age: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol).font(.caption).foregroundStyle(tint).frame(width: 18)
+            Text(item.repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle)
+            Spacer(minLength: 8)
+            Text(age).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.55))
+        }
+        .padding(.horizontal, 10).frame(minHeight: 32)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(selected ? 0.18 : hover ? 0.1 : 0)))
+        .contentShape(Rectangle())
+        .onHover { hover = $0 }
+        .onTapGesture(perform: open)
+        .animation(.easeOut(duration: 0.12), value: selected)
+        .animation(.easeOut(duration: 0.12), value: hover)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(item.repo), \(kindName), \(age)")
+        .accessibilityAddTraits(.isButton)
     }
 }

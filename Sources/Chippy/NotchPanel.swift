@@ -104,6 +104,12 @@ final class NotchPanel: NSPanel {
             self.schedulePoll(after: 0.85)
         }.store(in: &bag)
         metrics.$contentHeight.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] _ in self?.dock(self?.model.density ?? .collapsed) }.store(in: &bag)
+        // Opening the list is a click, so taking key focus (without activating the app) lets the arrow keys work at once.
+        model.$listOpen.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] open in
+            guard open, let self else { return }
+            self.frontAtListOpen = NSWorkspace.shared.frontmostApplication?.processIdentifier
+            self.makeKey() // only on the open transition
+        }.store(in: &bag)
         model.$tall.dropFirst().receive(on: RunLoop.main).sink { [weak self] _ in self?.dock(self?.model.density ?? .collapsed) }.store(in: &bag)
         model.$visible.receive(on: RunLoop.main).sink { [weak self] v in
             guard let self else { return }
@@ -182,6 +188,31 @@ final class NotchPanel: NSPanel {
     /// Esc (when the notch has focus) folds an open detail.
     override func cancelOperation(_ sender: Any?) { model.closeDetail() }
 
+    /// The list is keyboard-driven, so it must not outlive key focus: losing key (another window took it) closes it.
+    /// Only a real hand-off counts (another app became frontmost since the list opened); transient losses, such as
+    /// a menu or our own makeKey, are ignored. Clicking outside is closed by the AppDelegate's click monitor.
+    private var frontAtListOpen: pid_t?
+    override func resignKey() {
+        super.resignKey()
+        guard model.listOpen else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            guard let self, self.model.listOpen, !self.isKeyWindow else { return }
+            let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
+            if front != self.frontAtListOpen { self.model.closeList() }
+        }
+    }
+
+    /// The waiting list is keyboard-driven (#53): arrows move, Return opens. Other keys pass through untouched.
+    override func keyDown(with event: NSEvent) {
+        guard model.listOpen, event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { super.keyDown(with: event); return }
+        switch event.keyCode {
+        case 125: model.moveSelection(1)           // down
+        case 126: model.moveSelection(-1)          // up
+        case 36, 76: model.activateSelection()     // return, keypad enter
+        default: super.keyDown(with: event)
+        }
+    }
+
     // MARK: click-through
     // The window is always the maximum size, so most of it is empty. Mouse events are accepted only while the
     // pointer is over the visible shape (plus a small margin for the hover grow); everywhere else the window
@@ -203,7 +234,11 @@ final class NotchPanel: NSPanel {
     private func syncMouse() {
         let inside = hitRect.contains(NSEvent.mouseLocation)
         if ignoresMouseEvents == inside { ignoresMouseEvents = !inside }
-        if metrics.hover != inside { metrics.hover = inside; model.setHover(inside) } // the peek holds while hovered; an ignoring window gets no hover-exit, so hover comes from here
+        if metrics.hover != inside {
+            metrics.hover = inside
+            if inside, model.listOpen, !isKeyWindow { makeKey() } // a real mouse-enter on the list: keys reach it again (not every poll)
+            model.setHover(inside)
+        } // the peek holds while hovered; an ignoring window gets no hover-exit, so hover comes from here
     }
 
     /// Where the pointer counts as "on the island": the larger of the old and new shape while it is moving.

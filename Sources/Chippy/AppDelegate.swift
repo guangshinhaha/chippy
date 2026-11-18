@@ -62,18 +62,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func startShortcuts() {
         hotKeys.onAction = { [weak self] in self?.handleShortcut($0) }
         stepWatch = ShortcutBus.steps.receive(on: DispatchQueue.main).sink { [weak self] s in
-            guard let self, let req = self.model.pending.first, req.id == s.requestId, req.questions != nil else { return }
+            guard let self, let req = self.model.shownPending, req.id == s.requestId, req.questions != nil else { return }
             self.questionStep = s.step
             self.registerQuestionKeys(req) // the next question may have fewer options
         }
-        pendingWatch = model.$pending.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.syncShortcuts() }
+        pendingWatch = Publishers.MergeMany([model.$pending.map { _ in () }.eraseToAnyPublisher(), model.$listOpen.map { _ in () }.eraseToAnyPublisher(),
+                                      model.$focus.map { _ in () }.eraseToAnyPublisher(), model.$partials.map { _ in () }.eraseToAnyPublisher()])
+            .receive(on: DispatchQueue.main).sink { [weak self] in self?.syncShortcuts() }
     }
 
     private func syncShortcuts() {
-        guard let req = model.pending.first else { shortcutCard = nil; hotKeys.unregister(); return }
-        if shortcutCard?.id == req.id { return } // same card: keep keys and its shownAt
+        guard let req = model.shownPending else { shortcutCard = nil; hotKeys.unregister(); return }
+        let seed = min(model.partials[req.id]?.step ?? 0, max((req.questions?.count ?? 1) - 1, 0)) // re-seeded on every sync, step 0 included; never past the last question
+        if shortcutCard?.id == req.id { // same card: keep keys and its shownAt
+            if req.questions != nil, questionStep != seed { questionStep = seed; registerQuestionKeys(req) }
+            return
+        }
         shortcutCard = (req.id, Date())
-        questionStep = 0
+        questionStep = seed
         if req.questions != nil {
             registerQuestionKeys(req)
         } else {
@@ -89,7 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func handleShortcut(_ action: ShortcutAction) {
         // Only the card on screen, only once it has been visible long enough.
-        guard let req = model.pending.first, let card = shortcutCard, card.id == req.id,
+        guard let req = model.shownPending, let card = shortcutCard, card.id == req.id,
               ShortcutGate.allows(shownAt: card.shownAt) else { return }
         switch action {
         case .allow where req.questions == nil: model.resolve(req.id, .allow)

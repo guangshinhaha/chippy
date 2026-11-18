@@ -44,6 +44,14 @@ public final class NotchModel: ObservableObject {
     @Published public var showReplyInGlance = UserDefaults.standard.bool(forKey: "showReplyInGlance") {
         didSet { UserDefaults.standard.set(showReplyInGlance, forKey: "showReplyInGlance") }
     }
+    /// The waiting list (#53) is open: every approval, question and done chip as one row each.
+    @Published public private(set) var listOpen = false
+    /// Highlighted row while the list is open (arrows move it, Return opens it).
+    @Published public private(set) var listSelection: WaitingTarget?
+    /// The item the user jumped to from the list; it is shown instead of the default card until it goes away.
+    @Published public private(set) var focus: WaitingTarget?
+    /// Multi-question progress per request id, so leaving a card keeps what was answered.
+    @Published public private(set) var partials: [String: PartialAnswers] = [:]
     /// Asleep after 5 quiet minutes (#54); any hook event wakes it. Only changes the mascot's pose.
     @Published public private(set) var asleep = false
     private var idleClock = IdleClock()
@@ -75,22 +83,97 @@ public final class NotchModel: ObservableObject {
     }
 
     private func refresh() {
+        let waiting = WaitingList.items(pending: pending, done: doneItems, terminal: terminalItems) // computed once per refresh
+        if waiting != waitingItems { waitingItems = waiting }
         guard !debugLock else { visible = true; return }
+        if waiting.isEmpty { listOpen = false }
+        if listOpen { let sel = WaitingList.reconcile(listSelection, in: waiting); if sel != listSelection { listSelection = sel } }
+        if let f = focus, !waiting.contains(where: { $0.target == f }) { // the jumped-to item went away
+            focus = nil
+            if case .done = f { doneOpen = false } // its detail was what doneOpen showed, whether or not an approval waits
+        }
+        let pendingIds = Set(pending.map(\.id))
+        if partials.keys.contains(where: { !pendingIds.contains($0) }) { partials = partials.filter { pendingIds.contains($0.key) } }
         if sessions.isEmpty { pinnedOpen = false }
         if doneItems.isEmpty { peek.cancel() }
         if doneItems.isEmpty && terminalItems.isEmpty { doneOpen = false }
-        if !pending.isEmpty || pinnedOpen || doneOpen { peek.cancel() } // the user (or an approval) took over: no peek to resume on close
+        if !pending.isEmpty || pinnedOpen || doneOpen || listOpen { peek.cancel() } // the user (or an approval) took over: no peek to resume on close
         let p = peek.isPeeking(now: clock())
         if p != peeking { peeking = p }
         let live = store.derivedState
         // A terminal chip never hides live work: working wins over it, it wins over done.
         state = !pending.isEmpty ? .needsYou : (live == .working ? .working : (!terminalItems.isEmpty ? .needsYou : (doneItems.isEmpty ? live : .done)))
         // Terminal cards share the panel, so the tall one-card reply view only applies when none are showing.
-        tall = pending.isEmpty && !pinnedOpen && doneOpen && !doneItems.isEmpty && terminalItems.isEmpty
-        if !pending.isEmpty || pinnedOpen || doneOpen { density = .expanded; visible = true }
+        tall = !listOpen && (shownDone != nil || (pending.isEmpty && !pinnedOpen && doneOpen && !doneItems.isEmpty && terminalItems.isEmpty))
+        if !pending.isEmpty || pinnedOpen || doneOpen || listOpen { density = .expanded; visible = true }
         else if !terminalItems.isEmpty { density = .compact; visible = true }
         else if !doneItems.isEmpty { density = peeking ? .compact : .collapsed; visible = true }
         else { density = .collapsed; visible = false }
+    }
+
+    /// Everything waiting, in list order (see `WaitingList.items`). Recomputed once per `refresh`.
+    @Published public private(set) var waitingItems: [WaitingItem] = []
+
+    /// The approval or question card on screen, or nil while the list or a done detail covers it.
+    /// Keyboard shortcuts act on this one only, so a key never answers a card the user cannot see.
+    public var shownPending: PendingRequest? {
+        guard !listOpen else { return nil }
+        if case .pending(let id)? = focus, let r = pending.first(where: { $0.id == id }) { return r }
+        if case .done? = focus { return nil }
+        return pending.first
+    }
+
+    /// The finished thread the user jumped to from the list (nil otherwise).
+    public var shownDone: DoneItem? {
+        guard !listOpen, case .done(let id)? = focus else { return nil }
+        return doneItems.first { $0.sessionId == id }
+    }
+
+    /// Open the waiting list (badge tap, or the header while several wait).
+    public func openList() {
+        guard !waitingItems.isEmpty else { return }
+        listOpen = true
+        listSelection = WaitingList.reconcile(listSelection, in: waitingItems)
+        refresh()
+    }
+
+    public func closeList() {
+        guard listOpen else { return }
+        listOpen = false
+        refresh()
+    }
+
+    /// Arrow keys: move the highlighted row.
+    public func moveSelection(_ step: Int) {
+        guard listOpen else { return }
+        listSelection = WaitingList.move(listSelection, in: waitingItems, by: step)
+    }
+
+    /// Return: open the highlighted row.
+    public func activateSelection() {
+        guard listOpen, let t = listSelection else { return }
+        activate(t)
+    }
+
+    /// Jump to one waiting item: its card, or for a done chip the existing detail.
+    public func activate(_ target: WaitingTarget) {
+        guard waitingItems.contains(where: { $0.target == target }) else { return }
+        listOpen = false; pinnedOpen = false
+        focus = target
+        switch target {
+        case .done: doneOpen = true
+        case .terminal: focus = nil; doneOpen = true // the shared card view lists every terminal chip
+        case .pending: doneOpen = false
+        }
+        refresh()
+    }
+
+    /// Remember how far a multi-question card got.
+    public func savePartial(_ id: String, step: Int, answers: [String: Set<String>]) {
+        guard pending.contains(where: { $0.id == id }) else { return }
+        let new = PartialAnswers(step: step, answers: answers)
+        if partials[id] != new { partials[id] = new } // an unchanged write would still notify observers
+
     }
 
     /// Count shown on the collapsed notch while finished items wait (nil at 0, "9+" over 9).
@@ -109,13 +192,17 @@ public final class NotchModel: ObservableObject {
     /// otherwise it opens or closes the session peek.
     public func toggleOpen(now: Date = Date()) {
         wake(now: now)
-        guard pending.isEmpty else { return }
+        guard pending.isEmpty, !listOpen else { return }
+        if focus != nil { focus = nil; doneOpen = false; refresh(); return } // one gesture folds a jumped-to detail; focus and doneOpen never drift
         if (!doneItems.isEmpty || !terminalItems.isEmpty) && !pinnedOpen { doneOpen.toggle() } else { pinnedOpen.toggle() }
         refresh()
     }
 
     /// Click outside the notch: fold an open detail or peek back to its glance. A waiting approval stays.
     public func closeDetail() {
+        if listOpen { closeList(); return }
+        if case .pending? = focus { return } // the approval or question the user jumped to stays up until answered
+        if focus != nil { focus = nil; doneOpen = false; refresh(); return } // back out of a jumped-to done or terminal detail
         guard pending.isEmpty, doneOpen || pinnedOpen else { return }
         doneOpen = false; pinnedOpen = false
         refresh()
@@ -199,6 +286,7 @@ public final class NotchModel: ObservableObject {
         }
         pending.append(req)
         connections[req.id] = conn
+        if case .done? = focus { focus = nil; doneOpen = false } // a new blocking request takes over from a done detail
         refresh()
         updateSleep(now: now)
         if !Tour.isDemo(req.sessionId) {

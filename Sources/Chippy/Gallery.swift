@@ -220,6 +220,46 @@ enum Gallery {
               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
         try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
     }
+    /// `Chippy --render-waiting out.png`: the waiting list (#53) with an approval, a question and three done chips
+    /// (sample repos only; note the rows never show the command or question), second row highlighted; plus the
+    /// collapsed badge it opens from.
+    @MainActor
+    static func renderWaiting(to path: String) {
+        let log = tempLog()
+        defer { try? FileManager.default.removeItem(at: log) }
+        func conn() -> Connection { Connection.detached() }
+        let now = Date()
+        let model = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: log))
+        for (i, repo) in ["docs-site", "billing-api", "mobile-app"].enumerated() {
+            model.apply(HookPayload(json: Data(#"{"session_id":"d\#(i)","hook_event_name":"Stop","cwd":"/demo/\#(repo)"}"#.utf8))!, now: now.addingTimeInterval(Double(i - 3) * 240))
+        }
+        model.receiveApproval(HookPayload(json: Data(#"{"session_id":"a","hook_event_name":"PermissionRequest","cwd":"/demo/api-server","tool_name":"Bash","tool_input":{"command":"rm -rf build && npm publish"}}"#.utf8))!, conn())
+        let q: [String: Any] = ["session_id": "q", "cwd": "/demo/login-page", "hook_event_name": "PermissionRequest", "tool_name": "AskUserQuestion",
+            "tool_input": ["questions": [["question": "Which auth method?", "header": "Auth", "multiSelect": false, "options": [["label": "SSO", "description": ""], ["label": "Magic link", "description": ""]]]]]]
+        if let data = try? JSONSerialization.data(withJSONObject: q), let payload = HookPayload(json: data) { model.receiveApproval(payload, conn()) }
+        model.openList()
+        model.moveSelection(1)
+        let m = NotchMetrics.sample14
+        let sz = m.size(for: .expanded)
+        let b = box(m)
+        let badge = seededModel(count: 3, density: .collapsed, cwd: "/demo/docs-site")
+        let all = HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                NotchView(model: model, box: b).frame(width: sz.width, height: 330)
+                Text("Waiting list: approval, question, 3 done (2nd row selected)").font(.caption2).foregroundStyle(.secondary)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                NotchView(model: badge, box: box(m)).frame(width: m.size(for: .collapsed).width, height: m.size(for: .collapsed).height)
+                Text("Collapsed + badge: tap opens the list").font(.caption2).foregroundStyle(.secondary)
+            }
+        }.padding(16).background(Color(white: 0.25))
+        let r = ImageRenderer(content: all)
+        r.scale = 2
+        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
+              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
+        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
+    }
+
     /// `Chippy --render-approval out.png`: approval cards for a short Bash command with a description, an Edit, and a very long command (sample text only).
     @MainActor
     static func renderApproval(to path: String) {
