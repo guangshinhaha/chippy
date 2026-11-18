@@ -56,7 +56,7 @@ public enum SummaryCleaner {
     }
 
     private static func firstCapture(_ tag: String, in s: String) -> String? {
-        guard let re = try? NSRegularExpression(pattern: "<\\(tag)>(.*?)</\\(tag)>", options: [.caseInsensitive, .dotMatchesLineSeparators]),
+        guard let re = try? NSRegularExpression(pattern: "<\(tag)>(.*?)</\(tag)>", options: [.caseInsensitive, .dotMatchesLineSeparators]),
               let m = re.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)),
               let r = Range(m.range(at: 1), in: s) else { return nil }
         return String(s[r])
@@ -71,7 +71,7 @@ public enum SummaryCleaner {
         let args = (firstCapture("command-args", in: s) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         var out = s
         for tag in ["command-message", "command-args", "command-name"] {
-            guard let re = try? NSRegularExpression(pattern: "<\\(tag)>.*?</\\(tag)>", options: [.caseInsensitive, .dotMatchesLineSeparators]) else { continue }
+            guard let re = try? NSRegularExpression(pattern: "<\(tag)>.*?</\(tag)>", options: [.caseInsensitive, .dotMatchesLineSeparators]) else { continue }
             let tpl = tag == "command-name" ? NSRegularExpression.escapedTemplate(for: " " + (name.hasPrefix("/") ? name : "/" + name) + (args.isEmpty ? "" : " " + args) + " ") : " "
             out = re.stringByReplacingMatches(in: out, range: NSRange(out.startIndex..., in: out), withTemplate: tpl)
         }

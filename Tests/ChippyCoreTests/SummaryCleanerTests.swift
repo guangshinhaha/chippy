@@ -120,7 +120,7 @@ final class SummaryCleanerTests: XCTestCase {
         XCTAssertTrue(SummaryCleaner.cleanPrompt(s)?.hasSuffix("tail") ?? false)
     }
     func testManyUnclosedTagsFast() {
-        let s = String(repeating: "x <command-name> ", count: 6000)
+        let s = String(repeating: "x <system-reminder> ", count: 6000)
         let t = Date()
         XCTAssertEqual(SummaryCleaner.cleanPrompt(s), "x")
         XCTAssertLessThan(Date().timeIntervalSince(t), 2)
