@@ -12,6 +12,6 @@ let package = Package(
         .target(name: "ChippyCore"),
         .executableTarget(name: "Chippy", dependencies: ["ChippyCore"]),
         .executableTarget(name: "chippy-hook", dependencies: ["ChippyCore"]),
-        .testTarget(name: "ChippyCoreTests", dependencies: ["ChippyCore"]),
+        .testTarget(name: "ChippyCoreTests", dependencies: ["ChippyCore", "Chippy"]),
     ]
 )

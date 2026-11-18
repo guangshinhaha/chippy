@@ -397,6 +397,8 @@ struct NotchView: View {
                     doneCards(limit: model.tall ? 1 : 3, full: model.tall)
                 }
             }
+            // Hug the content whatever the panel offers, so no flexible child can inflate the measurement below.
+            .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
             .background(GeometryReader { g in Color.clear.onAppear { report(g.size.height) }.onChange(of: g.size.height) { report($0) } })
@@ -787,7 +789,11 @@ struct SummaryView: View {
     private let doc: SummaryMarkdown.Doc?
     /// Shown when the parser yields no doc (e.g. "---", an empty fence, a table): the raw text, clipped, never blank.
     private let fallback: String?
-    @State private var open = false
+    @State private var open = SummaryView.forceOpenForMeasure
+    /// Set only by `Gallery.measureDone`, so the headless layout check can render the details-open state.
+    nonisolated(unsafe) static var forceOpenForMeasure = false
+    @State private var detailsHeight: CGFloat = 0
+    static let maxDetailsHeight: CGFloat = 240
 
     init(reply: String?, decision: String? = nil, compact: Bool = false) {
         self.decision = decision; self.compact = compact
@@ -863,12 +869,16 @@ struct SummaryView: View {
                 }.buttonStyle(.plain)
                 .accessibilityLabel(open ? "Hide details" : "Show details")
                 if open {
-                    // Short: the card hugs it. Long: scrolls in a FIXED-height area (a flexible one fills what the
-                    // panel offers, the panel grows to fit it, and the card keeps expanding).
-                    ViewThatFits(in: .vertical) {
-                        detailsBody
-                        ScrollView { detailsBody }.frame(height: 240)
-                    }.frame(maxHeight: 240)
+                    // Short: the card hugs it. Long: scrolls in a FIXED-height area. Measured, not ViewThatFits +
+                    // maxHeight: that flexible frame claims the full 240pt it is offered, leaving a blank gap under a
+                    // short body and inflating the panel.
+                    let content = detailsBody
+                        .fixedSize(horizontal: false, vertical: true)
+                        .background(GeometryReader { g in Color.clear.preference(key: QuestionBodyHeight.self, value: g.size.height) })
+                    Group {
+                        if detailsHeight > Self.maxDetailsHeight { ScrollView { content }.frame(height: Self.maxDetailsHeight) } else { content }
+                    }
+                    .onPreferenceChange(QuestionBodyHeight.self) { detailsHeight = $0 }
                 }
             }
         }
