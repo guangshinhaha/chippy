@@ -692,14 +692,17 @@ struct WaitingRow: View {
     }
     private var kindName: String { item.kind == .done ? "finished" : item.kind == .terminal ? "asked in terminal" : item.kind == .question ? "question" : "approval" }
 
+    /// One 15s timeline per row feeds both the visible age and the VoiceOver label, so they never disagree.
     var body: some View {
+        TimelineView(.periodic(from: .now, by: 15)) { ctx in row(age: WaitingList.age(since: item.at, now: ctx.date)) }
+    }
+
+    private func row(age: String) -> some View {
         HStack(spacing: 10) {
             Image(systemName: symbol).font(.caption).foregroundStyle(tint).frame(width: 18)
             Text(item.repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle)
             Spacer(minLength: 8)
-            TimelineView(.periodic(from: .now, by: 15)) { ctx in
-                Text(WaitingList.age(since: item.at, now: ctx.date)).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.55))
-            }
+            Text(age).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.55))
         }
         .padding(.horizontal, 10).frame(minHeight: 32)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(selected ? 0.18 : hover ? 0.1 : 0)))
@@ -709,7 +712,7 @@ struct WaitingRow: View {
         .animation(.easeOut(duration: 0.12), value: selected)
         .animation(.easeOut(duration: 0.12), value: hover)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(item.repo), \(kindName), \(WaitingList.age(since: item.at, now: Date()))")
+        .accessibilityLabel("\(item.repo), \(kindName), \(age)")
         .accessibilityAddTraits(.isButton)
     }
 }

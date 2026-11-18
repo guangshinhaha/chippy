@@ -171,7 +171,9 @@ public final class NotchModel: ObservableObject {
     /// Remember how far a multi-question card got.
     public func savePartial(_ id: String, step: Int, answers: [String: Set<String>]) {
         guard pending.contains(where: { $0.id == id }) else { return }
-        partials[id] = PartialAnswers(step: step, answers: answers)
+        let new = PartialAnswers(step: step, answers: answers)
+        if partials[id] != new { partials[id] = new } // an unchanged write would still notify observers
+
     }
 
     /// Count shown on the collapsed notch while finished items wait (nil at 0, "9+" over 9).
@@ -199,7 +201,8 @@ public final class NotchModel: ObservableObject {
     /// Click outside the notch: fold an open detail or peek back to its glance. A waiting approval stays.
     public func closeDetail() {
         if listOpen { closeList(); return }
-        if focus != nil { focus = nil; doneOpen = false; refresh(); return } // back out of a jumped-to item
+        if case .pending? = focus { return } // the approval or question the user jumped to stays up until answered
+        if focus != nil { focus = nil; doneOpen = false; refresh(); return } // back out of a jumped-to done or terminal detail
         guard pending.isEmpty, doneOpen || pinnedOpen else { return }
         doneOpen = false; pinnedOpen = false
         refresh()

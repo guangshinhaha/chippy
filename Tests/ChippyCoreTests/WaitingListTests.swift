@@ -276,4 +276,29 @@ final class WaitingListTests: XCTestCase {
         m.dismissDone("d"); XCTAssertEqual(m.waitingItems.count, 1)
         m.handBack(m.pending[0].id); XCTAssertTrue(m.waitingItems.isEmpty)
     }
+
+    func testEscKeepsAJumpedToApprovalButFoldsADoneDetail() {
+        let m = model()
+        approval(m, "a"); approval(m, "b"); stop(m, "d")
+        m.openList(); m.activate(m.waitingItems[1].target)
+        XCTAssertEqual(m.shownPending?.sessionId, "b")
+        m.closeDetail()
+        XCTAssertEqual(m.shownPending?.sessionId, "b") // still the card the user chose
+        m.openList(); m.activate(.done("d"))
+        m.closeDetail()                                 // done detail folds, back to the queue head
+        XCTAssertNil(m.focus)
+        XCTAssertEqual(m.shownPending?.sessionId, "a")
+    }
+
+    func testSavePartialSkipsUnchangedWrites() {
+        let m = model()
+        question(m, "q")
+        let id = m.pending[0].id
+        var publishes = 0
+        let c = m.$partials.dropFirst().sink { _ in publishes += 1 }
+        m.savePartial(id, step: 1, answers: ["Q1?": ["x"]])
+        m.savePartial(id, step: 1, answers: ["Q1?": ["x"]])
+        XCTAssertEqual(publishes, 1)
+        c.cancel()
+    }
 }

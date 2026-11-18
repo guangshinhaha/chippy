@@ -73,7 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func syncShortcuts() {
         guard let req = model.shownPending else { shortcutCard = nil; hotKeys.unregister(); return }
-        let seed = model.partials[req.id]?.step ?? 0 // re-seeded on every sync, step 0 included
+        let seed = min(model.partials[req.id]?.step ?? 0, max((req.questions?.count ?? 1) - 1, 0)) // re-seeded on every sync, step 0 included; never past the last question
         if shortcutCard?.id == req.id { // same card: keep keys and its shownAt
             if req.questions != nil, questionStep != seed { questionStep = seed; registerQuestionKeys(req) }
             return
