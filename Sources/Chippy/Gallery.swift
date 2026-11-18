@@ -565,7 +565,6 @@ enum Gallery {
     /// (scrolling FINISHED region, "Show fewer"), alone and beside 3 needs-you rows.
     @MainActor
     static func renderFinishedOverflow(to path: String) {
-        WaitingListView.staticRender = true
         let replies = ["Fixed the login redirect and added a regression test", "# Summary\n\nBumped the SDK to 4.2 and regenerated the lockfile", "```\nnpm test\n```",
                        "Merged the migration; staging is green", "Done.", "Refactored the billing service into three smaller modules with no behaviour change at all", "Added the kiosk idle timeout", "Docs updated"]
         func cell(needs: Int, expanded: Bool) -> some View {
@@ -577,7 +576,7 @@ enum Gallery {
             HStack(alignment: .top, spacing: 16) { cell(needs: 0, expanded: false); cell(needs: 0, expanded: true) }
             HStack(alignment: .top, spacing: 16) { cell(needs: 3, expanded: false); cell(needs: 3, expanded: true) }
         }.padding(16).background(Color(white: 0.25))
-        writePNG(ImageRenderer(content: all), to: path)
+        writePNG(ImageRenderer(content: all.environment(\.staticRender, true)), to: path)
     }
 
     /// `Chippy --render-identity out.png` (#89): rows for two worktrees of one repo (same mark, different worktree tag) beside

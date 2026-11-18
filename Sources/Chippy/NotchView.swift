@@ -989,11 +989,18 @@ struct RecentListView: View {
     }
 }
 
-/// The waiting list (#53, #101): NEEDS YOU on top (act on these), FINISHED below (FYI). Rows show only the repo, a worktree
-/// tag, a verb-led label and the age, never the question or command (PDPA #30). Arrows, Return and Esc are handled by the panel.
+/// The waiting list (#53, #101): NEEDS YOU on top (act on these), FINISHED below (FYI). NEEDS YOU rows show the repo, a worktree
+/// tag, a verb-led label (tool name or question count) and the age, never the question or command (PDPA #30). FINISHED rows add
+/// the first line of the reply (60 chars at most, the outcome only, in memory, never logged), or "finished" when there is none.
+/// Arrows, Return and Esc are handled by the panel.
+private struct StaticRenderKey: EnvironmentKey { static let defaultValue = false }
+extension EnvironmentValues {
+    var staticRender: Bool { get { self[StaticRenderKey.self] } set { self[StaticRenderKey.self] = newValue } }
+}
+
 struct WaitingListView: View {
-    /// Set by the gallery's still renders only.
-    nonisolated(unsafe) static var staticRender = false
+    /// True only in the gallery's still renders (ImageRenderer draws a ScrollView blank).
+    @Environment(\.staticRender) private var staticRender
     @ObservedObject var model: NotchModel
 
     private func section(_ title: String, count: Int, clearAll: (() -> Void)? = nil) -> some View {
@@ -1038,7 +1045,6 @@ struct WaitingListView: View {
             .padding(.horizontal, 10).frame(maxWidth: .infinity, minHeight: WaitingList.moreRowHeight, maxHeight: WaitingList.moreRowHeight, alignment: .leading)
             .background(rowBackground(selected: selected, hover: false))
             .contentShape(Rectangle()).onTapGesture { model.toggleFinished() }
-            .id(WaitingTarget.moreToggle)
             .accessibilityLabel(layout.expanded ? "Show fewer finished" : "\(layout.hiddenFinished) more finished, show all")
             .accessibilityAddTraits(.isButton)
             .accessibilityAction(.default) { model.toggleFinished() }
@@ -1053,7 +1059,7 @@ struct WaitingListView: View {
                     if layout.needsScrolls {
                         ScrollViewReader { proxy in
                             ScrollView { needsRows(layout) }.frame(height: layout.needsHeight)
-                                .onChange(of: model.listSelection) { if let t = $0 { withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(t) } } }
+                                .onChange(of: model.listSelection) { if let t = $0, t != .moreToggle { withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(t) } } }
                         }
                     } else { needsRows(layout) }
                 }
@@ -1061,12 +1067,12 @@ struct WaitingListView: View {
             if layout.totalFinished > 0 {
                 VStack(alignment: .leading, spacing: 0) {
                     section("FINISHED", count: layout.totalFinished, clearAll: { model.dismissDone(nil) })
-                    if layout.expanded, WaitingListView.staticRender {
+                    if layout.expanded, staticRender {
                         finishedRows(layout).frame(height: layout.finishedHeight, alignment: .top).clipped() // gallery only: ImageRenderer draws ScrollView blank
                     } else if layout.expanded {
                         ScrollViewReader { proxy in
                             ScrollView { finishedRows(layout) }.frame(height: layout.finishedHeight)
-                                .onChange(of: model.listSelection) { if let t = $0 { withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(t) } } }
+                                .onChange(of: model.listSelection) { if let t = $0, t != .moreToggle { withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(t) } } }
                         }
                     } else { finishedRows(layout) }
                     if layout.hasToggle { moreRow(layout) }
@@ -1223,9 +1229,11 @@ struct FinishedRow: View {
     private func row(age: String) -> some View {
         HStack(spacing: 10) {
             Image(systemName: "checkmark.circle").font(.caption).foregroundStyle(.white.opacity(0.45)).frame(width: 18)
-            RepoTitle(repo: item.repo, worktree: item.worktree, mark: mark)
+            RepoTitle(repo: item.repo, worktree: item.worktree, mark: mark).layoutPriority(1)
             if item.asksYou { Text("asks you").font(.caption2).foregroundStyle(Color.orange).lineLimit(1).fixedSize() }
+            // The repo label wins space first, but the snippet (or "finished") keeps a floor so the row never reads as empty.
             Text(item.snippet ?? "finished").font(.caption2).foregroundStyle(.white.opacity(0.5)).lineLimit(1).truncationMode(.tail)
+                .frame(minWidth: 36, alignment: .leading)
             Spacer(minLength: 6)
             Text(age).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.5))
             Button(action: dismiss) {

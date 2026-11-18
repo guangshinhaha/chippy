@@ -80,6 +80,12 @@ final class WaitingListTests: XCTestCase {
         XCTAssertNil(WaitingList.reconcile(.done("c"), in: []))
     }
 
+    func testReconcileFallsToTheNeighbourWhenSelectionVanishes() {
+        let was: [WaitingTarget] = [.pending("a"), .pending("b"), .pending("c"), .done("d")]
+        XCTAssertEqual(WaitingList.reconcileAmong(.pending("b"), in: [.pending("a"), .pending("c"), .done("d")], previous: was), .pending("c"))
+        XCTAssertEqual(WaitingList.reconcileAmong(.done("d"), in: [.pending("a"), .pending("b"), .pending("c")], previous: was), .pending("c")) // last row: clamps
+    }
+
     func testAgeLabels() {
         let now = Date()
         XCTAssertEqual(WaitingList.age(since: now, now: now), "now")

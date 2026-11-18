@@ -162,7 +162,8 @@ public final class NotchModel: ObservableObject {
         let waiting = WaitingList.items(pending: pending, done: doneItems, terminal: terminalItems, timeout: timeout(for:),
                                         label: { [identities] cwd, project in identities.label(cwd: cwd, project: project) }, // computed once per refresh
                                         resolved: { [identities] in identities.isResolved(cwd: $0) })
-        if !listOpen, finishedExpanded { finishedExpanded = false } // the expansion lives only while the list is open
+        let previousTargets = waitingLayout.selectableTargets
+        if (!listOpen || waiting.isEmpty), finishedExpanded { finishedExpanded = false } // the expansion lives only while the list is open and non-empty
         if waiting != waitingItems || waitingLayout.expanded != finishedExpanded {
             let layout = WaitingList.layout(waiting, expanded: finishedExpanded)
             if layout.expanded != finishedExpanded { finishedExpanded = layout.expanded } // nothing left to expand: back to collapsed
@@ -173,7 +174,7 @@ public final class NotchModel: ObservableObject {
         }
         guard !debugLock else { resting = false; return }
         if waiting.isEmpty { listOpen = false }
-        if listOpen { let sel = WaitingList.reconcileAmong(listSelection, in: waitingLayout.selectableTargets); if sel != listSelection { listSelection = sel } }
+        if listOpen { let sel = WaitingList.reconcileAmong(listSelection, in: waitingLayout.selectableTargets, previous: previousTargets); if sel != listSelection { listSelection = sel } }
         if let f = focus, !waiting.contains(where: { $0.target == f }) { // the jumped-to item went away
             focus = nil
             if case .done = f { doneOpen = false } // its detail was what doneOpen showed, whether or not an approval waits

@@ -198,13 +198,15 @@ public enum WaitingList {
         return targets[min(max(i + step, 0), targets.count - 1)]
     }
 
-    /// Keep a selection valid as items come and go: unchanged if still there, else the first row.
-    public static func reconcile(_ selected: WaitingTarget?, in items: [WaitingItem]) -> WaitingTarget? {
-        reconcileAmong(selected, in: items.map(\.target))
+    /// Keep a selection valid as items come and go: unchanged if still there, else the neighbouring row, else the first.
+    public static func reconcile(_ selected: WaitingTarget?, in items: [WaitingItem], previous: [WaitingTarget]? = nil) -> WaitingTarget? {
+        reconcileAmong(selected, in: items.map(\.target), previous: previous)
     }
 
-    public static func reconcileAmong(_ selected: WaitingTarget?, in targets: [WaitingTarget]) -> WaitingTarget? {
+    /// `previous` is the order before the change: a vanished selection falls to the row now at its old index (clamped).
+    public static func reconcileAmong(_ selected: WaitingTarget?, in targets: [WaitingTarget], previous: [WaitingTarget]? = nil) -> WaitingTarget? {
         if let selected, targets.contains(selected) { return selected }
+        if let selected, let old = previous?.firstIndex(of: selected), !targets.isEmpty { return targets[min(old, targets.count - 1)] }
         return targets.first
     }
 

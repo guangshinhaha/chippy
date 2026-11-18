@@ -390,6 +390,16 @@ final class NeedsYouFinishedTests: XCTestCase {
         XCTAssertFalse(m.finishedExpanded)
     }
 
+    func testExpansionResetsWhenListEmptiesUnderDebugLock() {
+        let m = model(); let t0 = Date()
+        for i in 0..<5 { stop(m, "d\(i)", cwd: "/w/r\(i)", at: t0.addingTimeInterval(Double(i))) }
+        m.openList(); m.toggleFinished()
+        XCTAssertTrue(m.finishedExpanded)
+        m.debugLock = true
+        for i in 0..<5 { m.dismissDone("d\(i)") }
+        XCTAssertFalse(m.finishedExpanded)
+    }
+
     func testExpandedDropsBackWhenNothingIsHiddenAnymore() {
         let m = model(); let t0 = Date()
         for i in 0..<5 { stop(m, "d\(i)", cwd: "/w/r\(i)", at: t0.addingTimeInterval(Double(i))) }
@@ -409,7 +419,7 @@ final class NeedsYouFinishedTests: XCTestCase {
     }
 
     func testExpandedLayoutStaysUnderTheCapAndNeverCutsNeedsYou() {
-        for needs in [0, 1, 3, 5, 9] {
+        for needs in [0, 1, 3, 5, 9, 20] {
             let l = WaitingList.layout(rows(needs: needs, finished: 12), expanded: true)
             XCTAssertEqual(l.needs.count, needs)
             XCTAssertEqual(l.finished.count, 12, "needs \(needs)")
@@ -417,7 +427,7 @@ final class NeedsYouFinishedTests: XCTestCase {
             let gap: CGFloat = needs > 0 ? WaitingList.sectionGap : 0
             let needsBlock = needs > 0 ? WaitingList.sectionHeaderHeight + l.needsHeight : 0
             let total = WaitingList.chrome + needsBlock + gap + WaitingList.sectionHeaderHeight + l.finishedHeight + WaitingList.moreRowHeight
-            XCTAssertLessThanOrEqual(total, NotchMetrics.maxExpandedHeight + WaitingList.finishedRowHeight * (needs >= 9 ? 1 : 0), "needs \(needs)")
+            XCTAssertLessThanOrEqual(total, NotchMetrics.maxExpandedHeight, "needs \(needs)")
             XCTAssertGreaterThanOrEqual(l.finishedHeight, WaitingList.finishedRowHeight)
             if needs <= 3 { XCTAssertFalse(l.needsScrolls, "needs \(needs)") } // needs-you keeps its full height while it fits
         }

@@ -42,6 +42,7 @@ Source: web research on Apple's Live Activities HIG and existing Claude Code not
 - Terminal rows offer "Jump to terminal" and "Handled". A terminal row expires after 30 minutes (`NotchModel.terminalSeconds`); finished chips stay at 10 minutes.
 - Badge counts needs-you only. Finished-only shows a dot, never a count.
 - "+N more" is a selectable last row (arrows, Return or click). It expands FINISHED to every row in a scrolling region sized from what NEEDS YOU leaves (at least one row); the row then reads "Show fewer". Selection and scrollTo walk every row. Expansion resets when the list closes (Esc included). FINISHED rows show a one-line outcome (SummaryMarkdown outcome, first line, 60 chars, in memory only) or "finished".
+- PDPA: the FINISHED snippet is the reply's outcome line only (first line, 60 chars), never command or question text, in memory only (never logged or persisted).
 - Height cap 560: FINISHED shrinks first, then NEEDS YOU scrolls. Needs-you rows are never cut.
 - Labels are repo + worktree, read from git (pointer file to the common dir) off the main thread and cached; folder name is the fallback. Cards still show the project name.
 
