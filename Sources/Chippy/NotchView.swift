@@ -32,6 +32,21 @@ extension View {
     func reveal(_ delay: Double) -> some View { modifier(Reveal(delay: delay)) }
 }
 
+/// Small count of finished items waiting, shown on the collapsed notch ("9+" caps it).
+struct CountBadge: View {
+    let text: String
+    /// Never wider than this (the wing it sits in): the text shrinks to fit.
+    let maxWidth: CGFloat
+    var body: some View {
+        Text(text).font(.system(size: 10, weight: .bold, design: .rounded).monospacedDigit()).foregroundStyle(.black)
+            .lineLimit(1).minimumScaleFactor(0.6)
+            .padding(.horizontal, 4).frame(minWidth: 16, maxWidth: max(maxWidth, 16), minHeight: 16)
+            .background(Capsule().fill(.white.opacity(0.92)))
+            .reveal(0.08)
+            .accessibilityLabel("\(text) finished waiting")
+    }
+}
+
 struct NotchView: View {
     @ObservedObject var model: NotchModel
     @ObservedObject var box: MetricsBox
@@ -81,7 +96,7 @@ struct NotchView: View {
     private func icon(_ size: CGSize) -> some View {
         let m = box.metrics
         let big: CGFloat = 28 * 1.4
-        let small: CGFloat = 18 * 1.4
+        let small = NotchMetrics.glanceIcon
         let open = model.density == .expanded
         return ChipmunkView(state: model.state, sleeping: model.asleep).frame(width: big, height: big)
             .scaleEffect(open ? 1 : small / big, anchor: .topLeading)
@@ -124,13 +139,36 @@ struct NotchView: View {
         let m = box.metrics
         switch model.density {
         case .collapsed:
-            Color.clear.frame(height: m.band) // the icon is drawn once, by NotchView.icon
+            // The icon is drawn once, by NotchView.icon. Finished items waiting show a small count.
+            if let badge = model.badge, m.isTab {
+                VStack(spacing: 0) {
+                    Color.clear.frame(height: m.band)
+                    let off = (m.width + NotchMetrics.glanceIcon) / 2 + NotchMetrics.badgeGap // past the centred icon
+                    HStack(spacing: 0) {
+                        Color.clear.frame(width: off)
+                        CountBadge(text: badge, maxWidth: m.width - off - 8) // stays inside the tab
+                        Spacer(minLength: 0)
+                    }.frame(height: NotchMetrics.tabHeight)
+                }
+                .frame(maxHeight: .infinity, alignment: .top)
+            } else if let badge = model.badge {
+                let wing = m.wing(for: .collapsed)
+                HStack(spacing: 0) {
+                    Color.clear.frame(width: wing)
+                    Color.clear.frame(width: m.width)
+                    CountBadge(text: badge, maxWidth: wing - 8).frame(width: wing)
+                }
+                .frame(height: m.band, alignment: .center)
+                .frame(maxHeight: .infinity, alignment: .top)
+            } else {
+                Color.clear.frame(height: m.band)
+            }
         case .compact where m.isTab:
             // No room beside the camera: the glance lives in a tab under it (icon is drawn by NotchView.icon).
             VStack(spacing: 0) {
                 Color.clear.frame(height: m.band)
                 HStack(spacing: 6) {
-                    Color.clear.frame(width: 18 * 1.4 + 12)
+                    Color.clear.frame(width: NotchMetrics.glanceIcon + 12)
                     Text(compactText).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.tail)
                     if model.doneItems.count > 1 {
                         Text("+\(model.doneItems.count - 1)").font(.caption2).foregroundStyle(.white.opacity(0.6))
@@ -212,10 +250,20 @@ struct ApprovalCard: View {
             if let p = req.lastPrompt, !p.isEmpty {
                 Text("“\(p)”").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
             }
-            Text("\(req.toolName) wants to run").font(.caption2).foregroundStyle(.white.opacity(0.6))
-            Text(req.detail.isEmpty ? req.toolName : req.detail)
-                .font(.system(.caption, design: .monospaced)).foregroundStyle(.white)
-                .lineLimit(4).truncationMode(.middle)
+            if let intent = req.intent {
+                // Agent-written text is unverified: small, secondary, captioned. The raw command below is the dominant element.
+                VStack(alignment: .leading, spacing: 1) {
+                    if intent.fromAgent { Text("Claude says (unverified):").font(.caption2).foregroundStyle(.white.opacity(0.45)) }
+                    Text(intent.text).font(.caption).foregroundStyle(.white.opacity(intent.fromAgent ? 0.65 : 0.85)).lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text("\(req.toolName) wants to run").font(.caption2).foregroundStyle(.white.opacity(0.6))
+            }
+            Text(req.detail.isEmpty ? req.toolName : ApprovalIntent.preview(req.detail))
+                .font(.system(.callout, design: .monospaced).weight(.medium)).foregroundStyle(.white)
+                .lineLimit(12) // backstop only: preview() already bounds rows and keeps head, tail and a hidden-count marker
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.4)).lineLimit(1).truncationMode(.head)
             TourCaption(sessionId: req.sessionId, step: .approval)

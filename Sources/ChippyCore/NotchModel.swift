@@ -46,6 +46,12 @@ public final class NotchModel: ObservableObject {
     @Published public private(set) var asleep = false
     private var idleClock = IdleClock()
     public static let doneSeconds: TimeInterval = 600
+    /// A finished chip is shown compact while peeking, then the island settles to collapsed (chip stays in `doneItems`).
+    @Published public private(set) var peeking = false
+    private var peek = PeekGate()
+    /// Last pointer state from the panel, kept even while expanded so a new peek can start from it.
+    private var hovering = false
+    private let clock: () -> TimeInterval
     private var store = SessionStore()
     private var connections: [String: Connection] = [:]
     private var questionInputs: [String: [String: Any]] = [:]
@@ -57,7 +63,9 @@ public final class NotchModel: ObservableObject {
     private let log: EventLog
 
     public init(state: ChippyState = .idle, density: Density = .collapsed,
-                always: AlwaysStore = AlwaysStore(), log: EventLog = EventLog()) {
+                always: AlwaysStore = AlwaysStore(), log: EventLog = EventLog(),
+                clock: @escaping () -> TimeInterval = PeekGate.monotonicNow) {
+        self.clock = clock
         self.state = state
         self.density = density
         self.always = always
@@ -67,18 +75,34 @@ public final class NotchModel: ObservableObject {
     private func refresh() {
         guard !debugLock else { visible = true; return }
         if sessions.isEmpty { pinnedOpen = false }
-        if doneItems.isEmpty { doneOpen = false }
+        if doneItems.isEmpty { doneOpen = false; peek.cancel() }
+        if !pending.isEmpty || pinnedOpen || doneOpen { peek.cancel() } // the user (or an approval) took over: no peek to resume on close
+        let p = peek.isPeeking(now: clock())
+        if p != peeking { peeking = p }
         let live = store.derivedState
         state = !pending.isEmpty ? .needsYou : (live == .working ? .working : (doneItems.isEmpty ? live : .done))
         tall = pending.isEmpty && !pinnedOpen && doneOpen
         if !pending.isEmpty || pinnedOpen || doneOpen { density = .expanded; visible = true }
-        else if !doneItems.isEmpty { density = .compact; visible = true }
+        else if !doneItems.isEmpty { density = peeking ? .compact : .collapsed; visible = true }
         else { density = .collapsed; visible = false }
+    }
+
+    /// Count shown on the collapsed notch while finished items wait (nil at 0, "9+" over 9).
+    public var badge: String? { PeekGate.badge(count: doneItems.count) }
+
+    /// The pointer entered or left the island: a running peek holds while it is over and resumes when it leaves.
+    /// Ignored while expanded, and it never re-opens an expired peek.
+    public func setHover(_ inside: Bool, now: Date = Date()) {
+        wake(now: now)
+        hovering = inside
+        guard density != .expanded else { return }
+        peek.setHover(inside, now: clock())
     }
 
     /// Click on the notch. A waiting approval ignores it. A done chip opens its detail (click again to go back);
     /// otherwise it opens or closes the session peek.
-    public func toggleOpen() {
+    public func toggleOpen(now: Date = Date()) {
+        wake(now: now)
         guard pending.isEmpty else { return }
         if !doneItems.isEmpty && !pinnedOpen { doneOpen.toggle() } else { pinnedOpen.toggle() }
         refresh()
@@ -97,15 +121,21 @@ public final class NotchModel: ObservableObject {
         refresh()
     }
 
+    /// User interaction (hover, click) wakes the mascot and restarts the countdown, like an event does.
+    public func wake(now: Date = Date()) {
+        idleClock.noteEvent(now: now)
+        if asleep { asleep = false }
+    }
+
     private func updateSleep(now: Date) {
-        let s = SleepPolicy.shouldSleep(state: state, clock: idleClock, now: now)
+        let s = SleepPolicy.shouldSleep(state: state, hasDoneChips: !doneItems.isEmpty, clock: idleClock, now: now)
         if s != asleep { asleep = s }
     }
 
     /// A PermissionRequest hook is waiting on `conn`. Main thread only.
     /// AskUserQuestion is answerable only when every question is single-select; otherwise no reply, so the terminal handles it.
-    public func receiveApproval(_ payload: HookPayload, _ conn: Connection) {
-        idleClock.noteEvent(); updateSleep(now: Date())
+    public func receiveApproval(_ payload: HookPayload, _ conn: Connection, now: Date = Date()) {
+        idleClock.noteEvent(now: now)
         var req = PendingRequest(payload: payload)
         if payload.toolName == "AskUserQuestion" {
             guard req.questions != nil else { conn.respond(nil); return }
@@ -120,6 +150,7 @@ public final class NotchModel: ObservableObject {
         pending.append(req)
         connections[req.id] = conn
         refresh()
+        updateSleep(now: now)
         if !Tour.isDemo(req.sessionId) {
             onSound?(.needsYou, req.sessionId, sessions.first { $0.id == req.sessionId }?.host ?? payload.host)
         }
@@ -176,11 +207,13 @@ public final class NotchModel: ObservableObject {
 
     /// Drop requests whose hook went away (timeout fallback, or answered in the terminal).
     public func sweep(now: Date = Date()) {
-        updateSleep(now: now)
+        defer { updateSleep(now: now) } // after expiry + refresh, so it sees the settled state
+        if peeking, !peek.isPeeking(now: clock()) { refresh() } // an expired peek settles to collapsed
         let gone = pending.filter { connections[$0.id]?.peerGone ?? true }
-        let before = doneItems.count
-        doneItems.removeAll { now.timeIntervalSince($0.at) > Self.doneSeconds }
-        if doneItems.count != before { refresh() }
+        if doneItems.contains(where: { now.timeIntervalSince($0.at) > Self.doneSeconds }) { // assign only on change: a no-op write still notifies
+            doneItems.removeAll { now.timeIntervalSince($0.at) > Self.doneSeconds }
+            refresh()
+        }
         guard !gone.isEmpty else { return }
         for r in gone {
             connections.removeValue(forKey: r.id)?.respond(nil); questionInputs.removeValue(forKey: r.id)
@@ -202,6 +235,7 @@ public final class NotchModel: ObservableObject {
                 doneItems.removeAll { $0.sessionId == r.id }
                 doneItems.append(DoneItem(sessionId: r.id, project: r.project, branch: r.branch,
                                           files: r.filesEdited.count, added: r.added, removed: r.removed, reply: r.lastReply, prompt: r.lastPrompt, at: now, host: r.host))
+                peek.start(now: clock(), hovering: hovering)
                 if isNew, !Tour.isDemo(r.id) { onSound?(.done, r.id, r.host ?? payload.host) }
             }
         case "UserPromptSubmit", "SessionEnd", "PreToolUse", "PostToolUse":

@@ -17,7 +17,7 @@ struct ChipmunkView: View {
     var body: some View {
         if sleeping && !reduceMotion {
             // 2 fps is plenty for a 4 s breath; the schedule exists only while a sleeping mascot is on screen.
-            TimelineView(.periodic(from: .now, by: 0.5)) { tl in canvas(t: tl.date.timeIntervalSinceReferenceDate) }
+            TimelineView(.periodic(from: Date(timeIntervalSinceReferenceDate: 0), by: 0.5)) { tl in canvas(t: tl.date.timeIntervalSinceReferenceDate) }
         } else {
             canvas(t: nil)
         }
@@ -29,6 +29,7 @@ struct ChipmunkView: View {
             let s = min(size.width, size.height) / 100
             ctx.translateBy(x: (size.width - 100 * s) / 2, y: (size.height - 100 * s) / 2)
             ctx.scaleBy(x: s, y: s)
+            let outer = ctx // unscaled pass for the z's, unaffected by the breath
             if sleeping, let t { // slow breath: 4 s period, +-2.5% about the chin
                 let k = 1 + 0.025 * sin(t * 2 * .pi / 4)
                 ctx.translateBy(x: 50, y: 92); ctx.scaleBy(x: k, y: k); ctx.translateBy(x: -50, y: -92)
@@ -80,11 +81,11 @@ struct ChipmunkView: View {
                 arc(50, 64, 11, up: false, 3.5)
             }
 
-            if sleeping { // z's in place of the badge; one more every 0.5 s on a 2 s loop, all shown when static
-                let n = t.map { Int($0 / 0.5) % 4 } ?? 2
-                for i in 0...min(n, 2) {
-                    ctx.draw(Text("z").font(.system(size: CGFloat(22 - i * 4), weight: .black)).foregroundColor(.white.opacity(0.9 - Double(i) * 0.2)),
-                             at: CGPoint(x: 78 + CGFloat(i) * 10, y: 20 - CGFloat(i) * 9))
+            if sleeping { // z's in place of the badge: 0,1,2,3 z's on a 2 s loop (frame 0 blank); all three when static
+                let n = t.map { Int($0 / 0.5) % 4 } ?? 3
+                for i in 0..<n {
+                    outer.draw(Text("z").font(.system(size: CGFloat(18 - i * 3), weight: .black)).foregroundColor(.white.opacity(0.9 - Double(i) * 0.2)),
+                             at: CGPoint(x: 80 + CGFloat(i) * 8, y: 28 - CGFloat(i) * 10))
                 }
                 return
             }

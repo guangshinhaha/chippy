@@ -56,7 +56,7 @@ final class NotchModelTests: XCTestCase {
         let m = model(); let t = Date()
         m.apply(ev("Stop"), now: t)
         m.toggleOpen(); XCTAssertEqual(m.density, Density.expanded); XCTAssertTrue(m.doneOpen)
-        m.toggleOpen(); XCTAssertEqual(m.density, Density.compact)
+        m.toggleOpen(); XCTAssertEqual(m.density, Density.collapsed)
         m.toggleOpen(); m.dismissDone()
         XCTAssertFalse(m.visible)
     }
@@ -141,7 +141,7 @@ final class NotchModelTests: XCTestCase {
         m.apply(ev("Stop"), now: Date())
         m.toggleOpen(); XCTAssertEqual(m.density, Density.expanded)
         m.closeDetail()
-        XCTAssertEqual(m.density, Density.compact); XCTAssertEqual(m.doneItems.count, 1)   // folded, not dismissed
+        XCTAssertEqual(m.density, Density.collapsed); XCTAssertEqual(m.doneItems.count, 1)   // folded, not dismissed
         let (c, _) = pair()
         m.receiveApproval(HookPayload(json: Data(#"{"session_id":"a","hook_event_name":"PermissionRequest","cwd":"/w","tool_name":"Bash","tool_input":{"command":"x"}}"#.utf8))!, c)
         m.closeDetail()

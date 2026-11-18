@@ -27,11 +27,12 @@ final class SleepPolicyTests: XCTestCase {
     func testWorkingAndNeedsYouNeverSleep() {
         let c = IdleClock(now: t0)
         let late = t0.addingTimeInterval(9999)
-        XCTAssertFalse(SleepPolicy.shouldSleep(state: .working, clock: c, now: late))
-        XCTAssertFalse(SleepPolicy.shouldSleep(state: .needsYou, clock: c, now: late))
-        XCTAssertTrue(SleepPolicy.shouldSleep(state: .idle, clock: c, now: late))
-        XCTAssertTrue(SleepPolicy.shouldSleep(state: .done, clock: c, now: late))
-        XCTAssertFalse(SleepPolicy.shouldSleep(state: .done, clock: c, now: t0.addingTimeInterval(5)))
+        XCTAssertFalse(SleepPolicy.shouldSleep(state: .working, hasDoneChips: false, clock: c, now: late))
+        XCTAssertFalse(SleepPolicy.shouldSleep(state: .needsYou, hasDoneChips: false, clock: c, now: late))
+        XCTAssertTrue(SleepPolicy.shouldSleep(state: .idle, hasDoneChips: false, clock: c, now: late))
+        XCTAssertFalse(SleepPolicy.shouldSleep(state: .done, hasDoneChips: true, clock: c, now: late)) // a done badge is never hidden
+        XCTAssertTrue(SleepPolicy.shouldSleep(state: .done, hasDoneChips: false, clock: c, now: late))
+        XCTAssertFalse(SleepPolicy.shouldSleep(state: .idle, hasDoneChips: false, clock: c, now: t0.addingTimeInterval(5)))
     }
 
     func testModelSleepsAndWakesOnEvent() {
@@ -39,10 +40,27 @@ final class SleepPolicyTests: XCTestCase {
         let m = NotchModel(always: AlwaysStore(url: nil), log: log)
         let p = HookPayload(json: Data(#"{"session_id":"s","hook_event_name":"Stop","cwd":"/x/r"}"#.utf8))!
         m.apply(p, now: t0)
+        m.sweep(now: t0.addingTimeInterval(301))
+        XCTAssertEqual(m.state, .done)
+        XCTAssertFalse(m.asleep) // finished chip waiting: never sleeps
+        m.dismissDone()
+        m.sweep(now: t0.addingTimeInterval(302))
+        XCTAssertTrue(m.asleep)
+        m.apply(p, now: t0.addingTimeInterval(303))
         XCTAssertFalse(m.asleep)
+    }
+
+    func testInteractionWakes() {
+        let log = EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("chippy-test-\(UUID()).jsonl"))
+        let m = NotchModel(always: AlwaysStore(url: nil), log: log)
+        m.wake(now: t0)
         m.sweep(now: t0.addingTimeInterval(301))
         XCTAssertTrue(m.asleep)
-        m.apply(p, now: t0.addingTimeInterval(302))
+        m.setHover(true, now: t0.addingTimeInterval(302))
         XCTAssertFalse(m.asleep)
+        m.sweep(now: t0.addingTimeInterval(500))
+        XCTAssertFalse(m.asleep)
+        m.sweep(now: t0.addingTimeInterval(603))
+        XCTAssertTrue(m.asleep)
     }
 }

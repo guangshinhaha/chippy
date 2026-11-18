@@ -20,12 +20,11 @@ public struct IdleClock: Equatable {
 }
 
 public enum SleepPolicy {
-    /// Sleep only when nothing is asking for attention: a running tool with no events for a while, or a
-    /// pending approval, must not look asleep.
-    public static func shouldSleep(state: ChippyState, clock: IdleClock, now: Date = Date()) -> Bool {
-        switch state {
-        case .working, .needsYou: return false
-        case .idle, .done: return clock.isAsleep(now: now)
-        }
+    /// Sleep only when truly idle: a running tool, a pending approval, or a finished chip (its badge) must
+    /// never be hidden behind a sleeping pose.
+    /// A quiet session whose row is `.done` but whose chip is gone counts as idle.
+    public static func shouldSleep(state: ChippyState, hasDoneChips: Bool, clock: IdleClock, now: Date = Date()) -> Bool {
+        let quiet = state == .idle || (state == .done && !hasDoneChips)
+        return quiet && clock.isAsleep(now: now)
     }
 }
