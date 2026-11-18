@@ -87,6 +87,8 @@ public final class NotchModel: ObservableObject {
     private let log: EventLog
     /// Repo + worktree labels from git, resolved off the main thread and cached per cwd (#101).
     public let identities: RepoIdentityCache
+    /// Colour, shape and letter per resolved repo (#89). Worktrees of one repo share it; the worktree is only a sub-label.
+    public let marks = IdentityBook()
 
     public init(state: ChippyState = .idle, density: Density = .collapsed,
                 always: AlwaysStore = AlwaysStore(), log: EventLog = EventLog(),
@@ -129,6 +131,26 @@ public final class NotchModel: ObservableObject {
     /// The one repo label for a cwd, as list rows show it: cached git result, or the folder-name fallback while it loads.
     public func repoLabel(cwd: String, project: String) -> RepoLabel { identities.label(cwd: cwd, project: project) }
 
+    /// The identity for a cwd's resolved repo, consistent with the label every list and card shows.
+    /// Until the cache has resolved the cwd the raw hash slot is used and nothing is stored, so the mark cannot flip later (#89).
+    public func identity(cwd: String, project: String) -> SessionIdentity {
+        let label = repoLabel(cwd: cwd, project: project)
+        return marks.identity(for: label, resolved: identities.isResolved(cwd: cwd))
+    }
+    public func identity(item: WaitingItem) -> SessionIdentity { marks.identity(repo: item.repo, resolved: item.resolved) }
+
+    /// Whose request the needs-you badge points at: the rank-first needs-you item (the one a badge tap opens).
+    public var badgeIdentity: SessionIdentity? {
+        guard badgeNeedsYou, let top = waitingItems.first(where: { $0.needsYou }) else { return nil }
+        return identity(item: top)
+    }
+
+    /// The repo name the badge's mark stands for (spoken by VoiceOver).
+    public var badgeRepo: String? {
+        guard badgeNeedsYou else { return nil }
+        return waitingItems.first(where: { $0.needsYou })?.repo
+    }
+
     private func refresh() {
         refreshing = true
         defer {
@@ -136,7 +158,8 @@ public final class NotchModel: ObservableObject {
             if refreshAgain { refreshAgain = false; labelsChanged() }
         }
         let waiting = WaitingList.items(pending: pending, done: doneItems, terminal: terminalItems, timeout: timeout(for:),
-                                        label: { [identities] cwd, project in identities.label(cwd: cwd, project: project) }) // computed once per refresh
+                                        label: { [identities] cwd, project in identities.label(cwd: cwd, project: project) }, // computed once per refresh
+                                        resolved: { [identities] in identities.isResolved(cwd: $0) })
         if waiting != waitingItems {
             waitingItems = waiting
             waitingLayout = WaitingList.layout(waiting)
