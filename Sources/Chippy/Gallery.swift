@@ -413,7 +413,7 @@ enum Gallery {
             card([:]) // no plan in the payload: the generic card
             // the long plan with "Show more" pressed, drawn as the bare card on the notch's black
             if let req = demoModel(prompt: "Fix the login timeout bug", tool: "ExitPlanMode", input: ["plan": longPlan], log: log).pending.first, let plan = req.plan {
-                PlanCard(req: req, plan: plan, startExpanded: true, expand: {}, decide: { _ in })
+                PlanCard(req: req, plan: plan, startExpanded: true, expand: { _ in }, decide: { _ in })
                     .padding(16).frame(width: 405).background(Color.black)
             }
         }.padding(12).background(Color(white: 0.25))

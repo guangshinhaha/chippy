@@ -331,7 +331,7 @@ struct NotchView: View {
                                      progress: { model.savePartial(req.id, step: $0, answers: $1, byUser: $2) },
                                      send: { model.answer(req.id, selections: $0) }, handBack: { model.handBack(req.id) }).id(req.id).reveal(0.12)
                     } else if let plan = req.plan {
-                        PlanCard(req: req, plan: plan, expand: { model.pinRequest(req.id) }) { model.resolve(req.id, $0) }.id(req.id).reveal(0.12)
+                        PlanCard(req: req, plan: plan, startExpanded: model.expandedPlans.contains(req.id), expand: { model.setPlanExpanded(req.id, $0) }) { model.resolve(req.id, $0) }.id(req.id).reveal(0.12)
                     } else {
                         ApprovalCard(req: req) { model.resolve(req.id, $0) }.reveal(0.12)
                     }
@@ -418,11 +418,11 @@ struct ApprovalCard: View {
 struct PlanCard: View {
     let req: PendingRequest
     let plan: PlanProposal
-    let expand: () -> Void
+    let expand: (Bool) -> Void
     let decide: (Decision) -> Void
     @State private var expanded: Bool
 
-    init(req: PendingRequest, plan: PlanProposal, startExpanded: Bool = false, expand: @escaping () -> Void, decide: @escaping (Decision) -> Void) {
+    init(req: PendingRequest, plan: PlanProposal, startExpanded: Bool = false, expand: @escaping (Bool) -> Void, decide: @escaping (Decision) -> Void) {
         self.req = req; self.plan = plan; self.expand = expand; self.decide = decide
         _expanded = State(initialValue: startExpanded)
     }
@@ -443,10 +443,10 @@ struct PlanCard: View {
                     Text(line).font(.caption).foregroundStyle(.white.opacity(0.78)).lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                if v.hidden > 0 {
-                    Text(ApprovalIntent.marker("\(v.hidden) more line\(v.hidden == 1 ? "" : "s")")).font(.caption2).foregroundStyle(.white.opacity(0.45))
-                } else if expanded && plan.truncated {
-                    Text(ApprovalIntent.marker("plan continues in the terminal")).font(.caption2).foregroundStyle(.white.opacity(0.45))
+                if plan.truncated || v.hidden > 0 {
+                    let more = v.hidden > 0 ? "\(v.hidden) more line\(v.hidden == 1 ? "" : "s")" : nil
+                    let tail = plan.truncated ? "plan continues in the terminal" : nil
+                    Text(ApprovalIntent.marker([more, tail].compactMap { $0 }.joined(separator: " · "))).font(.caption2).foregroundStyle(.white.opacity(0.45))
                 }
                 if plan.hiddenRemoved > 0 {
                     Text("\(plan.hiddenRemoved) hidden character\(plan.hiddenRemoved == 1 ? "" : "s") removed").font(.caption2).foregroundStyle(.orange.opacity(0.85))
@@ -459,12 +459,12 @@ struct PlanCard: View {
             }
             Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.4)).lineLimit(1).truncationMode(.head)
             HStack(spacing: 8) {
-                ChipButton(title: "Approve", hint: "\(ShortcutKeys.prefix)Y", kind: .primary) { decide(.allow) }
+                ChipButton(title: plan.truncated ? "Approve (partly shown)" : "Approve", hint: "\(ShortcutKeys.prefix)Y", kind: .primary) { decide(.allow) }
                 ChipButton(title: "Keep planning", hint: "\(ShortcutKeys.prefix)N", kind: .destructive) { decide(.deny) }
                 Spacer(minLength: 0)
                 if plan.canExpand {
                     ChipButton(title: expanded ? "Show less" : "Show more", kind: .quiet) {
-                        expand() // reading is engagement: pin so the card cannot fold away mid-read
+                        expand(!expanded) // reading is engagement: pins so the card cannot fold away mid-read; the hotkey needs it
                         withAnimation(.easeOut(duration: 0.18)) { expanded.toggle() }
                     }
                 }

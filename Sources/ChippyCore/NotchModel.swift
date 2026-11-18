@@ -114,6 +114,8 @@ public final class NotchModel: ObservableObject {
         if !quietFolded.isEmpty { quietFolded.formIntersection(pendingIds) }
         if folds.keys.contains(where: { !pendingIds.contains($0) }) {
             folds = folds.filter { pendingIds.contains($0.key) }
+            let stale = expandedPlans.filter { !pendingIds.contains($0) }
+            if !stale.isEmpty { expandedPlans.subtract(stale) }
         }
         if pending.isEmpty { if folded { folded = false } }
         else if !folded, foldDue(now: clock()) { folded = true }
@@ -249,6 +251,24 @@ public final class NotchModel: ObservableObject {
         guard pending.contains(where: { $0.id == id }) else { return }
         folds[id]?.pin()
     }
+
+    /// Plan cards the user has expanded (#91). The hotkey approves a plan only from an expanded card, unless it is short enough
+    /// to be fully shown folded.
+    @Published public private(set) var expandedPlans: Set<String> = []
+    public func setPlanExpanded(_ id: String, _ on: Bool) {
+        guard pending.contains(where: { $0.id == id }) else { return }
+        if on { expandedPlans.insert(id) } else { expandedPlans.remove(id) }
+        if on { folds[id]?.pin() }
+    }
+    /// May ⌃⌥Y approve this card? Any non-plan card yes; a plan only when nothing is folded away from the reader.
+    public func hotkeyMayApprove(_ req: PendingRequest) -> Bool {
+        guard req.isPlanApproval else { return true }
+        guard let plan = req.plan else { return false }
+        return !plan.canExpand || expandedPlans.contains(req.id)
+    }
+
+    /// Experimental (#91): off by default. While off, ExitPlanMode goes to the terminal prompt untouched.
+    public var planCardEnabled = false
 
     /// Count shown on the collapsed notch while finished items wait (nil at 0, "9+" over 9).
     public var badge: String? { PeekGate.badge(count: doneItems.count + (folded ? pending.count : 0)) }
@@ -429,7 +449,16 @@ public final class NotchModel: ObservableObject {
             echoInputs[req.id] = payload.toolInput
         }
         // ExitPlanMode is allowed only with its own input echoed back as updatedInput (docs: a bare allow is not enough).
-        if req.isPlanApproval { echoInputs[req.id] = payload.toolInput }
+        // Flag off or no parseable plan: never a generic Allow card for a plan; the terminal prompt handles it.
+        if req.isPlanApproval {
+            guard planCardEnabled, req.plan != nil else {
+                conn.respond(nil)
+                noteTerminal(req, now: req.createdAt)
+                refresh()
+                return
+            }
+            echoInputs[req.id] = payload.toolInput
+        }
         req.lastPrompt = sessions.first { $0.id == payload.sessionId }?.lastPrompt
         if req.questions == nil, !req.isPlanApproval, always.contains(req) {
             conn.respond(Decision.allow.reply)
@@ -488,8 +517,12 @@ public final class NotchModel: ObservableObject {
         }
         if decision == .always, !Tour.isDemo(req.sessionId) { always.insert(req) } // the tour demo must show again next run
         if req.isPlanApproval {
-            conn.respond(Self.planReply(decision, input: echoInputs[id] ?? [:]))
-            echoInputs.removeValue(forKey: id)
+            let echo = echoInputs.removeValue(forKey: id)
+            let data = echo.flatMap { Self.planReply(decision, input: $0) }
+            conn.respond(data) // nil (no echo, or unserialisable) leaves the terminal prompt to answer
+            record(req, channel: data == nil ? .terminal : .notch, decision: data == nil ? "none" : "\(decision)", now: now)
+            refresh()
+            return
         } else {
             conn.respond(decision.reply)
         }
@@ -499,11 +532,12 @@ public final class NotchModel: ObservableObject {
 
     /// Reply for ExitPlanMode. Approve echoes the original tool input as `updatedInput`; Keep planning is a deny with a fixed
     /// message (no plan text, no interrupt) that goes to Claude. Live behaviour of both is unverified (see the spikes doc).
-    static func planReply(_ d: Decision, input: [String: Any]) -> Data {
+    static func planReply(_ d: Decision, input: [String: Any]) -> Data? {
         let o: [String: Any] = d == .deny
             ? ["behavior": "deny", "message": "The user chose to keep planning. Revise the plan and propose it again."]
             : ["behavior": "allow", "updatedInput": input]
-        return try! JSONSerialization.data(withJSONObject: o)
+        guard JSONSerialization.isValidJSONObject(o) else { return nil } // invalid types raise, not throw
+        return try? JSONSerialization.data(withJSONObject: o)
     }
 
     /// Answer with a set of labels per question. Single-select needs exactly one; multi-select at least one.
