@@ -52,7 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Clicks in any other app are "outside the notch": fold the detail back to its glance.
         // Esc in any app folds the detail. Global key events need Accessibility permission; without it only clicks work.
         escKey = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] e in
-            if e.keyCode == 53, self?.model.replyFieldFocused != true { DispatchQueue.main.async { self?.model.closeDetail() } }
+            if e.keyCode == 53, CardKeyGate.escShouldFold(replyFieldFocused: self?.model.replyFieldFocused == true) { DispatchQueue.main.async { self?.model.closeDetail() } }
         }
         outsideClick = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             if self?.panel?.inMenuTracking == true { return } // dismissing our own menu is not an outside click
@@ -97,10 +97,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func syncShortcuts() {
         guard let req = model.shownPending else { shortcutCard = nil; lastDesiredKeys = nil; hotKeys.unregister(); return }
         // Typing in the reply field (#94): no card hotkey may act or swallow a key until focus leaves it.
-        if model.replyFieldFocused { shortcutCard = nil; lastDesiredKeys = nil; hotKeys.unregister(); return }
+        // shortcutCard is kept: resetting it would re-arm the ShortcutGate window and drop a hotkey right after Esc.
+        if !CardKeyGate.shouldRegisterHotKeys(hasShownCard: true, replyFieldFocused: model.replyFieldFocused) { lastDesiredKeys = nil; hotKeys.unregister(); return }
         let seed = min(model.partials[req.id]?.step ?? 0, max((req.questions?.count ?? 1) - 1, 0)) // re-seeded on every sync, step 0 included; never past the last question
-        if shortcutCard?.id == req.id { // same card: keep keys and its shownAt
-            if req.questions != nil, questionStep != seed { questionStep = seed; registerQuestionKeys(req) }
+        if shortcutCard?.id == req.id { // same card: keep its shownAt; keys are re-registered if they were dropped (focus left the field)
+            if req.questions != nil, questionStep != seed || lastDesiredKeys == nil { questionStep = seed; registerQuestionKeys(req) }
             if req.isPlanApproval { registerPlanKeys(req) } // expanding or folding the plan changes whether Y may approve
             return
         }
@@ -134,20 +135,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Digits for the question on screen only, so an unused digit isn't swallowed.
     private func registerQuestionKeys(_ req: PendingRequest) {
         let counts = (req.questions ?? []).map { $0.options.count }
-        registerKeys(ShortcutKeys.question(optionCount: ShortcutGate.optionCount(step: questionStep, counts: counts)))
+        let keys = ShortcutKeys.question(optionCount: ShortcutGate.optionCount(step: questionStep, counts: counts))
+        let desired = keys.map { $0.action }
+        if lastDesiredKeys == desired { return } // already registered in full: no churn
+        lastDesiredKeys = registerKeys(keys) ? desired : nil
     }
 
     /// The one door to HotKeys.register: while the reply field has focus (#94) no card key may be registered, whoever asks
     /// (sync, the step sink, a plan toggle), so a typed digit or Y/N can never be swallowed.
     @discardableResult
     private func registerKeys(_ keys: [(keyCode: Int, action: ShortcutAction)]) -> Bool {
-        if model.replyFieldFocused { hotKeys.unregister(); lastDesiredKeys = nil; return false }
+        if !CardKeyGate.shouldRegisterHotKeys(hasShownCard: model.shownPending != nil, replyFieldFocused: model.replyFieldFocused) { hotKeys.unregister(); lastDesiredKeys = nil; return false }
         return hotKeys.register(keys)
     }
 
     private func handleShortcut(_ action: ShortcutAction) {
         // Only the card on screen, only once it has been visible long enough.
-        guard !model.replyFieldFocused, let req = model.shownPending, let card = shortcutCard, card.id == req.id,
+        guard CardKeyGate.shouldRegisterHotKeys(hasShownCard: true, replyFieldFocused: model.replyFieldFocused), let req = model.shownPending, let card = shortcutCard, card.id == req.id,
               ShortcutGate.allows(shownAt: card.shownAt) else { return }
         switch action {
         case .allow where req.questions == nil && model.hotkeyMayApprove(req): model.resolve(req.id, .allow)

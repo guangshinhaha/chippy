@@ -209,6 +209,9 @@ final class NotchPanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
 
+    /// Accessibility identifier tagging the reply field, so its click can be told apart from any other view.
+    static let replyFieldMarker = "chippy.replyField"
+
     /// True while the shared menu is popped up from this panel: the menu steals key focus, which must not read as
     /// "clicked elsewhere" (resignKey) or close the open panel under it. Set by the AppDelegate around `popUp`.
     var inMenuTracking = false
@@ -225,8 +228,15 @@ final class NotchPanel: NSPanel {
         // nowhere else does Chippy take the keyboard from the terminal.
         if event.type == .leftMouseDown, !isKeyWindow, model.freeTextReplyEnabled, model.shownPending?.questions != nil,
            var v = contentView?.hitTest(event.locationInWindow) {
-            while !(v is NSTextField || v is NSTextView), let up = v.superview { v = up }
-            if v is NSTextField || v is NSTextView { makeKey() }
+            // Only the reply field (tagged by accessibility identifier) takes key; any other hit does nothing. UNVERIFIED live:
+            // whether a click focuses a SwiftUI field in a non-activating panel, and whether the identifier reaches the AppKit view.
+            var tagged = false
+            while !tagged {
+                tagged = v.accessibilityIdentifier() == Self.replyFieldMarker
+                guard !tagged, let up = v.superview else { break }
+                v = up
+            }
+            if tagged { makeKey() }
         }
         super.sendEvent(event)
     }
@@ -234,7 +244,7 @@ final class NotchPanel: NSPanel {
     /// Esc (when the notch has focus) folds an open detail.
     /// While a text field has focus (#94) Esc only leaves it: the card stays and the draft is kept.
     override func cancelOperation(_ sender: Any?) {
-        if firstResponder is NSText { makeFirstResponder(nil); releaseKeyAfterReply(); return }
+        if firstResponder is NSText { makeFirstResponder(nil); model.clearReplyFocus(); releaseKeyAfterReply(); return } // owner cleared first, so the release guard passes
         model.closeDetail()
     }
 
@@ -253,7 +263,10 @@ final class NotchPanel: NSPanel {
     private var frontAtListOpen: pid_t?
     override func resignKey() {
         super.resignKey()
-        if firstResponder is NSText { makeFirstResponder(nil) } // keystrokes now go elsewhere: drop the field's focus (the draft stays)
+        if !inMenuTracking { // the gear popup stealing key is not a hand-off
+            if firstResponder is NSText { makeFirstResponder(nil) } // keystrokes now go elsewhere: drop the field's focus (the draft stays)
+            model.clearReplyFocus()
+        }
         guard model.listOpen, !inMenuTracking else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
             guard let self, self.model.listOpen, !self.inMenuTracking, !self.isKeyWindow else { return }

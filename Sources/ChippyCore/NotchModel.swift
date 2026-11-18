@@ -82,6 +82,7 @@ public final class NotchModel: ObservableObject {
     @Published public private(set) var folded = false
     /// One timer per request, so a later request never restarts an earlier one's fold (the oldest decides).
     private var folds: [String: NeedsMeFold] = [:]
+    func isFoldPinned(_ id: String) -> Bool { folds[id]?.isPinned == true }
     /// Last pointer state from the panel, kept even while expanded so a new peek can start from it.
     private var hovering = false
     private let clock: () -> TimeInterval
@@ -474,9 +475,11 @@ public final class NotchModel: ObservableObject {
     }
     /// The card's field gained (`on`) or lost focus. A stale card's blur never clears another card's focus.
     public func setReplyFieldFocused(_ on: Bool, id: String) {
-        if on { guard freeTextReplyEnabled, shownPending?.id == id, shownPending?.questions != nil else { return }; if replyFocusOwner != id { replyFocusOwner = id } }
+        if on { guard freeTextReplyEnabled, shownPending?.id == id, shownPending?.questions != nil else { return }; if replyFocusOwner != id { replyFocusOwner = id }; folds[id]?.pin() } // a focused-but-empty field is engagement too
         else if replyFocusOwner == id { replyFocusOwner = nil }
     }
+    /// The panel lost key or Esc left the field: drop whichever focus is held, straight in the model (not via SwiftUI's onChange).
+    public func clearReplyFocus() { if replyFocusOwner != nil { replyFocusOwner = nil } }
 
     /// Experimental (#91): off by default. While off, ExitPlanMode goes to the terminal prompt untouched.
     public var planCardEnabled = false
@@ -793,13 +796,25 @@ public final class NotchModel: ObservableObject {
 
     /// A typed reply, validated (#94): no newline; tabs become spaces; hidden and bidi scalars stripped; trimmed. The typed
     /// spacing is KEPT (not collapsed). The limit applies to the typed (trimmed) length. Nil means it goes to the terminal.
+    /// Scalars that break a line; typed text containing one cannot be sent as one line.
+    public static let lineBreaks: Set<UInt32> = [0x0A, 0x0D, 0x2028, 0x2029, 0x85]
+
+    /// Control, bidi and invisible padding. Unlike `ApprovalIntent.isHidden` this keeps ZWJ/ZWNJ (200D/200C) and
+    /// variation selectors (FE0E/FE0F), which legitimate emoji sequences and Indic scripts need.
+    static func isStrippedInFreeText(_ u: Unicode.Scalar) -> Bool {
+        switch u.value {
+        case 0x200C, 0x200D, 0xFE0E, 0xFE0F: return false
+        default: return ApprovalIntent.isHidden(u)
+        }
+    }
+
     public static func validFreeText(_ raw: String) -> String? {
-        for u in raw.unicodeScalars where [0x0A, 0x0D, 0x2028, 0x2029, 0x85].contains(u.value) { return nil }
+        for u in raw.unicodeScalars where lineBreaks.contains(u.value) { return nil }
         let typed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard typed.count <= freeTextLimit, typed.unicodeScalars.count <= freeTextLimit * 2 else { return nil } // also bounds hidden padding
         var out = String.UnicodeScalarView()
         for u in typed.unicodeScalars {
-            if u.value == 0x09 { out.append(" ") } else if !ApprovalIntent.isHidden(u) { out.append(u) }
+            if u.value == 0x09 { out.append(" ") } else if !isStrippedInFreeText(u) { out.append(u) }
         }
         let t = String(out).trimmingCharacters(in: .whitespacesAndNewlines)
         return t.isEmpty ? nil : t
@@ -809,7 +824,7 @@ public final class NotchModel: ObservableObject {
     public static func freeTextProblem(_ raw: String) -> String? {
         if validFreeText(raw) != nil { return nil }
         if raw.trimmingCharacters(in: .whitespacesAndNewlines).count > freeTextLimit { return "Too long (max \(freeTextLimit) characters). Shorten it, or use Answer in terminal." }
-        if raw.unicodeScalars.contains(where: { [0x0A, 0x0D, 0x2028, 0x2029, 0x85].contains($0.value) }) { return "One line only. Use Answer in terminal for more." }
+        if raw.unicodeScalars.contains(where: { lineBreaks.contains($0.value) }) { return "One line only. Use Answer in terminal for more." }
         return "Type a reply first, or pick an option."
     }
 

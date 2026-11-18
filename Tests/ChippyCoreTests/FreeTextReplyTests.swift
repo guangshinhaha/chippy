@@ -140,6 +140,17 @@ final class FreeTextReplyTests: XCTestCase {
         XCTAssertNil(m.replyFocusOwner)
     }
 
+    func testFocusPinsFoldTimerAndClearReplyFocusDropsOwner() {
+        let m = model(); let (c, _) = pair()
+        m.receiveApproval(qs([mq("Q")]), c)
+        let id = m.pending[0].id
+        m.setReplyFieldFocused(true, id: id)
+        XCTAssertTrue(m.isFoldPinned(id))
+        m.clearReplyFocus()
+        XCTAssertNil(m.replyFocusOwner)
+        XCTAssertFalse(m.replyFieldFocused)
+    }
+
     func testFocusIsFalseWhenAnotherCardTakesTheScreen() {
         let m = model(); let (c, _) = pair(); let (c2, _) = pair()
         m.receiveApproval(qs([mq("Q1")]), c)

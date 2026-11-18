@@ -734,6 +734,7 @@ struct QuestionCard: View {
                 .padding(.horizontal, 10).padding(.vertical, 5)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: fieldFocused ? 0.26 : 0.18)))
                 .accessibilityLabel("Type a reply")
+                .accessibilityIdentifier(NotchPanel.replyFieldMarker)
             if let msg = hint ?? (tooLong ? NotchModel.freeTextProblem(text) : nil) {
                 Text(msg).font(.caption2).foregroundStyle(.orange)
             }
@@ -744,13 +745,13 @@ struct QuestionCard: View {
 
     private func setText(_ new: String, _ q: AskQuestion) {
         // A newline or tab cannot be sent and Return submits: each becomes a space (words stay apart), then the text is kept as typed.
-        let t = String(new.map { ($0.isNewline || $0 == "\t") ? " " : $0 })
+        let t = String(String.UnicodeScalarView(new.unicodeScalars.map { (NotchModel.lineBreaks.contains($0.value) || $0 == "\t") ? " " : $0 }))
         texts[q.question] = t.isEmpty ? nil : t
         draft(q.question, t)
         hint = nil
         progress(step, answers, true) // typing is engagement: pins the card
         // Typed text replaces the selection, but only real text: spaces alone must not clear a pick.
-        if !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, answers[q.question] != nil { answers[q.question] = nil }
+        if NotchModel.validFreeText(t) != nil, answers[q.question] != nil { answers[q.question] = nil }
     }
 
     private func submitText(_ q: AskQuestion) {
