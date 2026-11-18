@@ -22,6 +22,27 @@ final class OrcaHostResolutionTests: XCTestCase {
         let r = ProcessTree.walk(start: 5, parent: { parents[$0] }, isApp: { _ in false }, tty: { _ in "ttys001" })
         XCTAssertNil(r.hostPid); XCTAssertEqual(r.tty, "ttys001")
     }
+    func win(_ pid: Int, layer: Int = 0, w: Double = 800, h: Double = 600, on: Bool? = true) -> [String: Any] {
+        var d: [String: Any] = ["kCGWindowOwnerPID": pid, "kCGWindowLayer": layer, "kCGWindowBounds": ["Width": w, "Height": h]]
+        if let on { d["kCGWindowIsOnscreen"] = on }
+        return d
+    }
+    func testWindowScanFilters() {
+        let list = [win(7), win(7, on: false), win(7, on: nil), win(8), win(7, layer: 25), win(7, w: 20, h: 20), win(9)]
+        XCTAssertEqual(WindowScan.counts(in: list, pids: [7, 8]), .init(all: 4, onScreen: 2))
+        XCTAssertEqual(WindowScan.counts(in: [], pids: [7]), .init(all: 0, onScreen: 0))
+        XCTAssertEqual(WindowScan.counts(in: [["junk": 1]], pids: [7]), .init(all: 0, onScreen: 0))
+    }
+    func testVerdict() {
+        typealias A = ActivationOutcome
+        XCTAssertEqual(A.verdict(frontmost: true, counts: .init(all: 2, onScreen: 1)), .landed)
+        XCTAssertEqual(A.verdict(frontmost: true, counts: .init(all: 2, onScreen: 0)), .offSpace)
+        XCTAssertEqual(A.verdict(frontmost: false, counts: .init(all: 2, onScreen: 2)), .notFrontmost)
+        XCTAssertEqual(A.verdict(frontmost: true, counts: .init(all: 0, onScreen: 0)), .landedUnverified)
+        XCTAssertEqual(A.verdict(frontmost: true, counts: nil), .landedUnverified)
+        XCTAssertEqual(A.verdict(frontmost: false, counts: nil), .notFrontmost)
+    }
+
     func testActivationOutcome() {
         XCTAssertTrue(ActivationOutcome.isFrontmost(frontmostPid: 7, target: 7))
         XCTAssertFalse(ActivationOutcome.isFrontmost(frontmostPid: 8, target: 7))
