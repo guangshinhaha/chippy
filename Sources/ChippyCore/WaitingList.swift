@@ -66,6 +66,7 @@ public enum WaitingList {
     /// "Approve Bash?" / "Answer 2 questions". Tool name and count only, never the command or the question.
     public static func actionLabel(_ r: PendingRequest) -> String {
         if let n = r.questions?.count { return n == 1 ? "Answer 1 question" : "Answer \(n) questions" }
+        if r.isPlanApproval { return "Review plan" }
         return "Approve \(r.toolName)?"
     }
 

@@ -40,17 +40,15 @@ public struct PlanProposal: Equatable {
         var truncated = prefix.count > scanChars
         let raw = String(prefix.prefix(scanChars))
         let name = (input["planFilePath"] as? String)
-            .map { ApprovalIntent.clean(($0 as NSString).lastPathComponent) }
+            .map { cleanText(($0 as NSString).lastPathComponent) }
             .flatMap { $0.isEmpty ? nil : $0 }
 
         // Character.isNewline covers \n \r VT FF NEL LS PS; the two Unicode separators are listed for clarity.
         var rows: [(raw: Substring, text: String)] = raw.split(omittingEmptySubsequences: true, whereSeparator: { $0.isNewline })
-            .map { ($0, ApprovalIntent.clean(String($0))) }.filter { !$0.text.isEmpty }
+            .map { ($0, cleanText(String($0))) }.filter { !$0.text.isEmpty }
         guard !rows.isEmpty else { return nil }
         let steps = rows.filter { isStep($0.text) }.count
-        func countHidden(_ r: Substring) -> Int { // only the part of the row that can be displayed
-            r.prefix(rowChars).unicodeScalars.filter { ApprovalIntent.isHidden($0) && $0 != "\t" }.count
-        }
+        func countHidden(_ r: Substring) -> Int { Self.countHidden(raw: r) }
         var titleHidden = 0
         var rowHidden: [Int] = []
         var title: String?
@@ -72,6 +70,26 @@ public struct PlanProposal: Equatable {
             body.append(clipped); budget -= clipped.count; rowHidden.append(countHidden(r.raw))
         }
         return PlanProposal(truncated: truncated, fileName: name, title: title, lines: body, stepCount: steps, titleHidden: titleHidden, rowHidden: rowHidden)
+    }
+
+    /// ApprovalIntent.clean, then the card's own marker symbol is shown as `<U+22EF>` (as `reveal` does), so plan text can't forge "⋯ ... ⋯" rows.
+    static func cleanText(_ s: String) -> String {
+        ApprovalIntent.clean(s).replacingOccurrences(of: String(ApprovalIntent.markSymbol), with: "<U+22EF>")
+    }
+
+    /// Hidden scalars within what the card displays of a raw row: walks the raw row the way `clean` does (whitespace runs
+    /// collapse, hidden scalars drop) and stops once `rowChars` cleaned characters are out.
+    static func countHidden(raw: Substring) -> Int {
+        let breaks: Set<UInt32> = [0x09, 0x0A, 0x0D, 0x2028, 0x2029]
+        var emitted = 0, hidden = 0, pendingSpace = false
+        for u in raw.unicodeScalars {
+            if emitted >= rowChars { break }
+            if u == " " || breaks.contains(u.value) { pendingSpace = emitted > 0; continue }
+            if ApprovalIntent.isHidden(u) { hidden += 1; continue }
+            if pendingSpace { emitted += 1; pendingSpace = false; if emitted >= rowChars { break } }
+            emitted += u == ApprovalIntent.markSymbol ? 8 : 1
+        }
+        return hidden
     }
 
     static func isStep(_ line: String) -> Bool {

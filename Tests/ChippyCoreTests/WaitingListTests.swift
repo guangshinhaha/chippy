@@ -315,6 +315,19 @@ final class WaitingListTests: XCTestCase {
         WaitingList.items(pending: p, done: [], terminal: terminal, timeout: timeout).map { $0.repo }
     }
 
+    private func planReq(_ id: String, at: TimeInterval) -> PendingRequest {
+        let o: [String: Any] = ["session_id": id, "cwd": "/w/\(id)", "hook_event_name": "PermissionRequest",
+                                "tool_name": "ExitPlanMode", "tool_input": ["plan": "1. Do it"]]
+        return PendingRequest(payload: HookPayload(json: try! JSONSerialization.data(withJSONObject: o))!, id: id, now: Date(timeIntervalSince1970: at))
+    }
+    func testPlanApprovalLabelAndSortsAsApproval() {
+        let items = WaitingList.items(pending: [req("q", q: true, at: 0), planReq("p", at: 50)], done: [], timeout: { _ in 0 })
+        XCTAssertEqual(items.map { $0.repo }, ["p", "q"])
+        XCTAssertEqual(items[0].label, "Review plan")
+        XCTAssertEqual(items[0].kind, .approval)
+        XCTAssertEqual(WaitingList.actionLabel(req("b", at: 0)), "Approve Bash?")
+    }
+
     func testApprovalsRankBeforeQuestionsEvenWhenNewer() {
         XCTAssertEqual(order([req("q", q: true, at: 0), req("a", at: 50)]), ["a", "q"])
     }

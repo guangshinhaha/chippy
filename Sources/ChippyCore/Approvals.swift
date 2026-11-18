@@ -85,9 +85,13 @@ public struct PendingRequest: Identifiable, Equatable {
         host = p.host
         questions = p.toolName == "AskUserQuestion" ? AskQuestion.parse(p.toolInput) : nil
         plan = PlanProposal.make(tool: p.toolName ?? "tool", input: p.toolInput)
-        detail = ApprovalIntent.headTail(ApprovalIntent.reveal(Self.rawDetail(p.toolInput)))
-        let canon = (try? JSONSerialization.data(withJSONObject: p.toolInput, options: [.sortedKeys])) ?? Data()
-        inputDigest = AlwaysStore.sha256(canon)
+        if plan != nil { // the plan card never reads the generic detail, and a plan is never "always" (the digest is only for that)
+            detail = ""; inputDigest = ""
+        } else {
+            detail = ApprovalIntent.headTail(ApprovalIntent.reveal(Self.rawDetail(p.toolInput)))
+            let canon = (try? JSONSerialization.data(withJSONObject: p.toolInput, options: [.sortedKeys])) ?? Data()
+            inputDigest = AlwaysStore.sha256(canon)
+        }
     }
 
     static func rawDetail(_ input: [String: Any]) -> String {

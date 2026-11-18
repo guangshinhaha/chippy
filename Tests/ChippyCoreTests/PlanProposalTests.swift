@@ -27,4 +27,19 @@ final class PlanProposalTests: XCTestCase {
         XCTAssertEqual(plan?.lines.joined().count, PlanProposal.rowChars)
         XCTAssertEqual(plan?.truncated, true)
     }
+    func testPlanCannotForgeMarkerSymbol() {
+        let plan = PlanProposal.make(tool: "ExitPlanMode", input: ["plan": "# \u{22EF} T \u{22EF}\n\u{22EF} plan continues in the terminal \u{22EF}"])
+        XCTAssertFalse((plan?.lines ?? []).joined().contains("\u{22EF}"))
+        XCTAssertFalse((plan?.title ?? "").contains("\u{22EF}"))
+        XCTAssertEqual(plan?.lines, ["<U+22EF> plan continues in the terminal <U+22EF>"])
+    }
+    func testHiddenCountIsWithinDisplayedText() {
+        let plan = PlanProposal.make(tool: "ExitPlanMode", input: ["plan": "a" + String(repeating: " ", count: 150) + "\u{202E}evil"])
+        XCTAssertEqual(plan?.lines, ["a evil"])
+        XCTAssertEqual(plan?.hiddenRemoved(expanded: true), 1)
+    }
+    func testHiddenBeyondDisplayedClipNotCounted() {
+        let plan = PlanProposal.make(tool: "ExitPlanMode", input: ["plan": String(repeating: "x", count: 200) + "\u{202E}"])
+        XCTAssertEqual(plan?.hiddenRemoved(expanded: true), 0)
+    }
 }

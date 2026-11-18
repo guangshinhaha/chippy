@@ -49,8 +49,11 @@ final class HotKeys {
 
     private static let signature: OSType = 0x4348_5059 // 'CHPY'
 
-    func register(_ set: [(keyCode: Int, action: ShortcutAction)]) {
+    /// True when every key registered.
+    @discardableResult
+    func register(_ set: [(keyCode: Int, action: ShortcutAction)]) -> Bool {
         unregister()
+        var all = true
         installHandlerIfNeeded()
         for item in set {
             let id = nextId; nextId += 1
@@ -59,8 +62,9 @@ final class HotKeys {
             let status = RegisterEventHotKey(UInt32(item.keyCode), UInt32(controlKey | optionKey), hkID,
                                              GetApplicationEventTarget(), 0, &ref)
             if status == noErr, let ref { refs[id] = ref; actions[id] = item.action }
-            else { NSLog("Chippy: hot key \(item.keyCode) not registered (\(status))") }
+            else { all = false; NSLog("Chippy: hot key \(item.keyCode) not registered (\(status))") }
         }
+        return all
     }
 
     func unregister() {

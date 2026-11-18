@@ -85,10 +85,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .receive(on: DispatchQueue.main).sink { [weak self] in self?.syncShortcuts() }
     }
 
-    private var planKeyState: (id: String, mayApprove: Bool)?
+    /// The key set last asked of HotKeys, kept only while it registered in full; a failed registration is retried on the next sync.
+    private var lastDesiredKeys: [ShortcutAction]?
 
     private func syncShortcuts() {
-        guard let req = model.shownPending else { shortcutCard = nil; planKeyState = nil; hotKeys.unregister(); return }
+        guard let req = model.shownPending else { shortcutCard = nil; lastDesiredKeys = nil; hotKeys.unregister(); return }
         let seed = min(model.partials[req.id]?.step ?? 0, max((req.questions?.count ?? 1) - 1, 0)) // re-seeded on every sync, step 0 included; never past the last question
         if shortcutCard?.id == req.id { // same card: keep keys and its shownAt
             if req.questions != nil, questionStep != seed { questionStep = seed; registerQuestionKeys(req) }
@@ -96,7 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         shortcutCard = (req.id, Date())
-        planKeyState = nil
+        lastDesiredKeys = nil
         questionStep = seed
         if req.questions != nil {
             registerQuestionKeys(req)
@@ -110,8 +111,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// A plan has no "always" key, and approves by key only once the reader has the whole card open.
     private func registerPlanKeys(_ req: PendingRequest) {
         let mayApprove = model.hotkeyMayApprove(req)
-        if planKeyState?.id == req.id, planKeyState?.mayApprove == mayApprove { return } // only a change of card or of the gate re-registers
-        planKeyState = (req.id, mayApprove)
         let keys = ShortcutKeys.approval.filter { k in
             switch k.action {
             case .allow: return mayApprove
@@ -119,7 +118,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             default: return true
             }
         }
-        hotKeys.register(keys)
+        let desired = keys.map { $0.action }
+        if lastDesiredKeys == desired { return } // same desired set and it registered in full: no churn
+        lastDesiredKeys = hotKeys.register(keys) ? desired : nil
     }
 
     /// Digits for the question on screen only, so an unused digit isn't swallowed.
