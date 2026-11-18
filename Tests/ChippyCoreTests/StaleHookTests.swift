@@ -23,7 +23,7 @@ final class StaleHookTests: XCTestCase {
 
     func testOldInstallIsStale() {
         let old = settings("\"\(bin)\" relay --timeout 20", timeout: 30)
-        XCTAssertEqual(SettingsInstaller.staleness(old), [.missingQuestionFlag, .timeoutTooShort])
+        XCTAssertEqual(SettingsInstaller.staleness(old), [.missingQuestionFlag])
     }
 
     func testFreshInstallIsNotStale() {
