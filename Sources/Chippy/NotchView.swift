@@ -211,7 +211,8 @@ struct ApprovalCard: View {
             if let p = req.lastPrompt, !p.isEmpty {
                 Text("“\(p)”").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
             }
-            Text("\(req.toolName) wants to run").font(.caption2).foregroundStyle(.white.opacity(0.6))
+            Text(req.intent).font(.callout.weight(.semibold)).foregroundStyle(.white).lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
             Text(req.detail.isEmpty ? req.toolName : req.detail)
                 .font(.system(.caption, design: .monospaced)).foregroundStyle(.white)
                 .lineLimit(4).truncationMode(.middle)

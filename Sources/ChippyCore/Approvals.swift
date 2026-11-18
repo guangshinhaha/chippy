@@ -43,6 +43,8 @@ public struct PendingRequest: Identifiable, Equatable {
     public let toolName: String
     /// One-line ask, verbatim from the tool input (e.g. "Bash: npm install").
     public let ask: String
+    /// One-line plain intent shown above the raw detail.
+    public let intent: String
     public let createdAt: Date
     public let branch: String?
     /// Full command / path / input, for the detail card (capped). In memory only.
@@ -63,6 +65,7 @@ public struct PendingRequest: Identifiable, Equatable {
         cwd = p.cwd
         toolName = p.toolName ?? "tool"
         ask = Self.oneLine(tool: p.toolName ?? "tool", input: p.toolInput)
+        intent = ApprovalIntent.line(tool: p.toolName ?? "tool", input: p.toolInput)
         createdAt = now
         leadIn = p.toolName == "AskUserQuestion" ? p.leadIn : nil
         branch = p.branch
