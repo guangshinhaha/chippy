@@ -31,12 +31,14 @@ final class KeepAwake {
 
     private static let marker = ChippyPaths.supportDir.appendingPathComponent("disablesleep-on")
     private static let pmset = "/usr/bin/pmset"
-    private static let kMode = "keepAwake.mode", kUntil = "keepAwake.until"
+    private static let kMode = "keepAwake.mode", kUntil = "keepAwake.until", kDuration = "keepAwake.duration"
     private static let kOldEnabled = "keepAwake.enabled", kOldLid = "keepAwake.lidClosed"
 
     /// Chosen mode and absolute deadline (nil = no deadline). Persisted; the effective mode is derived from them.
     private var mode: AwakeMode
     private var until: Date?
+    /// The duration the user picked; cleared with the deadline so the radio never drifts with the countdown.
+    private var duration: AwakeDuration = .indefinite
     static var setupInstalled: Bool { FileManager.default.fileExists(atPath: SudoersRule.path) }
 
     init(model: NotchModel) {
@@ -46,16 +48,25 @@ final class KeepAwake {
             mode = m
         } else {
             // One-time migration; the old keys are left alone.
-            mode = AwakePolicy.migrate(enabled: d.bool(forKey: Self.kOldEnabled), lidClosed: d.bool(forKey: Self.kOldLid))
+            mode = AwakePolicy.migrate(enabled: d.bool(forKey: Self.kOldEnabled), lidClosed: d.bool(forKey: Self.kOldLid),
+                                      setupInstalled: Self.setupInstalled)
             d.set(mode.rawValue, forKey: Self.kMode)
         }
         until = d.object(forKey: Self.kUntil) is Double ? Date(timeIntervalSince1970: d.double(forKey: Self.kUntil)) : nil
+        duration = until == nil ? .indefinite : (AwakeDuration(rawValue: d.integer(forKey: Self.kDuration)) ?? .indefinite)
     }
 
-    private func setMode(_ m: AwakeMode, until u: Date?) {
-        mode = m; until = u
+    private func setMode(_ m: AwakeMode, until u: Date?, duration dur: AwakeDuration = .indefinite) {
+        mode = m; until = u; duration = u == nil ? .indefinite : dur
+        defaults.set(duration.rawValue, forKey: Self.kDuration)
         defaults.set(m.rawValue, forKey: Self.kMode)
         if let u { defaults.set(u.timeIntervalSince1970, forKey: Self.kUntil) } else { defaults.removeObject(forKey: Self.kUntil) }
+    }
+
+    /// The deadline and duration still in force: none when off or already past, so a pick is never undone by a stale one.
+    private func liveDeadline(_ now: Date) -> (Date, AwakeDuration)? {
+        guard mode != .off, let u = until, u > now else { return nil }
+        return (u, duration)
     }
 
     /// Call once at launch. Clears any disablesleep a crashed run left behind, then starts watching.
@@ -88,7 +99,7 @@ final class KeepAwake {
         parentItem.image = NSImage(systemSymbolName: "cup.and.saucer", accessibilityDescription: "Keep Mac awake")
         let menu = NSMenu(); menu.autoenablesItems = false
         for m in AwakeMode.allCases {
-            let i = NSMenuItem(title: m == .agentsLid ? "While agents work, even lid closed" : m.label,
+            let i = NSMenuItem(title: m.label,
                                action: #selector(modePicked(_:)), keyEquivalent: "")
             i.target = self; i.representedObject = m.rawValue
             modeItems[m] = i; menu.addItem(i)
@@ -122,7 +133,7 @@ final class KeepAwake {
         let nameOK = SudoersRule.isValidUser(NSUserName())
         modeItems[.agentsLid]?.isEnabled = Self.setupInstalled || nameOK
         awakeForItem.isEnabled = eff != .off
-        let cur = AwakeDuration.closest(until: until, now: now)
+        let cur = until == nil ? AwakeDuration.indefinite : duration
         for (d, i) in durationItems { i.state = d == cur ? .on : .off }
         let installed = Self.setupInstalled
         lidSetupItem.isHidden = installed
@@ -144,18 +155,22 @@ final class KeepAwake {
             // Run setup first; if it is cancelled or fails the previous mode stays.
             guard installSetup() else { evaluate(); return }
         }
-        setMode(picked, until: picked == .off ? nil : until)
+        let live = picked == .off ? nil : liveDeadline(Date())
+        setMode(picked, until: live?.0, duration: live?.1 ?? .indefinite)
         evaluate()
     }
 
     @objc private func durationPicked(_ sender: NSMenuItem) {
         guard mode != .off, let d = AwakeDuration(rawValue: sender.tag) else { return }
-        setMode(mode, until: d.deadline(from: Date()))
+        setMode(mode, until: d.deadline(from: Date()), duration: d)
         evaluate()
     }
 
     @objc private func setupClicked() {
-        if installSetup() { setMode(.agentsLid, until: until) }
+        if installSetup() {
+            let live = liveDeadline(Date())
+            setMode(.agentsLid, until: live?.0, duration: live?.1 ?? .indefinite)
+        }
         evaluate()
     }
 
@@ -165,7 +180,9 @@ final class KeepAwake {
 
     @objc private func removeSetup() {
         disabler.clearBlocking { Self.runPmset($0) }
-        if runAdmin(SudoersRule.removeScript), mode == .agentsLid { setMode(.agents, until: until) }
+        if runAdmin(SudoersRule.removeScript), mode == .agentsLid {
+            setMode(.agents, until: until, duration: duration)
+        }
         evaluate()
     }
 

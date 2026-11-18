@@ -8,7 +8,7 @@ public enum AwakeMode: String, CaseIterable, Equatable {
         switch self {
         case .off: return "Off"
         case .agents: return "While agents work"
-        case .agentsLid: return "While agents work, lid closed"
+        case .agentsLid: return "While agents work, even lid closed"
         }
     }
 }
@@ -30,22 +30,14 @@ public enum AwakeDuration: Int, CaseIterable, Equatable {
     public func deadline(from now: Date) -> Date? {
         self == .indefinite ? nil : now.addingTimeInterval(TimeInterval(rawValue))
     }
-
-    /// Which preset the stored deadline corresponds to, for the radio group: the smallest preset
-    /// that is not shorter than what remains; nil deadline = indefinite.
-    public static func closest(until: Date?, now: Date) -> AwakeDuration {
-        guard let until else { return .indefinite }
-        let left = until.timeIntervalSince(now)
-        for d in [AwakeDuration.oneHour, .twoHours, .fourHours] where left <= TimeInterval(d.rawValue) { return d }
-        return .fourHours
-    }
 }
 
 public extension AwakePolicy {
     /// One-time migration from the old `keepAwake.enabled` / `keepAwake.lidClosed` booleans.
-    static func migrate(enabled: Bool, lidClosed: Bool) -> AwakeMode {
+    /// Lid mode without the sudoers setup migrates to `agents`, so the stored mode is always one the menu can show.
+    static func migrate(enabled: Bool, lidClosed: Bool, setupInstalled: Bool = true) -> AwakeMode {
         guard enabled else { return .off }
-        return lidClosed ? .agentsLid : .agents
+        return lidClosed && setupInstalled ? .agentsLid : .agents
     }
 
     /// The mode actually in force. At or past the deadline -> off; lid mode without setup -> agents.
