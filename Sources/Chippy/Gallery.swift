@@ -155,40 +155,6 @@ enum Gallery {
         writeNotchPNG(model, m, size: sz, to: path, note: "state=\(model.state) header=\(model.headerTitle)")
     }
 
-    /// `Chippy --measure-done`: hosts the real NotchView offered the full 560pt panel and prints the settled card height
-    /// (`box.contentHeight`, what the panel hugs) for a short done card, details closed and open (#100). Exit 1 if any
-    /// case is taller than its content needs.
-    @MainActor
-    static func measureDone() -> Bool {
-        func settled(reply: String, openDetails: Bool) -> CGFloat {
-            let model = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: tempLog()))
-            func p(_ ev: String, _ extra: String = "") -> HookPayload { HookPayload(json: Data(#"{"session_id":"a","hook_event_name":"\#(ev)","cwd":"/demo/api-server","chippy_branch":"main"\#(extra)}"#.utf8))! }
-            model.apply(p("UserPromptSubmit", #","prompt":"Fix the login timeout""#))
-            let esc = (try? JSONEncoder().encode(reply)).flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
-            model.apply(p("Stop", ",\"last_assistant_message\":\(esc)"))
-            model.toggleOpen()
-            let m = NotchMetrics.sample14
-            let b = box(m)
-            SummaryView.forceOpenForMeasure = openDetails // a headless host cannot click "Show details"
-            let host = NSHostingView(rootView: NotchView(model: model, box: b).frame(width: 600, height: 560))
-            let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 560), styleMask: [.borderless], backing: .buffered, defer: false)
-            win.contentView = host
-            win.orderBack(nil)
-            for _ in 0..<40 { host.layoutSubtreeIfNeeded(); RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
-            SummaryView.forceOpenForMeasure = false
-            return b.contentHeight
-        }
-        let short = "Fixed the login timeout. The session cookie was expiring at 5 minutes instead of 30, so I raised the TTL and added a test. Nothing else changed."
-        let withDetails = short + "\n\nWhat changed:\n- **auth.ts**: TTL 5 to 30 min\n- **auth.test.ts**: new test"
-        var ok = true
-        for (name, reply, open, limit) in [("short, closed", short, false, CGFloat(210)), ("short+details, closed", withDetails, false, CGFloat(210)), ("short+details, open", withDetails, true, CGFloat(300))] {
-            let h = settled(reply: reply, openDetails: open)
-            print("\(name): contentHeight=\(h) limit=\(limit)")
-            if h <= 0 || h > limit { ok = false }
-        }
-        return ok
-    }
-
     /// `Chippy --render-glance out.png` (#90): the open panel with one line per session. The inputs below carry a path, a command
     /// and an unknown MCP tool on purpose: none of that may appear, only Editing / Running / Searching / Working.
     @MainActor

@@ -6,11 +6,6 @@ if let i = args.firstIndex(of: "--render-gallery"), i + 1 < args.count {
     exit(0)
 }
 
-if args.contains("--measure-done") {
-    let ok = MainActor.assumeIsolated { Gallery.measureDone() }
-    exit(ok ? 0 : 1)
-}
-
 if let i = args.firstIndex(of: "--render-done-detail"), i + 1 < args.count {
     MainActor.assumeIsolated { Gallery.renderDoneDetail(to: args[i + 1]) }
     exit(0)
