@@ -61,8 +61,8 @@ final class SummaryCleanerTests: XCTestCase {
         XCTAssertLessThanOrEqual(SummaryCleaner.closingDecision(q)?.count ?? 999, SummaryCleaner.maxDecisionChars)
     }
     func testHugeReplyIsFast() {
-        let s = String(repeating: "a. ", count: 100_000) + "ok?"
-        XCTAssertEqual(SummaryCleaner.closingDecision(s), "ok?")
+        let s = String(repeating: "a. ", count: 100_000) + "go on?"
+        XCTAssertEqual(SummaryCleaner.closingDecision(s), "go on?")
     }
     func testDoneItemWiring() {
         let d = DoneItem(sessionId: "s", project: "p", branch: nil, files: 0, added: 0, removed: 0, reply: "Done. Merge it?", prompt: "<task-id>x</task-id>", at: Date())
