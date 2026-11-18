@@ -50,3 +50,10 @@ Source: web research on Apple's Live Activities HIG and existing Claude Code not
 - Glyph: first Character of the uppercased repo name if it is an ASCII letter or digit, else `#`.
 - Shown on list rows, Recent rows, every card header, the compact glance and the needs-you badge (rank-first item, only when the badge has 34pt or more). VoiceOver rows say the spoken form ("pink circle G"); the badge says the repo and mark ("next from govapps, teal diamond") and only when the mark is visible.
 - Gallery: `Chippy --render-identity out.png`.
+
+## Live glance (#90)
+- One line per session in the panel the user opens (click or hover on the resting tab): identity mark, repo (+ worktree tag), and one word. Running sessions first, newest first; then idle ones.
+- The word comes from the TOOL NAME ONLY, through the `LiveGlance` allowlist (Reading, Editing, Running, Searching, Delegating, Planning). Unknown and MCP tools show "Working"; a new prompt or a finished tool shows "Thinking". Never a path, command, prompt or tool input, and never a raw tool name.
+- In memory on `SessionRow.activity` only: not logged, not persisted. Cleared on Stop, SessionStart and SessionEnd (the row goes).
+- Passive: it adds no card, pending item, peek, sound or fold timer and does not change density; it only shows when the panel is already open. Rows are fixed 18pt, so they sit inside the existing `sessionRowCap` budget.
+- Gallery: `Chippy --render-glance out.png`.

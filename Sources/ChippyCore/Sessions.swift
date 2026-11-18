@@ -15,6 +15,8 @@ public struct SessionRow: Identifiable, Equatable {
     public var added = 0
     public var removed = 0
     public var host: HostInfo?
+    /// Live glance (#90): one allowlisted word from the tool name only (see `LiveGlance`). nil unless working.
+    public var activity: String?
     public var updatedAt: Date
 
     /// One-line live status, e.g. "Claude Code · editing 3 files".
@@ -43,6 +45,7 @@ public struct SessionStore {
         rows[i].updatedAt = now
         // Latest wins, but a tty-only report must not erase a known host app.
         if let h = p.host, h.hasHost || rows[i].host == nil { rows[i].host = h }
+        rows[i].activity = LiveGlance.activity(after: p.event, tool: p.toolName) // Stop, SessionStart and others clear it
         switch p.event {
         case "SessionStart":
             rows[i].status = .idle; rows[i].detail = "Session started"
@@ -75,6 +78,11 @@ public struct SessionStore {
         case "Bash": return "Running " + String((p.toolInput["command"] as? String ?? "command").prefix(40))
         default: return "Using \(tool)"
         }
+    }
+
+    /// One glance line per running session: working only, newest first, word from `LiveGlance` (never tool input).
+    public var glanceRows: [SessionRow] {
+        rows.filter { $0.status == .working && $0.activity != nil }.sorted { $0.updatedAt > $1.updatedAt }
     }
 
     /// Overall notch state derived from all sessions.

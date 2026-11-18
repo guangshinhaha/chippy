@@ -155,6 +155,30 @@ enum Gallery {
         writeNotchPNG(model, m, size: sz, to: path, note: "state=\(model.state) header=\(model.headerTitle)")
     }
 
+    /// `Chippy --render-glance out.png` (#90): the open panel with one line per session. The inputs below carry a path, a command
+    /// and an unknown MCP tool on purpose: none of that may appear, only Editing / Running / Searching / Working.
+    @MainActor
+    static func renderGlance(to path: String) {
+        let log = tempLog()
+        defer { try? FileManager.default.removeItem(at: log) }
+        let model = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: log))
+        func p(_ sid: String, _ cwd: String, _ tool: String, _ input: String) -> HookPayload {
+            HookPayload(json: Data(#"{"session_id":"\#(sid)","hook_event_name":"PreToolUse","cwd":"\#(cwd)","chippy_branch":"main","tool_name":"\#(tool)","tool_input":\#(input)}"#.utf8))!
+        }
+        let t = Date()
+        model.apply(p("a", "/demo/api-server", "Edit", #"{"file_path":"/Users/x/students/marks.xlsx"}"#), now: t.addingTimeInterval(-9))
+        model.apply(p("b", "/demo/docs-site", "Bash", #"{"command":"curl https://secret.example/token"}"#), now: t.addingTimeInterval(-6))
+        model.apply(p("c", "/demo/billing-api", "mcp__acme_crm__lookup", #"{"q":"jane tan nric"}"#), now: t.addingTimeInterval(-3))
+        model.apply(p("d", "/demo/web-app", "Grep", #"{"pattern":"password"}"#), now: t)
+        model.apply(HookPayload(json: Data(#"{"session_id":"e","hook_event_name":"SessionStart","cwd":"/demo/portal"}"#.utf8))!, now: t.addingTimeInterval(-20))
+        model.toggleOpen()
+        let m = NotchMetrics.sample14
+        let sz = m.size(for: .expanded, contentHeight: 250)
+        let b = box(m); b.contentHeight = 250
+        let r = ImageRenderer(content: NotchView(model: model, box: b).frame(width: sz.width, height: sz.height).background(Color(white: 0.25)))
+        writePNG(r, to: path, note: "restOpen=\(model.restOpen) lines=\(model.glanceSessions.map { $0.activity ?? "Idle" })")
+    }
+
     /// Render one notch view at `size` to a 2x PNG and print the note.
     @MainActor
     private static func writeNotchPNG(_ model: NotchModel, _ m: NotchMetrics, size sz: CGSize, to path: String, note: String) {

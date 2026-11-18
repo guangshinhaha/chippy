@@ -128,6 +128,15 @@ public final class NotchModel: ObservableObject {
         }
     }
 
+    /// Session lines for the open panel (#90): running sessions first (newest first), then the rest. Read-only, so a glance never
+    /// changes density, pending, folds or sounds; it only rides on `sessions`, which `apply` already updates.
+    public var glanceSessions: [SessionRow] {
+        sessions.sorted { a, b in
+            let ra = a.activity != nil, rb = b.activity != nil
+            return ra != rb ? ra : a.updatedAt > b.updatedAt
+        }
+    }
+
     /// The one repo label for a cwd, as list rows show it: cached git result, or the folder-name fallback while it loads.
     public func repoLabel(cwd: String, project: String) -> RepoLabel { identities.label(cwd: cwd, project: project) }
 

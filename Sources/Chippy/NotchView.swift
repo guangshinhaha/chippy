@@ -380,14 +380,12 @@ struct NotchView: View {
                                                           mark: { model.identity(cwd: $0.cwd, project: $0.project) }).reveal(0.12) }
                     }
                     if model.sessions.isEmpty && model.recent.items.isEmpty { Text("No agent sessions.").font(.caption).foregroundStyle(.white.opacity(0.6)) }
-                    ForEach(model.sessions.prefix(Self.sessionRowCap)) { row in
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("\(row.project) · \(row.headline)").font(.caption.bold()).foregroundStyle(.white)
-                            Text(row.detail).font(.caption2).foregroundStyle(.white.opacity(0.6))
-                        }
+                    // Live glance (#90): one line per session, working first. The word is the tool's category only, never its input.
+                    ForEach(model.glanceSessions.prefix(Self.sessionRowCap)) { row in
+                        GlanceRow(label: model.repoLabel(cwd: row.cwd, project: row.project), mark: model.identity(cwd: row.cwd, project: row.project), word: row.activity)
                     }
-                    if model.sessions.count > Self.sessionRowCap {
-                        Text("\(model.sessions.count - Self.sessionRowCap) more sessions").font(.caption2).foregroundStyle(.white.opacity(0.6))
+                    if model.glanceSessions.count > Self.sessionRowCap {
+                        Text("\(model.glanceSessions.count - Self.sessionRowCap) more sessions").font(.caption2).foregroundStyle(.white.opacity(0.6))
                     }
                 } else {
                     terminalCards
@@ -1039,6 +1037,28 @@ struct RepoTitle: View {
                     .frame(maxWidth: 110, alignment: .leading).layoutPriority(0)
             }
         }
+    }
+}
+
+/// One line per session (#90): identity mark, repo (worktree tag), and the live word on the right. Read-only: no tap, no focus.
+/// `word` is nil for a session that is not working; it then says "Idle". Fixed one-line height, so the panel budget is rows x 18.
+struct GlanceRow: View {
+    let label: RepoLabel
+    let mark: SessionIdentity
+    let word: String?
+    var body: some View {
+        HStack(spacing: 6) {
+            IdentityMark(identity: mark, size: 12)
+            Text(label.repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle).layoutPriority(1)
+            if let wt = label.worktree {
+                Text(wt).font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1).truncationMode(.middle).frame(maxWidth: 90, alignment: .leading)
+            }
+            Spacer(minLength: 6)
+            Text(word ?? "Idle").font(.caption2).foregroundStyle(.white.opacity(word == nil ? 0.4 : 0.75)).lineLimit(1)
+        }
+        .frame(height: 18)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(label.repo), \(mark.spokenShort), \(word ?? "idle")")
     }
 }
 
