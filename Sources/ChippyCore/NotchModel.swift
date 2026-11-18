@@ -161,32 +161,36 @@ public final class NotchModel: ObservableObject {
         refresh()
     }
 
-    /// Answer a question request with one chosen option label per question (keyed by question text).
-    public func answer(_ id: String, _ answers: [String: String], now: Date = Date()) {
-        answer(id, selections: answers.mapValues { [$0] }, now: now)
-    }
-
     /// Answer with a set of labels per question. Single-select needs exactly one; multi-select at least one.
     /// Multi-select labels are joined in the question's option order with ", " (the documented answer format;
-    /// not yet verified in a live Claude Code session). Anything incomplete goes back to the terminal.
-    public func answer(_ id: String, selections: [String: Set<String>], now: Date = Date()) {
-        guard let i = pending.firstIndex(where: { $0.id == id }), let conn = connections.removeValue(forKey: id),
-              var input = questionInputs.removeValue(forKey: id) else { return }
+    /// not yet verified in a live Claude Code session). An invalid selection changes nothing: the card stays up.
+    /// Returns whether the answer was sent.
+    @discardableResult
+    public func answer(_ id: String, selections: [String: Set<String>], now: Date = Date()) -> Bool {
+        guard let i = pending.firstIndex(where: { $0.id == id }), connections[id] != nil, questionInputs[id] != nil,
+              let answers = Self.joined(pending[i].questions ?? [], selections) else { return false }
+        let conn = connections.removeValue(forKey: id)!
+        var input = questionInputs.removeValue(forKey: id)!
         let req = pending.remove(at: i)
-        var answers: [String: String] = [:]
-        for q in req.questions ?? [] {
-            guard let chosen = selections[q.question], !chosen.isEmpty, chosen.isSubset(of: Set(q.options.map(\.label))),
-                  q.multiSelect || chosen.count == 1 else { answers = [:]; break }
-            answers[q.question] = q.options.map(\.label).filter(chosen.contains).joined(separator: ", ")
-        }
-        // A complete set of real option labels, or nothing: a partial answer would run the tool with a wrong one.
-        let valid = !answers.isEmpty && answers.count == req.questions?.count
-        if conn.peerGone || !valid { conn.respond(nil); record(req, channel: .terminal, decision: "none", now: now); refresh(); return }
+        if conn.peerGone { conn.respond(nil); record(req, channel: .terminal, decision: "none", now: now); refresh(); return false }
         input["answers"] = answers
         let reply: [String: Any] = ["behavior": "allow", "updatedInput": input]
         conn.respond(try? JSONSerialization.data(withJSONObject: reply))
         record(req, channel: .notch, decision: "answered", now: now)
         refresh()
+        return true
+    }
+
+    /// One joined answer string per question, or nil unless every question has a valid selection.
+    static func joined(_ qs: [AskQuestion], _ selections: [String: Set<String>]) -> [String: String]? {
+        guard !qs.isEmpty else { return nil }
+        var out: [String: String] = [:]
+        for q in qs {
+            guard let chosen = selections[q.question], !chosen.isEmpty, chosen.isSubset(of: Set(q.options.map(\.label))),
+                  q.multiSelect || chosen.count == 1 else { return nil }
+            out[q.question] = q.options.map(\.label).filter(chosen.contains).joined(separator: ", ")
+        }
+        return out
     }
 
     /// "Answer in terminal": reply with nothing so the hook prints nothing and Claude Code shows its own dialog at once.

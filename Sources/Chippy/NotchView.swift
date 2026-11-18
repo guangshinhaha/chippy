@@ -249,10 +249,20 @@ struct ApprovalCard: View {
             if let p = req.lastPrompt, !p.isEmpty {
                 Text("“\(p)”").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
             }
-            Text("\(req.toolName) wants to run").font(.caption2).foregroundStyle(.white.opacity(0.6))
-            Text(req.detail.isEmpty ? req.toolName : req.detail)
-                .font(.system(.caption, design: .monospaced)).foregroundStyle(.white)
-                .lineLimit(4).truncationMode(.middle)
+            if let intent = req.intent {
+                // Agent-written text is unverified: small, secondary, captioned. The raw command below is the dominant element.
+                VStack(alignment: .leading, spacing: 1) {
+                    if intent.fromAgent { Text("Claude says (unverified):").font(.caption2).foregroundStyle(.white.opacity(0.45)) }
+                    Text(intent.text).font(.caption).foregroundStyle(.white.opacity(intent.fromAgent ? 0.65 : 0.85)).lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text("\(req.toolName) wants to run").font(.caption2).foregroundStyle(.white.opacity(0.6))
+            }
+            Text(req.detail.isEmpty ? req.toolName : ApprovalIntent.preview(req.detail))
+                .font(.system(.callout, design: .monospaced).weight(.medium)).foregroundStyle(.white)
+                .lineLimit(12) // backstop only: preview() already bounds rows and keeps head, tail and a hidden-count marker
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.4)).lineLimit(1).truncationMode(.head)
             TourCaption(sessionId: req.sessionId, step: .approval)
@@ -275,6 +285,7 @@ struct ChipButton: View {
     var hint: String? = nil
     let kind: Kind
     var disabled = false
+    var isDefault = false // Return triggers it
     let action: () -> Void
     @State private var hover = false
 
@@ -287,6 +298,7 @@ struct ChipButton: View {
         }
             .buttonStyle(ChipStyle(kind: kind, hover: hover && !disabled))
             .disabled(disabled)
+            .keyboardShortcut(isDefault ? .defaultAction : nil)
             .opacity(disabled ? 0.4 : 1)
             .onHover { hover = $0 }
     }
@@ -333,12 +345,14 @@ private struct QuestionBodyHeight: PreferenceKey {
 
 struct QuestionCard: View {
     let req: PendingRequest
-    let send: ([String: Set<String>]) -> Void
+    /// Returns false when the model refused the answer (card stays up).
+    let send: ([String: Set<String>]) -> Bool
     let handBack: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var step = 0
     /// Chosen labels per question text; survives moving between questions.
     @State private var answers: [String: Set<String>] = [:]
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var lastToggle: (index: Int, at: Date)?
     @State private var sent = false
     @State private var leadExpanded = false
     @State private var bodyHeight: CGFloat = 0
@@ -377,13 +391,17 @@ struct QuestionCard: View {
                 .onTapGesture { pick(i) }
                 .accessibilityAddTraits(on ? .isSelected : [])
             }
-            if q.multiSelect {
-                HStack {
-                    Text("Pick one or more").font(.caption2).foregroundStyle(.white.opacity(0.5))
-                    Spacer()
-                    ChipButton(title: step + 1 >= count ? "Done" : "Next", kind: .primary, disabled: (answers[q.question] ?? []).isEmpty) { advance() }
-                }
-            }
+        }
+    }
+
+    /// Pinned below the scrolling options so it never scrolls away.
+    @ViewBuilder private func multiFooter(_ q: AskQuestion, _ count: Int) -> some View {
+        let empty = (answers[q.question] ?? []).isEmpty
+        HStack {
+            Text("Pick one or more").font(.caption2).foregroundStyle(.white.opacity(0.5))
+            Spacer()
+            ChipButton(title: step + 1 >= count ? "Done" : "Next", kind: .primary, disabled: empty, isDefault: true) { advance() }
+                .accessibilityHint(empty ? "Choose at least one option" : "")
         }
     }
 
@@ -407,6 +425,7 @@ struct QuestionCard: View {
                 if bodyHeight > Self.maxBodyHeight { ScrollView { content }.frame(height: Self.maxBodyHeight) } else { content }
             }
             .onPreferenceChange(QuestionBodyHeight.self) { bodyHeight = $0 }
+            if q.multiSelect { multiFooter(q, qs.count) }
             ChipButton(title: "Answer in terminal", kind: .quiet) { if !sent { sent = true; handBack() } }
             TourCaption(sessionId: req.sessionId, step: .question)
         }
@@ -428,6 +447,9 @@ struct QuestionCard: View {
         guard q.options.indices.contains(index) else { return }
         let label = q.options[index].label
         if q.multiSelect {
+            // A double-click or a stuck key must not toggle the same option on and straight back off.
+            if let l = lastToggle, l.index == index, Date().timeIntervalSince(l.at) < 0.25 { return }
+            lastToggle = (index, Date())
             var set = answers[q.question] ?? []
             if !set.insert(label).inserted { set.remove(label) }
             answers[q.question] = set
@@ -442,7 +464,7 @@ struct QuestionCard: View {
         guard !sent, !qs.isEmpty else { return }
         let q = qs[min(step, qs.count - 1)]
         guard !(answers[q.question] ?? []).isEmpty else { return } // multi-select needs at least one
-        if step + 1 < qs.count { step += 1 } else { sent = true; send(answers) }
+        if step + 1 < qs.count { step += 1 } else { sent = true; if !send(answers) { sent = false } }
     }
 }
 

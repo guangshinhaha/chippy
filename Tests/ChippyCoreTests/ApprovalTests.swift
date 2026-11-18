@@ -145,8 +145,8 @@ final class ApprovalTests: XCTestCase {
             let m = model(); let (c, f) = pair()
             m.receiveApproval(multiPayload([mq("S", multi: false), mq("M", multi: true)]), c)
             m.answer(m.pending[0].id, selections: sel)
-            XCTAssertNil(reply(f))                        // terminal handles it, nothing written
-            XCTAssertTrue(m.pending.isEmpty)
+            XCTAssertNil(reply(f))                        // nothing written
+            XCTAssertEqual(m.pending.count, 1)            // card stays up
         }
     }
 
@@ -156,7 +156,7 @@ final class ApprovalTests: XCTestCase {
         XCTAssertEqual(m.pending.first?.questions?.first?.options.map(\.label), ["A", "B"])
         m.resolve(m.pending[0].id, .allow)                // Allow/Deny must not answer a question
         XCTAssertEqual(m.pending.count, 1)
-        m.answer(m.pending[0].id, ["Which?": "B"])
+        m.answer(m.pending[0].id, selections: ["Which?": ["B"]])
         let r = try XCTUnwrap(reply(f))
         XCTAssertEqual(r["behavior"] as? String, "allow")
         let input = try XCTUnwrap(r["updatedInput"] as? [String: Any])
@@ -165,12 +165,23 @@ final class ApprovalTests: XCTestCase {
         XCTAssertTrue(m.pending.isEmpty)
     }
 
-    func testIncompleteOrUnknownAnswerIsNotSent() {
+    func testIncompleteOrUnknownAnswerIsNotSentAndKeepsTheCard() {
         let m = model(); let (c, f) = pair()
         m.receiveApproval(question(), c)
-        m.answer(m.pending[0].id, ["Which?": "not an option"])
-        XCTAssertNil(reply(f))                            // left to the terminal, nothing written
+        XCTAssertFalse(m.answer(m.pending[0].id, selections: ["Which?": ["not an option"]]))
+        XCTAssertNil(reply(f))                            // nothing written
+        XCTAssertEqual(m.pending.count, 1)                // card stays up, no silent loss
+        XCTAssertTrue(m.answer(m.pending[0].id, selections: ["Which?": ["A"]])) // and can still be answered
+        XCTAssertNotNil(reply(f))
+    }
+
+    func testMultiSelectLabelContainingCommaSpaceStaysInTheTerminal() {
+        XCTAssertNil(AskQuestion.parse(["questions": [mq("Q", multi: true, ["Tests, lint", "B"])]]))
+        XCTAssertNotNil(AskQuestion.parse(["questions": [mq("Q", multi: false, ["Tests, lint", "B"])]])) // single-select is unambiguous
+        let m = model(); let (c, f) = pair()
+        m.receiveApproval(multiPayload([mq("Q", multi: true, ["Tests, lint", "B"])]), c)
         XCTAssertTrue(m.pending.isEmpty)
+        XCTAssertNil(reply(f))
     }
 
     func testDuplicateQuestionTextStaysInTheTerminal() {
