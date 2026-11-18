@@ -5,22 +5,24 @@ final class SummaryMarkdownTests: XCTestCase {
     func testBoldAndCode() {
         XCTAssertEqual(SummaryMarkdown.inline("Fixed **auth.ts** via `ttl()` now"), [.text("Fixed "), .bold("auth.ts"), .text(" via "), .code("ttl()"), .text(" now")])
     }
-    func testUnderscoreBold() { XCTAssertEqual(SummaryMarkdown.inline("a __b__ c"), [.text("a "), .bold("b"), .text(" c")]) }
+    func testUnderscoreBold() { XCTAssertEqual(SummaryMarkdown.inline("a __two words__ c"), [.text("a "), .bold("two words"), .text(" c")]) }
     func testSnakeCaseKept() { XCTAssertEqual(SummaryMarkdown.inline("set SESSION_TTL_MINUTES here"), [.text("set SESSION_TTL_MINUTES here")]) }
     func testMathStarKept() { XCTAssertEqual(SummaryMarkdown.inline("2*3 is 6"), [.text("2*3 is 6")]) }
     func testSingleEmphasisDropped() { XCTAssertEqual(SummaryMarkdown.inline("a *b* and _c_ d"), [.text("a b and c d")]) }
     func testUnmatchedMarkersDropped() {
         XCTAssertEqual(SummaryMarkdown.inline("**oops and `tick"), [.text("oops and tick")])
     }
-    func testLinkKeepsLabelOnly() {
-        XCTAssertEqual(SummaryMarkdown.inline("see [the PR](https://x.com/a?b=1) now"), [.text("see the PR now")])
+    func testLinkKeepsLabelAndUrl() {
+        XCTAssertEqual(SummaryMarkdown.inline("see [the PR](https://x.com/a?b=1) now"), [.text("see the PR (https://x.com/a?b=1) now")])
         XCTAssertEqual(SummaryMarkdown.inline("![diagram](http://x/y.png)"), [.text("diagram")])
     }
     func testLoneBracketKept() { XCTAssertEqual(SummaryMarkdown.inline("a[0] and wow!"), [.text("a[0] and wow!")]) }
     func testBullets() {
         let b = SummaryMarkdown.parse("- one\n* two\n1. three\n2) four")
         XCTAssertEqual(b.map(\.plain), ["one", "two", "three", "four"])
-        XCTAssertTrue(b.allSatisfy { if case .bullet = $0 { return true } else { return false } })
+        XCTAssertEqual(b[0], .bullet([.text("one")]))
+        XCTAssertEqual(b[2], .ordered(1, [.text("three")]))
+        XCTAssertEqual(b[3], .ordered(2, [.text("four")]))
     }
     func testHeadingBecomesBoldLine() {
         XCTAssertEqual(SummaryMarkdown.parse("## What changed"), [.paragraph([.bold("What changed")])])
@@ -65,7 +67,49 @@ final class SummaryMarkdownTests: XCTestCase {
     func testNilEmptyAndCodeOnly() {
         XCTAssertNil(SummaryMarkdown.doc(nil)); XCTAssertNil(SummaryMarkdown.doc(" \n\n "))
         let d = SummaryMarkdown.doc("```\nx\n```")!
-        XCTAssertTrue(d.outcome.isEmpty); XCTAssertEqual(d.details, [.code("x")])
+        XCTAssertEqual(d.outcome, [.code("x")]); XCTAssertEqual(d.details, [.code("x")])
+    }
+    func testCodeFirstFallsBackToTextLine() {
+        let d = SummaryMarkdown.doc("```\nlet a = 1\n```\n\nThat sets a.\n\n- more")!
+        XCTAssertEqual(d.outcomePlain, "That sets a.")
+        XCTAssertEqual(d.details.map(\.plain), ["let a = 1", "more"])
+    }
+    func testCodeOnlyOutcomeIsFirstLineClipped() {
+        let d = SummaryMarkdown.doc("```\n\n" + String(repeating: "x", count: 500) + "\nsecond\n```")!
+        XCTAssertTrue(d.outcomePlain.hasSuffix("…")); XCTAssertEqual(d.outcomePlain.count, SummaryMarkdown.maxOutcome + 1)
+        if case .code = d.outcome[0] {} else { XCTFail("outcome should be code") }
+        XCTAssertNil(SummaryMarkdown.doc("```\n\n```"))
+    }
+    func testUnmatchedMarkersAreLinear() {
+        for m in ["[", "`", "**", "__", "!["] {
+            let t0 = Date()
+            _ = SummaryMarkdown.inline(String(repeating: m, count: 20_000 / m.count))
+            XCTAssertLessThan(Date().timeIntervalSince(t0), 2.0, "slow for \(m)")
+        }
+        let t0 = Date()
+        _ = SummaryMarkdown.inline(String(repeating: "[a](b ", count: 3_000))
+        XCTAssertLessThan(Date().timeIntervalSince(t0), 2.0)
+    }
+    func testDunderAndIntraWordUnderscoresLiteral() {
+        XCTAssertEqual(SummaryMarkdown.inline("__init__"), [.text("__init__")])
+        XCTAssertEqual(SummaryMarkdown.inline("call __init__ now"), [.text("call __init__ now")])
+        XCTAssertEqual(SummaryMarkdown.inline("FOO__BAR and X__Y__Z"), [.text("FOO__BAR and X__Y__Z")])
+    }
+    func testLoneBracketDoesNotSwallowLink() {
+        XCTAssertEqual(SummaryMarkdown.inline("see a[0] and [docs](http://x)"), [.text("see a[0] and docs (http://x)")])
+        XCTAssertEqual(SummaryMarkdown.inline("[[a]](u) [x](http://y)"), [.text("[[a]](u) x (http://y)")])
+    }
+    func testBareUrlLabelNotDuplicated() {
+        XCTAssertEqual(SummaryMarkdown.inline("[http://x/1](http://x/1)"), [.text("http://x/1")])
+    }
+    func testSentenceSplitSkipsAbbreviations() {
+        let pad = "Updated the parser for several inputs, e.g. quoted strings and nested lists, so it is faster. "
+        let d = SummaryMarkdown.doc(pad + "Next part here.")!
+        XCTAssertEqual(d.outcomePlain, "Updated the parser for several inputs, e.g. quoted strings and nested lists, so it is faster.")
+        let v = SummaryMarkdown.doc("Bumped the dependency to v2. and then reran the whole suite plus the lint and type checks to confirm it all works. Second sentence goes here.")!
+        XCTAssertEqual(v.outcomePlain, "Bumped the dependency to v2. and then reran the whole suite plus the lint and type checks to confirm it all works.")
+        let x = SummaryMarkdown.doc("Handled json, yaml, etc. and also a lot more formats than before today, which took a while. Done.")!
+        XCTAssertEqual(x.outcomePlain, "Handled json, yaml, etc. and also a lot more formats than before today, which took a while.")
     }
     func testHugeInputBounded() {
         XCTAssertNotNil(SummaryMarkdown.doc(String(repeating: "**a** ", count: 100_000)))

@@ -733,6 +733,7 @@ struct DoneCard: View {
             }
             SummaryView(reply: full && item.decision != nil ? item.replyWithoutDecision : item.reply,
                         decision: full ? item.decision : nil, compact: !full)
+                .id(full && item.decision != nil ? item.replyWithoutDecision : item.reply)
             TourCaption(sessionId: item.sessionId, step: .done)
             HStack {
                 Text(item.files == 0 ? "No file edits" : "\(item.files) file\(item.files == 1 ? "" : "s") · +\(item.added) −\(item.removed)")
@@ -755,7 +756,14 @@ struct SummaryView: View {
     var decision: String? = nil
     /// Glance list: the outcome line only, no controls.
     var compact = false
+    /// Parsed once per reply, not per body evaluation.
+    private let doc: SummaryMarkdown.Doc?
     @State private var open = false
+
+    init(reply: String?, decision: String? = nil, compact: Bool = false) {
+        self.reply = reply; self.decision = decision; self.compact = compact
+        self.doc = SummaryMarkdown.doc(reply)
+    }
 
     private func text(_ runs: [SummaryMarkdown.Run], size: Font = .caption, bold: Bool = false) -> Text {
         runs.reduce(Text("")) { acc, r in
@@ -771,6 +779,11 @@ struct SummaryView: View {
         Group {
             switch b {
             case .paragraph(let r): text(r).foregroundColor(.white.opacity(0.85))
+            case .ordered(let n, let r):
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("\(n).").font(.caption).foregroundColor(.white.opacity(0.5))
+                    text(r).foregroundColor(.white.opacity(0.85))
+                }
             case .bullet(let r):
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text("•").font(.caption).foregroundColor(.white.opacity(0.5))
@@ -791,14 +804,13 @@ struct SummaryView: View {
         }.textSelection(.enabled)
     }
 
-    private var doc: SummaryMarkdown.Doc? { SummaryMarkdown.doc(reply) }
-
     var body: some View {
         let d = doc
         VStack(alignment: .leading, spacing: 6) {
             if let d, !d.outcome.isEmpty {
                 text(d.outcome).foregroundColor(.white.opacity(0.95))
                     .lineLimit(compact ? 3 : nil)
+                    .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
             }
             if !compact, let dec = decision {
