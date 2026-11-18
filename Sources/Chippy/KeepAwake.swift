@@ -12,7 +12,6 @@ import IOKit.pwr_mgt
 final class KeepAwake {
     private let model: NotchModel
     private let defaults = UserDefaults.standard
-    private let kEnabled = "keepAwake.enabled", kLid = "keepAwake.lidClosed"
     private var assertion: IOPMAssertionID = 0
     private var lastWorking: Date?
     private var sub: AnyCancellable?
@@ -25,16 +24,39 @@ final class KeepAwake {
         }
     }
 
-    private let toggleItem = NSMenuItem(), lidItem = NSMenuItem(), removeItem = NSMenuItem(), statusItem = NSMenuItem()
+    private let parentItem = NSMenuItem(), statusItem = NSMenuItem(), awakeForItem = NSMenuItem()
+    private let lidSetupItem = NSMenuItem(), lidRemoveItem = NSMenuItem()
+    private var modeItems: [AwakeMode: NSMenuItem] = [:]
+    private var durationItems: [AwakeDuration: NSMenuItem] = [:]
 
     private static let marker = ChippyPaths.supportDir.appendingPathComponent("disablesleep-on")
     private static let pmset = "/usr/bin/pmset"
+    private static let kMode = "keepAwake.mode", kUntil = "keepAwake.until"
+    private static let kOldEnabled = "keepAwake.enabled", kOldLid = "keepAwake.lidClosed"
 
-    var enabled: Bool { defaults.bool(forKey: kEnabled) }
-    var lidMode: Bool { defaults.bool(forKey: kLid) && Self.setupInstalled }
+    /// Chosen mode and absolute deadline (nil = no deadline). Persisted; the effective mode is derived from them.
+    private var mode: AwakeMode
+    private var until: Date?
     static var setupInstalled: Bool { FileManager.default.fileExists(atPath: SudoersRule.path) }
 
-    init(model: NotchModel) { self.model = model }
+    init(model: NotchModel) {
+        self.model = model
+        let d = UserDefaults.standard
+        if let raw = d.string(forKey: Self.kMode), let m = AwakeMode(rawValue: raw) {
+            mode = m
+        } else {
+            // One-time migration; the old keys are left alone.
+            mode = AwakePolicy.migrate(enabled: d.bool(forKey: Self.kOldEnabled), lidClosed: d.bool(forKey: Self.kOldLid))
+            d.set(mode.rawValue, forKey: Self.kMode)
+        }
+        until = d.object(forKey: Self.kUntil) is Double ? Date(timeIntervalSince1970: d.double(forKey: Self.kUntil)) : nil
+    }
+
+    private func setMode(_ m: AwakeMode, until u: Date?) {
+        mode = m; until = u
+        defaults.set(m.rawValue, forKey: Self.kMode)
+        if let u { defaults.set(u.timeIntervalSince1970, forKey: Self.kUntil) } else { defaults.removeObject(forKey: Self.kUntil) }
+    }
 
     /// Call once at launch. Clears any disablesleep a crashed run left behind, then starts watching.
     func start() {
@@ -55,52 +77,95 @@ final class KeepAwake {
     }
 
     // MARK: menu
+    /// One parent row with a submenu. Everything keep-awake lives under it so other feature groups can sit beside it.
     func menuItems() -> [NSMenuItem] {
-        toggleItem.title = "Keep Mac awake while agents work"
-        toggleItem.action = #selector(toggleEnabled); toggleItem.target = self
-        lidItem.action = #selector(lidClicked); lidItem.target = self
-        removeItem.title = "Remove lid-closed setup"
-        removeItem.action = #selector(removeSetup); removeItem.target = self
-        statusItem.isEnabled = false
+        if parentItem.submenu == nil { buildSubmenu() }
         refreshMenu()
-        return [toggleItem, lidItem, removeItem, statusItem]
+        return [parentItem]
+    }
+
+    private func buildSubmenu() {
+        parentItem.image = NSImage(systemSymbolName: "cup.and.saucer", accessibilityDescription: "Keep Mac awake")
+        let menu = NSMenu(); menu.autoenablesItems = false
+        for m in AwakeMode.allCases {
+            let i = NSMenuItem(title: m == .agentsLid ? "While agents work, even lid closed" : m.label,
+                               action: #selector(modePicked(_:)), keyEquivalent: "")
+            i.target = self; i.representedObject = m.rawValue
+            modeItems[m] = i; menu.addItem(i)
+        }
+        menu.addItem(.separator())
+        awakeForItem.title = "Awake for"
+        let dsub = NSMenu(); dsub.autoenablesItems = false
+        for d in AwakeDuration.allCases {
+            let i = NSMenuItem(title: d.label, action: #selector(durationPicked(_:)), keyEquivalent: "")
+            i.target = self; i.tag = d.rawValue
+            durationItems[d] = i; dsub.addItem(i)
+        }
+        awakeForItem.submenu = dsub
+        menu.addItem(awakeForItem)
+        statusItem.isEnabled = false
+        menu.addItem(statusItem)
+        menu.addItem(.separator())
+        lidSetupItem.title = "Set up lid-closed mode…"
+        lidSetupItem.action = #selector(setupClicked); lidSetupItem.target = self
+        lidRemoveItem.title = "Remove lid-closed setup…"
+        lidRemoveItem.action = #selector(removeSetup); lidRemoveItem.target = self
+        menu.addItem(lidSetupItem); menu.addItem(lidRemoveItem)
+        parentItem.submenu = menu
     }
 
     private func refreshMenu() {
-        toggleItem.state = enabled ? .on : .off
+        let now = Date()
+        let eff = AwakePolicy.effectiveMode(mode: mode, until: until, now: now, setupInstalled: Self.setupInstalled)
+        parentItem.title = AwakePolicy.parentTitle(mode: eff, until: until, now: now)
+        for (m, i) in modeItems { i.state = m == eff ? .on : .off }
         let nameOK = SudoersRule.isValidUser(NSUserName())
-        lidItem.title = Self.setupInstalled ? "Also when the lid is closed"
-            : (nameOK ? "Also when the lid is closed…" : "Lid-closed mode unavailable: account name not allowed in sudoers")
-        lidItem.isEnabled = Self.setupInstalled || nameOK
-        lidItem.state = lidMode ? .on : .off
-        removeItem.isHidden = !Self.setupInstalled
+        modeItems[.agentsLid]?.isEnabled = Self.setupInstalled || nameOK
+        awakeForItem.isEnabled = eff != .off
+        let cur = AwakeDuration.closest(until: until, now: now)
+        for (d, i) in durationItems { i.state = d == cur ? .on : .off }
+        let installed = Self.setupInstalled
+        lidSetupItem.isHidden = installed
+        lidSetupItem.isEnabled = nameOK
+        if !nameOK { lidSetupItem.title = "Lid-closed mode unavailable: account name not allowed" }
+        lidRemoveItem.isHidden = !installed
         let hold = assertion != 0
         if disabler.isStuck { statusItem.title = "Awake: could not release, run Remove lid-closed setup" }
-        else if !enabled { statusItem.title = "Awake: off" }
+        else if eff == .off { statusItem.title = "Awake: off" }
         else if lowBattery { statusItem.title = "Lid-closed mode paused: battery under \(AwakePolicy.lowBatteryPercent)%" }
         else if disabler.isOn { statusItem.title = "Awake: agents working (lid closed OK)" }
         else if hold { statusItem.title = "Awake: agents working" }
         else { statusItem.title = "Awake: idle (Mac can sleep)" }
     }
 
-    @objc private func toggleEnabled() {
-        defaults.set(!enabled, forKey: kEnabled)
+    @objc private func modePicked(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let picked = AwakeMode(rawValue: raw) else { return }
+        if picked == .agentsLid, !Self.setupInstalled {
+            // Run setup first; if it is cancelled or fails the previous mode stays.
+            guard installSetup() else { evaluate(); return }
+        }
+        setMode(picked, until: picked == .off ? nil : until)
         evaluate()
     }
 
-    @objc private func lidClicked() {
-        if Self.setupInstalled {
-            defaults.set(!defaults.bool(forKey: kLid), forKey: kLid)
-        } else if runAdmin(SudoersRule.installScript(user: NSUserName())) {
-            defaults.set(true, forKey: kLid)
-            defaults.set(true, forKey: kEnabled)
-        }
+    @objc private func durationPicked(_ sender: NSMenuItem) {
+        guard mode != .off, let d = AwakeDuration(rawValue: sender.tag) else { return }
+        setMode(mode, until: d.deadline(from: Date()))
         evaluate()
+    }
+
+    @objc private func setupClicked() {
+        if installSetup() { setMode(.agentsLid, until: until) }
+        evaluate()
+    }
+
+    private func installSetup() -> Bool {
+        runAdmin(SudoersRule.installScript(user: NSUserName()))
     }
 
     @objc private func removeSetup() {
         disabler.clearBlocking { Self.runPmset($0) }
-        if runAdmin(SudoersRule.removeScript) { defaults.set(false, forKey: kLid) }
+        if runAdmin(SudoersRule.removeScript), mode == .agentsLid { setMode(.agents, until: until) }
         evaluate()
     }
 
@@ -117,11 +182,14 @@ final class KeepAwake {
     private func evaluate() {
         let now = Date()
         if model.state == .working || model.state == .needsYou { lastWorking = now }
-        let hold = enabled && AwakePolicy.shouldHold(state: model.state, lastWorking: lastWorking, now: now)
+        // Expiry is a hard stop: flip the stored mode to off first so hold and lid both release below, with no debounce.
+        if mode != .off, let u = until, now >= u { setMode(.off, until: nil) }
+        let eff = AwakePolicy.effectiveMode(mode: mode, until: until, now: now, setupInstalled: Self.setupInstalled)
+        let hold = eff != .off && AwakePolicy.shouldHold(state: model.state, lastWorking: lastWorking, now: now)
         if hold { takeAssertion() } else { releaseAssertion() }
 
         let (pct, onAC) = Self.battery()
-        let want = AwakePolicy.lidDecision(hold: hold, lidModeEnabled: lidMode, percent: pct, onAC: onAC)
+        let want = AwakePolicy.lidDecision(hold: hold, lidModeEnabled: eff == .agentsLid, percent: pct, onAC: onAC)
         lowBattery = want == .lowBattery
         // One pmset call at a time; a request made while one is in flight is dropped and redone from onIdle.
         if want == .on { disabler.set(true) } else { disabler.set(false) }
