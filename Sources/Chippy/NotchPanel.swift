@@ -12,11 +12,12 @@ extension NotchMetrics {
     }
 }
 
-/// Frames of other apps' menu bar items on `screen`, from the window server (no permission needed for bounds).
-/// Menu extras are layer 25 windows; the frontmost app's menus show up as small layer 24 windows when exposed.
-/// Chippy's own windows and full-width bars are ignored. Called on a timer and on app/space change, never per frame.
+/// Measures the menu bar gap beside the camera. Other apps' menu extras are layer 25 windows (bounds need no
+/// permission). The frontmost app's menus are NOT windows, so they are read from its AXMenuBar only when
+/// Accessibility is already trusted (never prompted); otherwise the left gap is capped conservatively.
+/// Runs off the main thread, on app/space/screen events and a slow timer, never per frame.
 enum MenuBarProbe {
-    static func itemFrames(on screen: NSScreen) -> [CGRect] {
+    static func windowFrames(screenWidth: CGFloat) -> [CGRect] {
         guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else { return [] }
         let me = ProcessInfo.processInfo.processIdentifier
         return list.compactMap { w in
@@ -24,19 +25,37 @@ enum MenuBarProbe {
                   let pid = w[kCGWindowOwnerPID as String] as? Int32, pid != me,
                   let b = w[kCGWindowBounds as String] as? [String: CGFloat],
                   let x = b["X"], let y = b["Y"], let wd = b["Width"], let ht = b["Height"] else { return nil }
-            let r = CGRect(x: x, y: y, width: wd, height: ht)
-            return wd < screen.frame.width / 2 && ht < 60 ? r : nil
+            return wd < screenWidth / 2 && ht < 60 ? CGRect(x: x, y: y, width: wd, height: ht) : nil
         }
     }
 
-    /// Screen-space (CG, top-left origin) rects for the notch and the screen.
-    static func gaps(for m: NotchMetrics, screen: NSScreen) -> (CGFloat, CGFloat) {
-        guard m.hasNotch, let primary = NSScreen.screens.first else { return (.infinity, .infinity) }
-        let f = screen.frame
-        let top = primary.frame.maxY - f.maxY
-        let cgScreen = CGRect(x: f.minX, y: top, width: f.width, height: f.height)
-        let notch = CGRect(x: f.midX - m.width / 2, y: top, width: m.width, height: m.height)
-        let g = MenuBarGap.wings(items: itemFrames(on: screen), notch: notch, screen: cgScreen)
+    /// Frames (global CG space) of the frontmost app's menu bar items, or nil when they cannot be read.
+    static func appMenuFrames(pid: pid_t) -> [CGRect]? {
+        guard AXIsProcessTrusted(), pid != ProcessInfo.processInfo.processIdentifier else { return nil }
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.25)
+        var bar: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXMenuBarAttribute as CFString, &bar) == .success, let bar else { return nil }
+        var kids: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(bar as! AXUIElement, kAXChildrenAttribute as CFString, &kids) == .success,
+              let items = kids as? [AXUIElement] else { return nil }
+        let frames: [CGRect] = items.compactMap { el in
+            var pos: CFTypeRef?, size: CFTypeRef?
+            var p = CGPoint.zero, sz = CGSize.zero
+            guard AXUIElementCopyAttributeValue(el, kAXPositionAttribute as CFString, &pos) == .success,
+                  AXUIElementCopyAttributeValue(el, kAXSizeAttribute as CFString, &size) == .success,
+                  let pos, let size,
+                  AXValueGetValue(pos as! AXValue, .cgPoint, &p), AXValueGetValue(size as! AXValue, .cgSize, &sz) else { return nil }
+            return CGRect(origin: p, size: sz)
+        }
+        return frames.isEmpty ? nil : frames
+    }
+
+    static func gaps(notchWidth: CGFloat, notchHeight: CGFloat, displayID: CGDirectDisplayID, frontPID: pid_t?) -> (CGFloat, CGFloat) {
+        let screen = CGDisplayBounds(displayID) // this screen's own frame in CG space, wherever it sits
+        let notch = MenuBarGap.notchRect(screen: screen, width: notchWidth, height: notchHeight)
+        let app = frontPID.flatMap(appMenuFrames(pid:))
+        let g = MenuBarGap.wings(items: windowFrames(screenWidth: screen.width) + (app ?? []), notch: notch, screen: screen, leftMeasured: app != nil)
         return (g.left, g.right)
     }
 }
@@ -54,8 +73,12 @@ final class NotchPanel: NSPanel {
     private let model: NotchModel
     let metrics = MetricsBox()
     private var bag = Set<AnyCancellable>()
+    /// `measured` is the latest stable reading; `gaps` is what the shape uses. They meet only when idle.
+    private var measured: (CGFloat, CGFloat) = (.infinity, .infinity)
     private var gaps: (CGFloat, CGFloat) = (.infinity, .infinity)
     private var gapTimer: Timer?
+    private var debounce: DispatchWorkItem?
+    private var lastDensityChange = Date.distantPast
 
     init(model: NotchModel) {
         self.model = model
@@ -72,12 +95,17 @@ final class NotchPanel: NSPanel {
         host.sizingOptions = [] // the window is fixed; SwiftUI must not resize it
         contentView = host
         startPointerTracking()
-        model.$density.receive(on: RunLoop.main).sink { [weak self] d in self?.dock(d) }.store(in: &bag)
+        model.$density.receive(on: RunLoop.main).sink { [weak self] d in
+            guard let self else { return }
+            self.lastDensityChange = Date()
+            if d != .expanded { self.gaps = self.measured } // a new gap is applied as the density changes, not under an open card
+            self.dock(d)
+        }.store(in: &bag)
         metrics.$contentHeight.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] _ in self?.dock(self?.model.density ?? .collapsed) }.store(in: &bag)
         model.$tall.dropFirst().receive(on: RunLoop.main).sink { [weak self] _ in self?.dock(self?.model.density ?? .collapsed) }.store(in: &bag)
         model.$visible.receive(on: RunLoop.main).sink { [weak self] v in
             guard let self else { return }
-            if v { self.dock(self.model.density); self.orderFrontRegardless() } else { self.orderOut(nil) }
+            if v { self.dock(self.model.density); self.orderFrontRegardless(); self.remeasure(); self.startGapTimer() } else { self.orderOut(nil); self.gapTimer?.invalidate(); self.gapTimer = nil }
         }.store(in: &bag)
         dock(model.density)
         let nc = NSWorkspace.shared.notificationCenter
@@ -85,19 +113,51 @@ final class NotchPanel: NSPanel {
             nc.publisher(for: n).receive(on: RunLoop.main).sink { [weak self] _ in self?.remeasure() }.store(in: &bag)
         }
         remeasure()
-        gapTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { [weak self] _ in self?.remeasure() }
+        if model.visible { startGapTimer() }
         NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
             .receive(on: RunLoop.main).sink { [weak self] _ in
                 guard let self else { return }
+                self.remeasure()
                 self.dock(self.model.density)
             }.store(in: &bag)
     }
 
-    /// Re-read the menu bar gap; only a real change re-docks (and so re-springs the shape).
+    private func startGapTimer() {
+        guard gapTimer == nil else { return }
+        gapTimer = Timer.scheduledTimer(withTimeInterval: 8, repeats: true) { [weak self] _ in self?.remeasure() } // events cover the rest
+    }
+
+    /// Re-read the menu bar gap off the main thread. A change must hold for 0.4s before it counts, so quick app
+    /// switching does not make the pill spring repeatedly.
     private func remeasure() {
-        guard model.visible, let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) else { return }
-        let g = MenuBarProbe.gaps(for: NotchMetrics.detect(screen), screen: screen)
-        if abs(g.0 - gaps.0) > 2 || abs(g.1 - gaps.1) > 2 || (g.0.isInfinite != gaps.0.isInfinite) { gaps = g; dock(model.density) }
+        guard let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }),
+              let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID else { return }
+        let m = NotchMetrics.detect(screen)
+        let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let g = MenuBarProbe.gaps(notchWidth: m.width, notchHeight: m.height, displayID: id, frontPID: front)
+            DispatchQueue.main.async { self?.consider(g) }
+        }
+    }
+
+    private func consider(_ g: (CGFloat, CGFloat)) {
+        if MenuBarGap.same(g, measured) { debounce?.cancel(); debounce = nil; return }
+        debounce?.cancel()
+        let w = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.measured = g
+            self.applyIfIdle()
+        }
+        debounce = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: w)
+    }
+
+    /// Never under an open card or mid-spring; otherwise a later density change picks the new gap up.
+    private func applyIfIdle() {
+        guard model.density != .expanded, Date().timeIntervalSince(lastDensityChange) > 0.8,
+              !MenuBarGap.same(gaps, measured) else { return }
+        gaps = measured
+        dock(model.density)
     }
 
     override var canBecomeKey: Bool { true }

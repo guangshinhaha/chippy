@@ -69,3 +69,48 @@ final class MenuBarGapTests: XCTestCase {
         XCTAssertEqual(m.wing(for: .compact), 190)
     }
 }
+
+final class MenuBarGapFollowUpTests: XCTestCase {
+    func testUnmeasuredLeftIsCapped() {
+        let screen = CGRect(x: 0, y: 0, width: 1512, height: 982), notch = CGRect(x: 663, y: 0, width: 185, height: 32)
+        let g = MenuBarGap.wings(items: [], notch: notch, screen: screen, leftMeasured: false)
+        XCTAssertEqual(g.left, 94); XCTAssertEqual(g.right, 658)
+        XCTAssertEqual(MenuBarGap.wings(items: [], notch: notch, screen: screen).left, 657)
+    }
+    func testOffsetScreenUsesItsOwnFrame() {
+        // a screen right of and above the primary: CG frame origin (1512, -200)
+        let screen = CGRect(x: 1512, y: -200, width: 1440, height: 900)
+        let notch = MenuBarGap.notchRect(screen: screen, width: 180, height: 30)
+        XCTAssertEqual(notch.minX, 1512 + 720 - 90)
+        XCTAssertEqual(notch.minY, -200)
+        // an item on this screen 100pt left of the notch, one on the primary display (must not count as a gap edge here)
+        let near = CGRect(x: notch.minX - 140, y: -200, width: 40, height: 24)
+        let other = CGRect(x: 1400, y: 0, width: 50, height: 24)
+        let g = MenuBarGap.wings(items: [near, other], notch: notch, screen: screen)
+        XCTAssertEqual(g.left, 100 - MenuBarGap.padding)
+        XCTAssertEqual(g.right, 2952 - notch.maxX - MenuBarGap.padding)
+    }
+    func testSameTreatsInfinityAsValue() {
+        XCTAssertTrue(MenuBarGap.same(.infinity, .infinity))
+        XCTAssertFalse(MenuBarGap.same(.infinity, 500))
+        XCTAssertTrue(MenuBarGap.same(100, 101.5))
+        XCTAssertFalse(MenuBarGap.same(100, 104))
+        XCTAssertTrue(MenuBarGap.same((100, .infinity), (101, .infinity)))
+        XCTAssertFalse(MenuBarGap.same((100, .infinity), (100, 300)))
+    }
+    func testPillNeverExceedsGapAndWingMatchesFits() {
+        var m = NotchMetrics.sample14
+        m.leftGap = 20; m.rightGap = 200
+        XCTAssertEqual(m.wing(for: .collapsed), 20)
+        XCTAssertFalse(m.pillShowsIcon); XCTAssertFalse(m.compactFits)
+        XCTAssertEqual(m.wing(for: .compact), 20)
+        m.leftGap = 70
+        XCTAssertTrue(m.pillShowsIcon); XCTAssertTrue(m.compactFits); XCTAssertEqual(m.wing(for: .compact), 70)
+    }
+    func testMaxSizeIgnoresGap() {
+        var m = NotchMetrics.sample14
+        let full = m.maxSize
+        m.leftGap = 10; m.rightGap = 10
+        XCTAssertEqual(m.maxSize, full)
+    }
+}

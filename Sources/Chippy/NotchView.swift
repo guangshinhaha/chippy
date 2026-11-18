@@ -86,6 +86,7 @@ struct NotchView: View {
             .scaleEffect(open ? 1 : small / big, anchor: .topLeading)
             .offset(x: open ? 16 : 10, y: open ? m.height + 2 : (m.band - small) / 2)
             .frame(width: size.width, height: size.height, alignment: .topLeading)
+            .opacity(open || m.pillShowsIcon ? 1 : 0)
             .allowsHitTesting(false)
     }
 

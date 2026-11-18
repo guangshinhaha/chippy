@@ -15,6 +15,12 @@ public struct NotchMetrics: Equatable {
     /// The pill is symmetric about the camera, so the narrower side sets both wings.
     private var gap: CGFloat { hasNotch ? min(leftGap, rightGap) : .infinity }
     /// False when the gap is too small for glance content; compact then shows the collapsed pill.
+    /// Narrowest wing that still holds the chipmunk (10pt inset + icon).
+    public static let minIconWing: CGFloat = 36
+    /// The collapsed pill's wing: its usual 48pt, clamped to the gap so it never covers an item.
+    private var collapsedWing: CGFloat { min(48, max(gap, 0)) }
+    /// False when the gap is smaller than the icon needs; the pill stays inside the gap but draws no icon.
+    public var pillShowsIcon: Bool { collapsedWing >= Self.minIconWing }
     public var compactFits: Bool { gap >= MenuBarGap.minUsable }
 
     public static let none = NotchMetrics(width: 0, height: 24)
@@ -29,7 +35,7 @@ public struct NotchMetrics: Equatable {
     /// `contentHeight` is the measured height of the expanded card, so the shape hugs it instead of leaving dead space.
     public func size(for density: Density, tall: Bool = false, contentHeight: CGFloat = 0) -> CGSize {
         switch density {
-        case .collapsed: return CGSize(width: width + 2 * min(48, max(gap, 26)), height: band)
+        case .collapsed: return CGSize(width: width + 2 * collapsedWing, height: band)
         case .compact:
             guard compactFits else { return size(for: .collapsed) }
             return CGSize(width: width + 2 * min(190, gap), height: band + 14)
@@ -39,7 +45,8 @@ public struct NotchMetrics: Equatable {
 
     /// The fixed host-window size: big enough for every shape the island can take on this screen.
     public var maxSize: CGSize {
-        let all = [size(for: .collapsed), size(for: .compact), size(for: .expanded, tall: false), size(for: .expanded, tall: true)]
+        var free = self; free.leftGap = .infinity; free.rightGap = .infinity // the window never depends on the gap
+        let all = [free.size(for: .collapsed), free.size(for: .compact), free.size(for: .expanded, tall: false), free.size(for: .expanded, tall: true)]
         return CGSize(width: all.map(\.width).max() ?? 0,
                       height: max(Self.maxExpandedHeight, all.map(\.height).max() ?? 0))
     }
