@@ -39,20 +39,50 @@ struct CountBadge: View {
     let maxWidth: CGFloat
     /// Tap opens the waiting list (#53). The hit area is larger than the 16pt capsule.
     var onTap: () -> Void = {}
+    /// Folded approvals or questions (#86): needs-you colour, a gentle pulse (none under Reduce Motion), and a ring that
+    /// drains to the moment the hook gives up and the terminal takes over, so the badge never hides that it will time out.
+    var needsYou = false
+    var deadline: (start: Date, end: Date)? = nil
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulse = false
+
+    private var ring: some View {
+        TimelineView(.periodic(from: .now, by: 0.5)) { ctx in
+            let f = deadline.map { max(0, min(1, $0.end.timeIntervalSince(ctx.date) / max($0.end.timeIntervalSince($0.start), 1))) } ?? 1
+            Capsule().trim(from: 0, to: f).stroke(.white.opacity(0.9), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+        }
+    }
+
+    private var label: String {
+        guard needsYou else { return "\(text) finished waiting" }
+        let left = deadline.map { max(0, Int($0.end.timeIntervalSinceNow.rounded(.up))) }
+        return "\(text) waiting, needs you" + (left.map { ", times out to the terminal in \($0) seconds" } ?? "")
+    }
+
     var body: some View {
-        Text(text).font(.system(size: 10, weight: .bold, design: .rounded).monospacedDigit()).foregroundStyle(.black)
+        Text(text).font(.system(size: 10, weight: .bold, design: .rounded).monospacedDigit()).foregroundStyle(needsYou ? .white : .black)
             .lineLimit(1).minimumScaleFactor(0.6)
             .padding(.horizontal, 4).frame(minWidth: 16, maxWidth: max(maxWidth, 16), minHeight: 16)
-            .background(Capsule().fill(.white.opacity(0.92)))
+            .background(Capsule().fill(needsYou ? Color.orange : .white.opacity(0.92)))
+            .overlay { if needsYou { ring.padding(-2.5) } }
+            .scaleEffect(needsYou && pulse && !reduceMotion ? 1.12 : 1)
+            .opacity(needsYou && pulse && !reduceMotion ? 0.85 : 1)
+            .onAppear { startPulse() }
+            .onChange(of: needsYou) { _ in startPulse() }
             .reveal(0.08)
             // A real, larger tap target (24pt), never wider than the wing / tab the badge lives in.
             .frame(minWidth: min(24, max(maxWidth, 16)), maxWidth: max(maxWidth, 16), minHeight: 24)
             .contentShape(Rectangle())
             .onTapGesture(perform: onTap)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(text) finished waiting")
+            .accessibilityLabel(label)
             .accessibilityHint("Opens the list of everything waiting")
             .accessibilityAddTraits(.isButton)
+    }
+
+    private func startPulse() {
+        guard needsYou, !reduceMotion else { pulse = false; return }
+        withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { pulse = true }
     }
 }
 
@@ -186,7 +216,8 @@ struct NotchView: View {
                     let off = (m.width + NotchMetrics.glanceIcon) / 2 + NotchMetrics.badgeGap // past the centred icon
                     HStack(spacing: 0) {
                         Color.clear.frame(width: off)
-                        CountBadge(text: badge, maxWidth: m.width - off - 8, onTap: { model.openList() }) // stays inside the tab
+                        CountBadge(text: badge, maxWidth: m.width - off - 8, onTap: { model.openList() },
+                                   needsYou: model.badgeNeedsYou, deadline: model.foldedDeadline) // stays inside the tab
                         Spacer(minLength: 0)
                     }.frame(height: NotchMetrics.tabHeight)
                 }
@@ -196,7 +227,8 @@ struct NotchView: View {
                 HStack(spacing: 0) {
                     Color.clear.frame(width: wing)
                     Color.clear.frame(width: m.width)
-                    CountBadge(text: badge, maxWidth: wing - 8, onTap: { model.openList() }).frame(width: wing)
+                    CountBadge(text: badge, maxWidth: wing - 8, onTap: { model.openList() },
+                                   needsYou: model.badgeNeedsYou, deadline: model.foldedDeadline).frame(width: wing)
                 }
                 .frame(height: m.band, alignment: .center)
                 .frame(maxHeight: .infinity, alignment: .top)

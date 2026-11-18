@@ -61,6 +61,9 @@ public final class NotchModel: ObservableObject {
     /// A finished chip is shown compact while peeking, then the island settles to collapsed (chip stays in `doneItems`).
     @Published public private(set) var peeking = false
     private var peek = PeekGate()
+    /// Approvals and questions fold into the needs-you badge after 15s (#86); they stay pending and answerable.
+    @Published public private(set) var folded = false
+    private var fold = NeedsMeFold()
     /// Last pointer state from the panel, kept even while expanded so a new peek can start from it.
     private var hovering = false
     private let clock: () -> TimeInterval
@@ -98,6 +101,9 @@ public final class NotchModel: ObservableObject {
         let pendingIds = Set(pending.map(\.id))
         if partials.keys.contains(where: { !pendingIds.contains($0) }) { partials = partials.filter { pendingIds.contains($0.key) } }
         if doneItems.isEmpty { peek.cancel() }
+        if pending.isEmpty { fold.reset(); if folded { folded = false } }
+        else if case .pending? = focus { pinFold() } // a card the user jumped to never folds
+        else if !folded, fold.isDue(now: clock()) { folded = true }
         if doneItems.isEmpty && terminalItems.isEmpty { doneOpen = false }
         if !pending.isEmpty { restOpen = false } // an approval or question takes over; a passive chip just joins the open panel
         if !pending.isEmpty || doneOpen || listOpen || restOpen { peek.cancel() } // the user (or an approval) took over: no peek to resume on close
@@ -109,7 +115,8 @@ public final class NotchModel: ObservableObject {
         // Terminal cards share the panel, so the tall one-card reply view only applies when none are showing.
         tall = !listOpen && (shownDone != nil || (pending.isEmpty && !restOpen && doneOpen && !doneItems.isEmpty && terminalItems.isEmpty))
         let r: Bool
-        if !pending.isEmpty || doneOpen || listOpen || restOpen { density = .expanded; r = false }
+        if (!pending.isEmpty && !folded) || doneOpen || listOpen || restOpen { density = .expanded; r = false }
+        else if !pending.isEmpty { density = .collapsed; r = false } // folded: the needs-you badge on the collapsed notch
         else if !terminalItems.isEmpty { density = .compact; r = false }
         else if !doneItems.isEmpty { density = peeking ? .compact : .collapsed; r = false }
         else { density = .collapsed; r = true }
@@ -122,7 +129,7 @@ public final class NotchModel: ObservableObject {
     /// The approval or question card on screen, or nil while the list or a done detail covers it.
     /// Keyboard shortcuts act on this one only, so a key never answers a card the user cannot see.
     public var shownPending: PendingRequest? {
-        guard !listOpen else { return nil }
+        guard !listOpen, !folded else { return nil } // a folded card is not on screen, so no key may answer it
         if case .pending(let id)? = focus, let r = pending.first(where: { $0.id == id }) { return r }
         if case .done? = focus { return nil }
         return pending.first
@@ -165,6 +172,7 @@ public final class NotchModel: ObservableObject {
         guard waitingItems.contains(where: { $0.target == target }) else { return }
         listOpen = false; restOpen = false
         focus = target
+        if case .pending = target { pinFold() }
         switch target {
         case .done: doneOpen = true
         case .terminal: focus = nil; doneOpen = true // the shared card view lists every terminal chip
@@ -177,18 +185,46 @@ public final class NotchModel: ObservableObject {
     public func savePartial(_ id: String, step: Int, answers: [String: Set<String>]) {
         guard pending.contains(where: { $0.id == id }) else { return }
         let new = PartialAnswers(step: step, answers: answers)
+        // Answering has begun: the card must not fold under the user's hand. Only a real change counts, because the card
+        // also saves on disappear (which is what a fold does) and that must not undo the fold.
+        if partials[id] != new, new != PartialAnswers() { pinFold() }
         if partials[id] != new { partials[id] = new } // an unchanged write would still notify observers
 
     }
 
     /// Count shown on the collapsed notch while finished items wait (nil at 0, "9+" over 9).
-    public var badge: String? { PeekGate.badge(count: doneItems.count) }
+    public var badge: String? { PeekGate.badge(count: doneItems.count + (folded ? pending.count : 0)) }
+
+    /// The collapsed badge is the needs-you one (pulsing) while any approval or question is folded.
+    public var badgeNeedsYou: Bool { folded && !pending.isEmpty }
+
+    /// When the soonest folded request's hook gives up and the terminal takes over (the badge ring drains to it).
+    public var foldedDeadline: (start: Date, end: Date)? {
+        guard folded else { return nil }
+        return pending.map { r in (r.createdAt, r.createdAt.addingTimeInterval(r.questions != nil ? questionTimeout : approvalTimeout)) }
+            .min { $0.1 < $1.1 }.map { (start: $0.0, end: $0.1) }
+    }
+
+    /// The user opened the card (or answered part of it): it stays open. Opens a folded card.
+    private func pinFold() {
+        guard !pending.isEmpty else { return }
+        fold.pin()
+        if folded { folded = false }
+    }
+
+    /// Show the folded card (click on the notch, or a ⌃⌥ key). It never answers by itself, and it never refolds.
+    public func unfold() {
+        guard folded else { return }
+        pinFold()
+        refresh()
+    }
 
     /// The pointer entered or left the island: a running peek holds while it is over and resumes when it leaves.
     /// Ignored while expanded, and it never re-opens an expired peek.
     /// Hover never wakes the sleeping mascot (only a click or a hook event does), or the sleeping pose could not be seen.
     public func setHover(_ inside: Bool, now: Date = Date()) {
         hovering = inside
+        fold.setHover(inside, now: clock()) // the fold timer holds while the pointer is over the island, expanded or not
         guard density != .expanded else { return }
         peek.setHover(inside, now: clock())
     }
@@ -197,6 +233,7 @@ public final class NotchModel: ObservableObject {
     /// otherwise it opens or closes the rest panel (Recent, sessions, menu gear).
     public func toggleOpen(now: Date = Date()) {
         wake(now: now)
+        if folded, !listOpen { unfold(); return } // click on the needs-you badge area opens the card
         guard pending.isEmpty, !listOpen else { return }
         if focus != nil { focus = nil; doneOpen = false; refresh(); return } // one gesture folds a jumped-to detail; focus and doneOpen never drift
         if restOpen { restOpen = false; refresh(); return }
@@ -300,6 +337,9 @@ public final class NotchModel: ObservableObject {
             record(req, channel: .notch, decision: "auto_always", now: req.createdAt)
             return
         }
+        // A panel the user opened by click (rest panel, list, done detail) is theirs: the approval joins it and never folds.
+        fold.arrive(now: clock(), hovering: hovering, engaged: restOpen || listOpen || doneOpen)
+        if folded { folded = false }
         pending.append(req)
         connections[req.id] = conn
         if case .done? = focus { focus = nil; doneOpen = false } // a new blocking request takes over from a done detail
@@ -382,6 +422,7 @@ public final class NotchModel: ObservableObject {
     public func sweep(now: Date = Date()) {
         defer { updateSleep(now: now) } // after expiry + refresh, so it sees the settled state
         if peeking, !peek.isPeeking(now: clock()) { refresh() } // an expired peek settles to collapsed
+        if !folded, !pending.isEmpty, fold.isDue(now: clock()) { refresh() } // an expired needs-me timer folds the card
         let gone = pending.filter { connections[$0.id]?.peerGone ?? true }
         let expired = doneItems.contains { now.timeIntervalSince($0.at) > Self.doneSeconds }
             || terminalItems.contains { now.timeIntervalSince($0.at) > Self.doneSeconds }
