@@ -136,6 +136,20 @@ public final class NotchModel: ObservableObject {
         }
     }
 
+    /// Session lines for the open panel (#90), in `SessionStore.glanceOrder` at `now`. Derived from the store at read time
+    /// (no second published copy), so freshness and needs-you are always current; the view reads it on its 15s tick.
+    /// Read-only, so a glance never changes density, pending, folds or sounds.
+    public func glanceSessions(now: Date = Date()) -> [SessionRow] {
+        store.glanceOrder(now: now, needsYou: Set(pending.map(\.sessionId) + terminalItems.map(\.sessionId)))
+    }
+
+    /// The glance line for a row at `now`: the fresh word, or the real state (Needs you, Waiting for you, Finished, Idle).
+    public func glanceLine(for row: SessionRow, now: Date = Date()) -> (text: String, live: Bool) {
+        LiveGlance.line(for: row, now: now,
+                        needsYou: pending.contains { $0.sessionId == row.id },
+                        waitingTerminal: terminalItems.contains { $0.sessionId == row.id })
+    }
+
     /// The one repo label for a cwd, as list rows show it: cached git result, or the folder-name fallback while it loads.
     public func repoLabel(cwd: String, project: String) -> RepoLabel { identities.label(cwd: cwd, project: project) }
 

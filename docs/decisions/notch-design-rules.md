@@ -58,3 +58,12 @@ Source: web research on Apple's Live Activities HIG and existing Claude Code not
 - Seen = closing that panel (the dot clears, chips stay). Dismiss = the digest's finished chips move to Recent, terminal asks stay (use "Handled"). An undismissed digest merges with the next away period (earliest start wins).
 - Not covered: a "failed" status (Chippy has no failure state), a digest while an approval card is up.
 - Gallery: `Chippy --render-away out.png`.
+
+## Live glance (#90)
+- One line per session in the panel the user opens (click or hover on the resting tab): identity mark, repo (+ worktree tag), and one word. Order: needs-you first (pending approval or question, terminal ask; never hidden in "N more sessions"), then sessions with a fresh word, then working-but-stale, then the rest; newest first, id tiebreak. Re-ranked at read time on the 15s tick.
+- The old headline/detail lines are removed from the open panel by design (privacy: they carried file names and commands). The glance shows the one word only.
+- A word older than 90s shows "Working" if the session is still working (a long tool run), "Idle" only if not working or done. A late PostToolUse after Stop does not bring "Thinking" back.
+- The word comes from the TOOL NAME ONLY, through the `LiveGlance` allowlist (Reading, Editing, Running, Searching, Delegating, Planning). Unknown and MCP tools show "Working"; a new prompt or a finished tool shows "Thinking". Never a path, command, prompt or tool input, and never a raw tool name.
+- In memory on `SessionRow.activity` only: not logged, not persisted. Cleared on Stop, SessionStart and SessionEnd (the row goes).
+- Passive: it adds no card, pending item, peek, sound or fold timer and does not change density; it only shows when the panel is already open. Rows are fixed 18pt, so they sit inside the existing `sessionRowCap` budget.
+- Gallery: `Chippy --render-glance out.png`.
