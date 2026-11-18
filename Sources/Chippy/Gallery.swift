@@ -139,11 +139,7 @@ enum Gallery {
         model.toggleOpen()
         let m = NotchMetrics(width: 185, height: 32)
         let sz = m.size(for: .expanded, tall: model.tall)
-        let r = ImageRenderer(content: NotchView(model: model, box: box(m)).frame(width: sz.width, height: sz.height).background(Color(white: 0.25)))
-        r.scale = 2
-        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
-              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
-        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path) tall=\(model.tall)")
+        writeNotchPNG(model, m, size: sz, to: path, note: "tall=\(model.tall)")
     }
 
     /// #96: a finished card open while another session still works. The header must say Done, not Working.
@@ -159,11 +155,17 @@ enum Gallery {
         model.toggleOpen()
         let m = NotchMetrics.sample14
         let sz = m.size(for: .expanded, tall: model.tall)
+        writeNotchPNG(model, m, size: sz, to: path, note: "state=\(model.state) header=\(model.headerTitle)")
+    }
+
+    /// Render one notch view at `size` to a 2x PNG and print the note.
+    @MainActor
+    private static func writeNotchPNG(_ model: NotchModel, _ m: NotchMetrics, size sz: CGSize, to path: String, note: String) {
         let r = ImageRenderer(content: NotchView(model: model, box: box(m)).frame(width: sz.width, height: sz.height).background(Color(white: 0.25)))
         r.scale = 2
         guard let img = r.nsImage, let tiff = img.tiffRepresentation,
               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
-        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path) state=\(model.state) header=\(model.headerTitle)")
+        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path) \(note)")
     }
 
     private static func tempLog() -> URL {
