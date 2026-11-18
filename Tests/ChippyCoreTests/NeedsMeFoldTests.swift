@@ -106,28 +106,62 @@ final class NeedsMeFoldTests: XCTestCase {
         XCTAssertEqual(m.rankedPending.first?.id, aid)
     }
 
-    func testShownCardIndexAndFallBackFollowRank() {
+    func testShownCardIsStickyAgainstHigherRankedArrival() {
         let m = model()
-        let late = ask(m, wait: 100)   // arrived first, far from timeout
-        let soon = ask(m, wait: 10)    // arrived second, closer to timeout: ranks first
-        XCTAssertEqual(m.shownPending?.id, soon)
-        XCTAssertEqual(m.rankedPending.firstIndex { $0.id == soon }, 0) // what the "1 of 2" header reads
-        XCTAssertEqual(m.rankedPending.firstIndex { $0.id == late }, 1)
+        let late = ask(m, wait: 100)   // on screen first
+        let soon = ask(m, wait: 10)    // arrives later, ranks first
+        XCTAssertEqual(m.shownPending?.id, late) // never swapped under the user's hand
         XCTAssertEqual(m.waitingItems.first?.target, .pending(soon))
-        m.resolve(soon, .allow, now: t0)
-        XCTAssertEqual(m.shownPending?.id, late) // the next ranked shows after answering the first
-        XCTAssertEqual(m.rankedPending.map(\.id), [late])
+        XCTAssertEqual(m.rankedPending.map(\.id), [soon, late])
+        m.resolve(late, .allow, now: t0)
+        XCTAssertEqual(m.shownPending?.id, soon) // rank picks again once nothing is shown
     }
 
-    func testFoldTimerFollowsRankedFirst() {
+    func testRankPicksTheCardAfterAnAnswer() {
+        let m = model()
+        let a = ask(m, wait: 100)
+        let b = ask(m, wait: 50)
+        let c = ask(m, wait: 10)
+        XCTAssertEqual(m.shownPending?.id, a)
+        m.resolve(a, .allow, now: t0)
+        XCTAssertEqual(m.shownPending?.id, c) // soonest to timeout, not the oldest
+        XCTAssertEqual(m.rankedPending.map(\.id), [c, b])
+    }
+
+    func testHeaderCountsFromTheRankedList() {
+        let m = model()
+        let late = ask(m, wait: 100)
+        ask(m, wait: 10)
+        XCTAssertEqual(m.shownPending?.id, late)
+        XCTAssertEqual(m.headerTitle, "Needs you \u{00B7} 2 of 2") // shown card is second in rank
+    }
+
+    func testFoldTimerStaysWithTheOldestRequest() {
         let m = model()
         ask(m, wait: 100)
         advance(m, 10)
-        ask(m, wait: 20) // ranks first (due at +30 vs +100); its own 15s timer restarts
-        advance(m, 14); XCTAssertFalse(m.folded)
-        advance(m, 2); XCTAssertTrue(m.folded)
-        let d = try! XCTUnwrap(m.foldedDeadline)
-        XCTAssertEqual(d.end.timeIntervalSince(d.start), 20) // the ring follows the same request
+        ask(m, wait: 20) // ranks first, but must not restart or take over the timer
+        advance(m, 4); XCTAssertFalse(m.folded)
+        advance(m, 2); XCTAssertTrue(m.folded) // the oldest's 15s, counted from its own arrival
+    }
+
+    func testFoldedDeadlineIsSoonestKnownEvenWhenTopHasNone() throws {
+        let m = model()
+        ask(m)            // old relay: no known wait; arrives first
+        ask(m, wait: 20)
+        advance(m, 16)
+        XCTAssertTrue(m.folded)
+        let d = try XCTUnwrap(m.foldedDeadline)
+        XCTAssertEqual(d.end.timeIntervalSince(d.start), 20)
+    }
+
+    func testFoldedDeadlinePicksSoonestAmongKnown() throws {
+        let m = model()
+        ask(m, wait: 100)
+        ask(m, wait: 20)
+        advance(m, 16)
+        let d = try XCTUnwrap(m.foldedDeadline)
+        XCTAssertEqual(d.end.timeIntervalSince(d.start), 20)
     }
 
     func testBadgeTapPinsOnlyTheOpenedCard() {

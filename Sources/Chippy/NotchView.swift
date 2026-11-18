@@ -214,15 +214,7 @@ struct NotchView: View {
         return d.glance(showReply: model.showReplyInGlance)
     }
 
-    private var headerTitle: String {
-        if model.restOpen && model.doneItems.isEmpty && model.terminalItems.isEmpty { return "Recent" }
-        if model.listOpen { return "Waiting · \(model.waitingItems.count)" }
-        if model.shownPending == nil, model.shownDone != nil { return model.pending.isEmpty ? "Done" : "Finished" }
-        if model.pending.isEmpty { return model.state.title }
-        let n = model.pending.count
-        let at = model.shownPending.flatMap { r in model.rankedPending.firstIndex { $0.id == r.id } } ?? 0
-        return n > 1 ? "Needs you · \(at + 1) of \(n)" : "Needs you"
-    }
+    private var headerTitle: String { model.headerTitle }
 
     static let terminalCardCap = 2
     /// Session rows in the peek, so the card's measured height stays within its cap.
