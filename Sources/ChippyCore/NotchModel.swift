@@ -82,6 +82,7 @@ public final class NotchModel: ObservableObject {
     @Published public private(set) var folded = false
     /// One timer per request, so a later request never restarts an earlier one's fold (the oldest decides).
     private var folds: [String: NeedsMeFold] = [:]
+    func isFoldPinned(_ id: String) -> Bool { folds[id]?.isPinned == true }
     /// Last pointer state from the panel, kept even while expanded so a new peek can start from it.
     private var hovering = false
     private let clock: () -> TimeInterval
@@ -280,6 +281,7 @@ public final class NotchModel: ObservableObject {
         if folds.keys.contains(where: { !pendingIds.contains($0) }) {
             folds = folds.filter { pendingIds.contains($0.key) }
         }
+        if drafts.keys.contains(where: { !pendingIds.contains($0) }) { drafts = drafts.filter { pendingIds.contains($0.key) } }
         if !expandedPlans.isSubset(of: pendingIds) { expandedPlans.formIntersection(pendingIds) }
         if pending.isEmpty { if folded { folded = false } }
         else if !folded, foldDue(now: clock()) { folded = true }
@@ -288,6 +290,7 @@ public final class NotchModel: ObservableObject {
         else if case .done? = focus { shownId = nil } // leaving for a done detail: back to the queue head afterwards
         else if case .pending(let id)? = focus { shownId = id } // a jump makes that card the remembered one, so answering it falls back to rank-first
         else if shownId.map({ id in !pendingIds.contains(id) }) ?? true { shownId = rankedPending.first?.id }
+        if replyFocusOwner != nil, !replyFieldFocused { replyFocusOwner = nil } // the owning card left the screen (swap, list, fold, flag off, answered)
         if doneItems.isEmpty && terminalItems.isEmpty { doneOpen = false }
         if !pending.isEmpty { restOpen = false } // an approval or question takes over; a passive chip just joins the open panel
         if !pending.isEmpty || doneOpen || listOpen || restOpen { peek.cancel() } // the user (or an approval) took over: no peek to resume on close
@@ -446,6 +449,40 @@ public final class NotchModel: ObservableObject {
         if plan.truncated { return false }
         return !plan.canExpand || expandedPlans.contains(req.id)
     }
+
+    /// Experimental (#94): a text field on single-select question cards. Off by default; while off, `texts` is ignored.
+    @Published public var freeTextReplyEnabled = false { didSet { if !freeTextReplyEnabled { if replyFocusOwner != nil { replyFocusOwner = nil }; if !drafts.isEmpty { drafts = [:] } } } }
+    /// Longest free-text reply sent from the notch; longer goes to the terminal.
+    public static let freeTextLimit = 500
+
+    /// Typed-but-unsent text, per request id then question. Memory only: never written to disk, logged or published
+    /// (so a keystroke does not re-render the notch). Dropped when the request is sent, handed back or gone.
+    private var drafts: [String: [String: String]] = [:]
+    public func draftTexts(_ id: String) -> [String: String] { drafts[id] ?? [:] }
+    public func setDraft(_ id: String, question: String, text: String) {
+        guard pending.contains(where: { $0.id == id }) else { return }
+        if !text.isEmpty { folds[id]?.pin() } // typing is engagement: the card must not fold away under the cursor
+        if text.isEmpty { drafts[id]?[question] = nil; if drafts[id]?.isEmpty == true { drafts[id] = nil } }
+        else { drafts[id, default: [:]][question] = text }
+    }
+    /// The request id whose reply field holds keyboard focus (nil: none). `replyFieldFocused` is derived from it.
+    @Published public private(set) var replyFocusOwner: String?
+    /// True only while the field of the question card ON SCREEN has focus and the flag is on: the panel then owns Esc and the
+    /// card hotkeys stand down. Derived, so a card swap, list, fold, flag-off or answer can never leave it stuck true.
+    public var replyFieldFocused: Bool {
+        guard freeTextReplyEnabled, let o = replyFocusOwner, let s = shownPending, s.id == o, s.questions != nil else { return false }
+        return true
+    }
+    /// The card's field gained (`on`) or lost focus. A stale card's blur never clears another card's focus.
+    public func setReplyFieldFocused(_ on: Bool, id: String) {
+        if on { guard freeTextReplyEnabled, shownPending?.id == id, shownPending?.questions != nil else { return }; if replyFocusOwner != id { replyFocusOwner = id }; folds[id]?.pin() } // a focused-but-empty field is engagement too
+        else if replyFocusOwner == id { replyFocusOwner = nil }
+    }
+    /// The panel lost key or Esc left the field: drop whichever focus is held, straight in the model (not via SwiftUI's onChange).
+    /// Bumped whenever AppKit drops the field's focus (Esc, resignKey): the card observes it and resets SwiftUI's @FocusState,
+    /// so a later click is a false->true change instead of a no-op on a stale `true`.
+    @Published public private(set) var replyFocusReset = 0
+    public func clearReplyFocus() { replyFocusReset &+= 1; if replyFocusOwner != nil { replyFocusOwner = nil } }
 
     /// Experimental (#91): off by default. While off, ExitPlanMode goes to the terminal prompt untouched.
     public var planCardEnabled = false
@@ -610,6 +647,7 @@ public final class NotchModel: ObservableObject {
         if now.timeIntervalSince(r.createdAt) >= wait - 1 { noteTerminal(r, now: now) }
         connections.removeValue(forKey: r.id)?.respond(nil)
         echoInputs.removeValue(forKey: r.id)
+        drafts[r.id] = nil; if replyFocusOwner == r.id { replyFocusOwner = nil }
         record(r, channel: .terminal, decision: "none", now: now)
     }
 
@@ -743,9 +781,10 @@ public final class NotchModel: ObservableObject {
     public enum Answered: Equatable { case sent, refused, gone }
 
     @discardableResult
-    public func answer(_ id: String, selections: [String: Set<String>], now: Date = Date()) -> Answered {
+    public func answer(_ id: String, selections: [String: Set<String>], texts: [String: String] = [:], now: Date = Date()) -> Answered {
         guard let i = pending.firstIndex(where: { $0.id == id }), connections[id] != nil, echoInputs[id] != nil,
-              let answers = Self.joined(pending[i].questions ?? [], selections) else { return .refused }
+              let answers = Self.joined(pending[i].questions ?? [], selections, texts: freeTextReplyEnabled ? texts : [:]) else { return .refused }
+        drafts[id] = nil; if replyFocusOwner == id { replyFocusOwner = nil }
         let conn = connections.removeValue(forKey: id)!
         var input = echoInputs.removeValue(forKey: id)!
         let req = pending.remove(at: i)
@@ -758,11 +797,71 @@ public final class NotchModel: ObservableObject {
         return .sent
     }
 
+    /// A typed reply, validated (#94): no newline; tabs become spaces; hidden and bidi scalars stripped; trimmed. The typed
+    /// spacing is KEPT (not collapsed). The limit applies to the typed (trimmed) length. Nil means it goes to the terminal.
+    /// Scalars that break a line; typed text containing one cannot be sent as one line.
+    public static let lineBreaks: Set<UInt32> = [0x0A, 0x0D, 0x2028, 0x2029, 0x85]
+
+    /// Control, bidi and invisible padding. Unlike `ApprovalIntent.isHidden` this keeps ZWJ/ZWNJ (200D/200C) and
+    /// variation selectors (FE0E/FE0F), which legitimate emoji sequences and Indic scripts need.
+    static func isStrippedInFreeText(_ u: Unicode.Scalar) -> Bool {
+        switch u.value {
+        case 0x200C, 0x200D, 0xFE0E, 0xFE0F: return false
+        default: return ApprovalIntent.isHidden(u)
+        }
+    }
+
+    public static func validFreeText(_ raw: String) -> String? {
+        for u in raw.unicodeScalars where lineBreaks.contains(u.value) { return nil }
+        let typed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !freeTextTooLong(typed) else { return nil }
+        var out = String.UnicodeScalarView()
+        var prev = 0 // last kept scalar: 0 none/space, 1 base, 2 kept selector, 3 kept joiner (ZWJ/ZWNJ)
+        var hasBase = false
+        func dropPendingJoiner() { if prev == 3 { out.removeLast() } } // a joiner stays only when a base follows it
+        for u in typed.unicodeScalars {
+            if u.value == 0x09 || u.value == 0x0B || u.value == 0x0C { dropPendingJoiner(); out.append(" "); prev = 0; continue } // tab, VT, FF read as spaces
+            if [0x200C, 0x200D, 0xFE0E, 0xFE0F].contains(u.value) {
+                let isJoiner = u.value == 0x200C || u.value == 0x200D
+                if prev == 1 || (prev == 2 && isJoiner) { out.append(u); prev = isJoiner ? 3 : 2 } // VS16+ZWJ emoji keep their joiner; no base, or a run of them: dropped
+                continue
+            }
+            if isStrippedInFreeText(u) { continue } // known limit: tag characters and VS1-13 are stripped even after a base
+            let isBase = !CharacterSet.whitespacesAndNewlines.contains(u)
+            if !isBase { dropPendingJoiner() }
+            out.append(u)
+            prev = isBase ? 1 : 0
+            if isBase { hasBase = true }
+        }
+        dropPendingJoiner()
+        let t = String(out).trimmingCharacters(in: .whitespacesAndNewlines)
+        return (t.isEmpty || !hasBase) ? nil : t
+    }
+
+    /// 500 characters, and a scalar ceiling of 16x that so hidden padding cannot grow without bound (real emoji text sits far below it).
+    static func freeTextTooLong(_ typed: String) -> Bool {
+        typed.count > freeTextLimit || typed.unicodeScalars.count > freeTextLimit * 16
+    }
+
+    /// Why typed text cannot be sent, for the card's hint; nil when it is fine.
+    public static func freeTextProblem(_ raw: String) -> String? {
+        if validFreeText(raw) != nil { return nil }
+        if raw.unicodeScalars.contains(where: { lineBreaks.contains($0.value) }) { return "One line only. Use Answer in terminal for more." } // send path only: the field already turns pasted newlines into spaces
+        if freeTextTooLong(raw.trimmingCharacters(in: .whitespacesAndNewlines)) { return "Too long (max \(freeTextLimit) characters). Shorten it, or use Answer in terminal." }
+        return "Type a reply first, or pick an option."
+    }
+
     /// One joined answer string per question, or nil unless every question has a valid selection.
-    static func joined(_ qs: [AskQuestion], _ selections: [String: Set<String>]) -> [String: String]? {
+    /// A typed text replaces the selection for that question, single-select only; an invalid one refuses the whole answer.
+    static func joined(_ qs: [AskQuestion], _ selections: [String: Set<String>], texts: [String: String] = [:]) -> [String: String]? {
         guard !qs.isEmpty else { return nil }
         var out: [String: String] = [:]
         for q in qs {
+            if let raw = texts[q.question] {
+                guard !q.multiSelect, let t = validFreeText(raw) else { return nil }
+                out[q.question] = t
+                continue
+            }
             guard let chosen = selections[q.question], !chosen.isEmpty, chosen.isSubset(of: Set(q.options.map(\.label))),
                   q.multiSelect || chosen.count == 1 else { return nil }
             out[q.question] = q.options.map(\.label).filter(chosen.contains).joined(separator: ", ")
@@ -775,6 +874,7 @@ public final class NotchModel: ObservableObject {
         guard let i = pending.firstIndex(where: { $0.id == id }), let conn = connections.removeValue(forKey: id) else { return }
         let req = pending.remove(at: i)
         echoInputs.removeValue(forKey: id)
+        drafts[id] = nil; if replyFocusOwner == id { replyFocusOwner = nil }
         let stale = conn.peerGone // the hook already gave up or the terminal answered: nothing was handed back
         conn.respond(nil)
         record(req, channel: .terminal, decision: stale ? "none" : "handed_back", now: now)

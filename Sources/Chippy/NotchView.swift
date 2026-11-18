@@ -378,7 +378,9 @@ struct NotchView: View {
                     if req.questions != nil {
                         QuestionCard(req: req, repo: model.repoLabel(cwd: req.cwd, project: req.project).text, mark: model.identity(cwd: req.cwd, project: req.project), initial: model.partials[req.id] ?? PartialAnswers(),
                                      progress: { model.savePartial(req.id, step: $0, answers: $1, byUser: $2) },
-                                     send: { model.answer(req.id, selections: $0) }, handBack: { model.handBack(req.id) }).id(req.id).reveal(0.12)
+                                     send: { model.answer(req.id, selections: $0, texts: $1) }, handBack: { model.handBack(req.id) },
+                                     freeText: model.freeTextReplyEnabled, focusReset: model.replyFocusReset, initialTexts: model.draftTexts(req.id),
+                                     draft: { model.setDraft(req.id, question: $0, text: $1) }, replyFocus: { model.setReplyFieldFocused($0, id: req.id) }).id(req.id).reveal(0.12)
                     } else if let plan = req.plan {
                         PlanCard(req: req, plan: plan, repo: model.repoLabel(cwd: req.cwd, project: req.project).text, mark: model.identity(cwd: req.cwd, project: req.project), startExpanded: model.expandedPlans.contains(req.id), expand: { model.setPlanExpanded(req.id, $0) }) { model.resolve(req.id, $0) }.id(req.id).reveal(0.12)
                     } else {
@@ -650,10 +652,21 @@ struct QuestionCard: View {
     /// Progress kept by the model, so leaving this card (to the list) and coming back resumes it.
     let progress: (Int, [String: Set<String>], Bool) -> Void // the Bool: a real user change (false: re-seed or disappear)
     /// The card stays up only for `.refused`.
-    let send: ([String: Set<String>]) -> NotchModel.Answered
+    let send: ([String: Set<String>], [String: String]) -> NotchModel.Answered
     let handBack: () -> Void
+    /// Experimental free-text reply (#94): a field on single-select questions, off unless the setting is on.
+    var freeText = false
+    let draft: (String, String) -> Void
+    let replyFocus: (Bool) -> Void
+    /// Changes when AppKit dropped the field's focus behind SwiftUI's back; resets `fieldFocused` so the next click re-focuses.
+    var focusReset = 0
+    @FocusState private var fieldFocused: Bool
+    /// Typed text per question text; replaces the selection for that question. Memory only (the model keeps the drafts).
+    @State private var texts: [String: String]
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var step: Int
+    /// Why Return did nothing on the field (empty, too long, one line), shown under it on the step where it happened.
+    @State private var hint: String?
     /// Chosen labels per question text.
     @State private var answers: [String: Set<String>]
     @State private var lastToggle: (index: Int, at: Date)?
@@ -663,8 +676,11 @@ struct QuestionCard: View {
     private static let maxBodyHeight: CGFloat = 330
 
     init(req: PendingRequest, repo: String? = nil, mark: SessionIdentity? = nil, initial: PartialAnswers = PartialAnswers(), progress: @escaping (Int, [String: Set<String>], Bool) -> Void = { _, _, _ in },
-         send: @escaping ([String: Set<String>]) -> NotchModel.Answered, handBack: @escaping () -> Void) {
+         send: @escaping ([String: Set<String>], [String: String]) -> NotchModel.Answered, handBack: @escaping () -> Void,
+         freeText: Bool = false, focusReset: Int = 0, initialTexts: [String: String] = [:], draft: @escaping (String, String) -> Void = { _, _ in }, replyFocus: @escaping (Bool) -> Void = { _ in }) {
         self.req = req; self.repo = repo; self.mark = mark; self.progress = progress; self.send = send; self.handBack = handBack
+        self.freeText = freeText; self.focusReset = focusReset; self.draft = draft; self.replyFocus = replyFocus
+        _texts = State(initialValue: initialTexts)
         _step = State(initialValue: min(initial.step, max((req.questions?.count ?? 1) - 1, 0)))
         _answers = State(initialValue: initial.answers)
     }
@@ -702,7 +718,54 @@ struct QuestionCard: View {
                 .onTapGesture { pick(i) }
                 .accessibilityAddTraits(on ? .isSelected : [])
             }
+            if freeText, !q.multiSelect { replyField(q) }
         }
+    }
+
+    /// Never focused by Chippy: only a click puts the cursor here, so no keystroke meant for the terminal lands in it.
+    /// While focused: Return sends, Esc only drops focus (the draft stays), card hotkeys stand down (AppDelegate).
+    @ViewBuilder private func replyField(_ q: AskQuestion) -> some View {
+        let text = texts[q.question] ?? ""
+        let tooLong = text.trimmingCharacters(in: .whitespacesAndNewlines).count > NotchModel.freeTextLimit
+        VStack(alignment: .leading, spacing: 2) {
+            TextField("Or type a reply", text: Binding(get: { texts[q.question] ?? "" }, set: { setText($0, q) }))
+                .textFieldStyle(.plain).font(.caption).foregroundStyle(.white)
+                .focused($fieldFocused)
+                .onSubmit { submitText(q) }
+                .onExitCommand { fieldFocused = false } // Esc: leave the field first, never close the card or lose the draft
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: fieldFocused ? 0.26 : 0.18)))
+                .accessibilityLabel("Type a reply")
+                .accessibilityIdentifier(NotchPanel.replyFieldMarker)
+            if let msg = hint ?? (tooLong ? NotchModel.freeTextProblem(text) : nil) {
+                Text(msg).font(.caption2).foregroundStyle(.orange)
+            }
+        }
+        .onChange(of: fieldFocused) { replyFocus($0) }
+        .onChange(of: focusReset) { _ in fieldFocused = false }
+        .onDisappear { replyFocus(false) }
+    }
+
+    private func setText(_ new: String, _ q: AskQuestion) {
+        // A newline or tab cannot be sent and Return submits: each becomes a space (words stay apart), then the text is kept as typed.
+        let t = String(String.UnicodeScalarView(new.unicodeScalars.map { (NotchModel.lineBreaks.contains($0.value) || $0 == "\t") ? " " : $0 }))
+        texts[q.question] = t.isEmpty ? nil : t
+        draft(q.question, t)
+        hint = nil
+        progress(step, answers, true) // typing is engagement: pins the card
+        // Typed text replaces the selection, but only real text: spaces alone must not clear a pick.
+        if NotchModel.validFreeText(t) != nil, answers[q.question] != nil { answers[q.question] = nil }
+    }
+
+    private func submitText(_ q: AskQuestion) {
+        guard !sent else { return }
+        let t = texts[q.question] ?? ""
+        if NotchModel.validFreeText(t) == nil {
+            if t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !(answers[q.question] ?? []).isEmpty { fieldFocused = false; advance(); return } // a pick stands
+            hint = NotchModel.freeTextProblem(t); return
+        }
+        fieldFocused = false
+        advance()
     }
 
     /// Pinned below the scrolling options so it never scrolls away.
@@ -720,6 +783,11 @@ struct QuestionCard: View {
         let qs = req.questions ?? []
         let q = qs[min(step, qs.count - 1)]
         VStack(alignment: .leading, spacing: 6) {
+            Color.clear.frame(height: 0).onChange(of: freeText) { on in // flag turned off mid-card: drop typed text so Return behaves as with no draft
+                guard !on else { return }
+                for k in texts.keys { draft(k, "") }
+                texts = [:]; hint = nil; fieldFocused = false
+            }
             Text(req.branch.map { "\(repo ?? req.project) · \($0)" } ?? (repo ?? req.project))
                 .font(.caption.bold()).foregroundStyle(.white.opacity(0.85))
                 .identityLead(mark)
@@ -741,7 +809,7 @@ struct QuestionCard: View {
             ChipButton(title: "Answer in terminal", kind: .quiet) { if !sent { sent = true; handBack() } }
             TourCaption(sessionId: req.sessionId, step: .question)
         }
-        .onChange(of: step) { leadExpanded = false; lastToggle = nil; ShortcutBus.steps.send((req.id, $0)); progress($0, answers, true) }
+        .onChange(of: step) { fieldFocused = false; replyFocus(false); hint = nil; leadExpanded = false; lastToggle = nil; ShortcutBus.steps.send((req.id, $0)); progress($0, answers, true) }
         .onChange(of: answers) { progress(step, $0, false) } // every selection is saved at once; pinning is pick()'s job, so a re-seed never pins
         .onDisappear { if !sent { progress(step, answers, false) } } // leaving the card keeps what was answered
         .onAppear { if step > 0 { ShortcutBus.steps.send((req.id, step)) } }
@@ -760,6 +828,8 @@ struct QuestionCard: View {
         guard !sent, !qs.isEmpty else { return } // a double-click or key repeat must not answer the next question too
         let q = qs[min(step, qs.count - 1)]
         guard q.options.indices.contains(index) else { return }
+        fieldFocused = false; replyFocus(false) // a pick moves on: the next question's field must start unfocused
+        hint = nil
         let label = q.options[index].label
         progress(step, answers, true) // a tap or key is an interaction (it pins the card) even when the pick changes nothing
         if q.multiSelect {
@@ -770,6 +840,7 @@ struct QuestionCard: View {
             if !set.insert(label).inserted { set.remove(label) }
             answers[q.question] = set
         } else {
+            texts[q.question] = nil; draft(q.question, "") // a picked option replaces what was typed
             answers[q.question] = [label]
             advance()
         }
@@ -779,8 +850,12 @@ struct QuestionCard: View {
         let qs = req.questions ?? []
         guard !sent, !qs.isEmpty else { return }
         let q = qs[min(step, qs.count - 1)]
-        guard !(answers[q.question] ?? []).isEmpty else { return } // multi-select needs at least one
-        if step + 1 < qs.count { step += 1 } else { sent = true; if send(answers) == .refused { sent = false } }
+        let typed = freeText && !q.multiSelect && texts[q.question].map { NotchModel.validFreeText($0) != nil } == true
+        guard typed || !(answers[q.question] ?? []).isEmpty else { return } // multi-select needs at least one
+        if step + 1 < qs.count { step += 1 } else {
+            sent = true
+            if send(answers, freeText ? texts.filter { k, v in qs.contains { $0.question == k && !$0.multiSelect } && NotchModel.validFreeText(v) != nil } : [:]) == .refused { sent = false }
+        }
     }
 }
 

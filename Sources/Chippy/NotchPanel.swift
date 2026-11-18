@@ -113,6 +113,11 @@ final class NotchPanel: NSPanel {
             self.frontAtListOpen = NSWorkspace.shared.frontmostApplication?.processIdentifier
             self.makeKey() // only on the open transition
         }.store(in: &bag)
+        // The field only ever got key status by a click (#94): when its focus ends (Return, Esc, card gone/swapped, flag off)
+        // the panel gives key status back at once, so the next keystroke goes to the terminal, not to Chippy.
+        model.$replyFocusOwner.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] owner in
+            if owner == nil { self?.releaseKeyAfterReply() }
+        }.store(in: &bag)
         model.$tall.dropFirst().removeDuplicates().receive(on: RunLoop.main).sink { [weak self] _ in self?.dock(self?.model.density ?? .collapsed) }.store(in: &bag)
         dock(model.density)
         orderFrontRegardless()
@@ -204,6 +209,9 @@ final class NotchPanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
 
+    /// Accessibility identifier tagging the reply field, so its click can be told apart from any other view.
+    static let replyFieldMarker = "chippy.replyField"
+
     /// True while the shared menu is popped up from this panel: the menu steals key focus, which must not read as
     /// "clicked elsewhere" (resignKey) or close the open panel under it. Set by the AppDelegate around `popUp`.
     var inMenuTracking = false
@@ -216,11 +224,38 @@ final class NotchPanel: NSPanel {
             onMenu?(NSPoint(x: frame.midX, y: hitRect.minY + 8), true) // the shape's bottom edge (the hit rect adds an 8pt margin)
             return
         }
+        // A click on the reply field takes key focus (without activating the app) so it can type. Only that click:
+        // nowhere else does Chippy take the keyboard from the terminal.
+        if event.type == .leftMouseDown, !isKeyWindow, model.freeTextReplyEnabled, model.shownPending?.questions != nil,
+           var v = contentView?.hitTest(event.locationInWindow) {
+            // Only the reply field (tagged by accessibility identifier) takes key; any other hit does nothing. UNVERIFIED live:
+            // whether a click focuses a SwiftUI field in a non-activating panel, and whether the identifier reaches the AppKit view.
+            var tagged = false
+            while !tagged {
+                tagged = v.accessibilityIdentifier() == Self.replyFieldMarker
+                guard !tagged, let up = v.superview else { break }
+                v = up
+            }
+            if tagged { makeKey() }
+        }
         super.sendEvent(event)
     }
 
     /// Esc (when the notch has focus) folds an open detail.
-    override func cancelOperation(_ sender: Any?) { model.closeDetail() }
+    /// While a text field has focus (#94) Esc only leaves it: the card stays and the draft is kept.
+    override func cancelOperation(_ sender: Any?) {
+        if firstResponder is NSText { makeFirstResponder(nil); model.clearReplyFocus(); releaseKeyAfterReply(); return } // owner cleared first, so the release guard passes
+        model.closeDetail()
+    }
+
+    /// Gives key status back after the reply field ends. A non-activating panel that stays key keeps eating the terminal's
+    /// keystrokes, so it leaves the key window (order out, then back in front without key). The open list needs key, so it keeps it.
+    private func releaseKeyAfterReply() {
+        guard isKeyWindow, !model.listOpen, !model.replyFieldFocused else { return }
+        if firstResponder is NSText { makeFirstResponder(nil) }
+        orderOut(nil)
+        orderFrontRegardless()
+    }
 
     /// The list is keyboard-driven, so it must not outlive key focus: losing key (another window took it) closes it.
     /// Only a real hand-off counts (another app became frontmost since the list opened); transient losses, such as
@@ -228,6 +263,10 @@ final class NotchPanel: NSPanel {
     private var frontAtListOpen: pid_t?
     override func resignKey() {
         super.resignKey()
+        if !inMenuTracking { // the gear popup stealing key is not a hand-off
+            if firstResponder is NSText { makeFirstResponder(nil) } // keystrokes now go elsewhere: drop the field's focus (the draft stays)
+            if model.freeTextReplyEnabled || model.replyFocusOwner != nil { model.clearReplyFocus() } // flag off: no extra @Published writes
+        }
         guard model.listOpen, !inMenuTracking else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
             guard let self, self.model.listOpen, !self.inMenuTracking, !self.isKeyWindow else { return }
@@ -238,6 +277,7 @@ final class NotchPanel: NSPanel {
 
     /// The waiting list is keyboard-driven (#53): arrows move, Return opens. Other keys pass through untouched.
     override func keyDown(with event: NSEvent) {
+        if firstResponder is NSText { super.keyDown(with: event); return } // typing: never a list or card key
         guard model.listOpen, event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { super.keyDown(with: event); return }
         switch event.keyCode {
         case 125: model.moveSelection(1)           // down
