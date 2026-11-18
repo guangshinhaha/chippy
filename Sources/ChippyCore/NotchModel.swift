@@ -150,6 +150,23 @@ public final class NotchModel: ObservableObject {
         return doneItems.first { $0.sessionId == id }
     }
 
+    /// Header text for the expanded card, derived from what the body actually shows (#96), never from the overall `state`.
+    /// Precedence mirrors the body: list > answerable card (pending) > jumped-to done detail > Recent (no chips)
+    /// > terminal chips > done chips > state. A terminal chip is passive (nothing to answer here), so it never says "Needs you".
+    public var headerTitle: String {
+        if listOpen { return "Waiting · \(waitingItems.count)" }
+        if let r = shownPending {
+            let n = pending.count
+            let at = pending.firstIndex { $0.id == r.id } ?? 0
+            return n > 1 ? "Needs you · \(at + 1) of \(n)" : "Needs you"
+        }
+        if shownDone != nil { return pending.isEmpty ? "Done" : "Finished" }
+        if restOpen && doneItems.isEmpty && terminalItems.isEmpty { return "Recent" }
+        if !terminalItems.isEmpty { return "Asked in terminal" }
+        if !doneItems.isEmpty { return ChippyState.done.title }
+        return state.title
+    }
+
     /// Open the waiting list (badge tap, or the header while several wait).
     public func openList() {
         guard !waitingItems.isEmpty else { return }
