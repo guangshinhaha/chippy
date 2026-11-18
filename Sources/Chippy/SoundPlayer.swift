@@ -7,7 +7,8 @@ import ChippyCore
 final class SoundPlayer {
     static let key = "sounds.enabled"
     private let defaults = UserDefaults.standard
-    private var lastPlayed: [String: Date] = [:]
+    private var cooldowns = SoundCooldowns()
+    private var playing: [NSSound] = []
     private var locked = false
     private var observers: [NSObjectProtocol] = []
 
@@ -22,6 +23,8 @@ final class SoundPlayer {
         })
     }
 
+    func sessionEnded(_ id: String) { cooldowns.prune(session: id) }
+
     var enabled: Bool {
         get { defaults.bool(forKey: Self.key) }
         set { defaults.set(newValue, forKey: Self.key) }
@@ -32,8 +35,12 @@ final class SoundPlayer {
         let frontmost = SoundPolicy.isHostFrontmost(host: host, frontmostPid: front?.processIdentifier,
                                                     frontmostBundle: front?.bundleIdentifier)
         guard SoundPolicy.shouldPlay(kind: kind, enabled: enabled, hostFrontmost: frontmost, locked: locked,
-                                     lastPlayed: lastPlayed[sessionId], now: now) else { return }
-        lastPlayed[sessionId] = now
-        NSSound(named: kind == .needsYou ? "Pop" : "Tink")?.play()
+                                     lastPlayed: cooldowns.lastPlayed(kind, session: sessionId), now: now) else { return }
+        cooldowns.record(kind, session: sessionId, at: now)
+        // The named sound is a shared instance and play() on a playing one is a no-op: play a copy.
+        guard let s = (NSSound(named: kind == .needsYou ? "Pop" : "Tink")?.copy() as? NSSound) else { return }
+        playing.removeAll { !$0.isPlaying }
+        playing.append(s)
+        s.play()
     }
 }

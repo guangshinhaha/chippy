@@ -26,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         panel = NotchPanel(model: model)
         model.onSound = { [weak self] kind, id, host in self?.sounds.handle(kind, sessionId: id, host: host) }
+        model.onSessionEnd = { [weak self] id in self?.sounds.sessionEnded(id) }
         buildMenu()
         startServer()
         startShortcuts()
