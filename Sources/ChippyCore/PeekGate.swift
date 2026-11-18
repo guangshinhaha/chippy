@@ -3,7 +3,7 @@ import Foundation
 
 /// The "peek" of a finished chip: the island shows compact for `duration` seconds, then settles to collapsed.
 /// Hovering the island pauses a running peek; leaving resumes it with the time that was left. A new message
-/// restarts it in full. Pure; the clock is injected (seconds on any monotonic scale), like `GapGate`.
+/// restarts it in full (a new Stop). Pure; the clock is injected (seconds on any monotonic scale), like `GapGate`.
 /// Approvals and questions are not handled here: the model keeps them expanded regardless of the peek.
 public struct PeekGate: Equatable {
     public var duration: TimeInterval
@@ -19,12 +19,11 @@ public struct PeekGate: Equatable {
         TimeInterval(clock_gettime_nsec_np(CLOCK_MONOTONIC)) / 1_000_000_000
     }
 
-    /// A finished chip (or any new message) arrived: a full `duration`, always running. A hover that began
-    /// earlier does not hold it; only a fresh hover pauses it.
-    public mutating func start(now: TimeInterval) {
+    /// A finished chip arrived (only a Stop starts a peek): a full `duration`. If the cursor is already resting
+    /// on the island (`hovering`), it starts paused, so a second Stop while paused keeps the pause.
+    public mutating func start(now: TimeInterval, hovering: Bool = false) {
         active = true
-        deadline = now + duration
-        remaining = nil
+        if hovering { deadline = nil; remaining = duration } else { deadline = now + duration; remaining = nil }
     }
 
     /// The cursor is over / off the island. Only a peek that is running (or paused) is affected: hovering an

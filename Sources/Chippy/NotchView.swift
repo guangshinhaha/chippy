@@ -42,6 +42,7 @@ struct CountBadge: View {
             .padding(.horizontal, 4).frame(minWidth: 16, maxWidth: max(maxWidth, 16), minHeight: 16)
             .background(Capsule().fill(.white.opacity(0.92)))
             .reveal(0.08)
+            .accessibilityLabel("\(text) finished waiting")
     }
 }
 
@@ -141,9 +142,10 @@ struct NotchView: View {
             if let badge = model.badge, m.isTab {
                 VStack(spacing: 0) {
                     Color.clear.frame(height: m.band)
+                    let off = (m.width + NotchMetrics.glanceIcon) / 2 + NotchMetrics.badgeGap // past the centred icon
                     HStack(spacing: 0) {
-                        Color.clear.frame(width: (box.metrics.width + NotchMetrics.glanceIcon) / 2 + NotchMetrics.badgeGap) // past the centred icon
-                        CountBadge(text: badge, maxWidth: 40)
+                        Color.clear.frame(width: off)
+                        CountBadge(text: badge, maxWidth: m.width - off - 8) // stays inside the tab
                         Spacer(minLength: 0)
                     }.frame(height: NotchMetrics.tabHeight)
                 }

@@ -47,6 +47,16 @@ final class PeekTests: XCTestCase {
         XCTAssertFalse(g.isPeeking(now: 11))       // deadline is always set
     }
 
+    func testStartWhileCursorRestsHoldsPeekAndSecondStopKeepsPause() {
+        var g = PeekGate()
+        g.start(now: 0, hovering: true)
+        XCTAssertTrue(g.isPeeking(now: 500))
+        g.start(now: 600, hovering: true)          // second Stop while paused
+        XCTAssertTrue(g.isPeeking(now: 900))
+        g.setHover(false, now: 1000)
+        XCTAssertTrue(g.isPeeking(now: 1009.9)); XCTAssertFalse(g.isPeeking(now: 1010))
+    }
+
     func testRestartWhilePausedRunsAFullPeek() {
         var g = PeekGate()
         g.start(now: 0); g.setHover(true, now: 2)
@@ -88,8 +98,8 @@ final class PeekTests: XCTestCase {
         let m = model(); let now = Date()
         m.apply(ev("Stop"), now: now)
         XCTAssertEqual(m.density, .compact); XCTAssertTrue(m.visible)
-        t = 9.9; m.tick(); XCTAssertEqual(m.density, .compact)
-        t = 10; m.tick()
+        t = 9.9; m.sweep(); XCTAssertEqual(m.density, .compact)
+        t = 10; m.sweep()
         XCTAssertEqual(m.density, .collapsed); XCTAssertTrue(m.visible)
         XCTAssertEqual(m.doneItems.count, 1)           // still reachable, dismissable
         XCTAssertEqual(m.badge, "1")
@@ -102,11 +112,11 @@ final class PeekTests: XCTestCase {
         let m = model()
         m.apply(ev("Stop"), now: Date())
         t = 4; m.setHover(true)
-        t = 60; m.tick(); XCTAssertEqual(m.density, .compact)
+        t = 60; m.sweep(); XCTAssertEqual(m.density, .compact)
         m.setHover(false)
-        t = 65.9; m.tick(); XCTAssertEqual(m.density, .compact)
-        t = 66; m.tick(); XCTAssertEqual(m.density, .collapsed)
-        m.setHover(true); m.setHover(false); t = 200; m.tick()
+        t = 65.9; m.sweep(); XCTAssertEqual(m.density, .compact)
+        t = 66; m.sweep(); XCTAssertEqual(m.density, .collapsed)
+        m.setHover(true); m.setHover(false); t = 200; m.sweep()
         XCTAssertEqual(m.density, .collapsed)      // hovering the collapsed notch does not re-open it
     }
 
@@ -121,16 +131,28 @@ final class PeekTests: XCTestCase {
         XCTAssertEqual(m.badge, "1")
     }
 
-    func testTickDoesNotRefreshWhilePeekRuns() {
+    func testSweepDoesNotRefreshWhilePeekRuns() {
         let m = model()
         m.apply(ev("Stop"), now: Date())
         var changes = 0
         let c = m.objectWillChange.sink { changes += 1 }
-        t = 5; m.tick(); m.tick()
+        t = 5; m.sweep(); m.sweep()
         XCTAssertEqual(changes, 0)
-        t = 10; m.tick()
+        t = 10; m.sweep()
         XCTAssertGreaterThan(changes, 0)
         c.cancel()
+    }
+
+    func testCursorRestingOnNotchHoldsNewPeekEvenAfterExpandedHover() {
+        let m = model()
+        m.setHover(true)                           // resting on the (collapsed) notch
+        m.apply(ev("Stop"), now: Date())
+        t = 100; m.sweep(); XCTAssertEqual(m.density, .compact)
+        m.apply(ev("Stop", "b"), now: Date())      // second Stop while paused
+        t = 200; m.sweep(); XCTAssertEqual(m.density, .compact)
+        m.setHover(false)
+        t = 209.9; m.sweep(); XCTAssertEqual(m.density, .compact)
+        t = 210; m.sweep(); XCTAssertEqual(m.density, .collapsed)
     }
 
     func testMonotonicClockAdvances() {
@@ -142,8 +164,8 @@ final class PeekTests: XCTestCase {
         let m = model(); let now = Date()
         m.apply(ev("Stop", "a"), now: now)
         t = 9; m.apply(ev("Stop", "b"), now: now)
-        t = 18; m.tick(); XCTAssertEqual(m.density, .compact)
-        t = 19; m.tick(); XCTAssertEqual(m.density, .collapsed)
+        t = 18; m.sweep(); XCTAssertEqual(m.density, .compact)
+        t = 19; m.sweep(); XCTAssertEqual(m.density, .collapsed)
         XCTAssertEqual(m.badge, "2")
     }
 
@@ -151,7 +173,7 @@ final class PeekTests: XCTestCase {
         let m = model()
         let c = Connection.detached()
         m.receiveApproval(ev("PermissionRequest", extra: #","tool_name":"Bash","tool_input":{"command":"ls"}"#), c)
-        t = 1000; m.tick(); m.sweep(now: Date())
+        t = 1000; m.sweep(); m.sweep(now: Date())
         XCTAssertEqual(m.density, .expanded)
         XCTAssertEqual(m.pending.count, 1)
     }
@@ -161,7 +183,7 @@ final class PeekTests: XCTestCase {
         m.apply(ev("Stop", "a"), now: Date())
         let c = Connection.detached()
         m.receiveApproval(ev("PermissionRequest", "b", extra: #","tool_name":"Bash","tool_input":{"command":"ls"}"#), c)
-        t = 30; m.tick(); XCTAssertEqual(m.density, .expanded)
+        t = 30; m.sweep(); XCTAssertEqual(m.density, .expanded)
         m.resolve(m.pending[0].id, .deny)
         XCTAssertEqual(m.density, .collapsed)          // the peek ran out meanwhile; the chip waits behind the badge
         XCTAssertEqual(m.badge, "1")
@@ -171,13 +193,13 @@ final class PeekTests: XCTestCase {
         let m = model()
         m.apply(ev("Stop"), now: Date())
         m.toggleOpen()
-        t = 100; m.tick(); XCTAssertEqual(m.density, .expanded)
+        t = 100; m.sweep(); XCTAssertEqual(m.density, .expanded)
     }
 
     func testBadgeCapsAtNinePlus() {
         let m = model(); let now = Date()
         for i in 0..<10 { m.apply(ev("Stop", "s\(i)"), now: now) }
-        t = 11; m.tick()
+        t = 11; m.sweep()
         XCTAssertEqual(m.badge, "9+")
     }
 

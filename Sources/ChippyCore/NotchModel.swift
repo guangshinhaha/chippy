@@ -46,6 +46,8 @@ public final class NotchModel: ObservableObject {
     /// A finished chip is shown compact while peeking, then the island settles to collapsed (chip stays in `doneItems`).
     @Published public private(set) var peeking = false
     private var peek = PeekGate()
+    /// Last pointer state from the panel, kept even while expanded so a new peek can start from it.
+    private var hovering = false
     private let clock: () -> TimeInterval
     private var store = SessionStore()
     private var connections: [String: Connection] = [:]
@@ -68,7 +70,8 @@ public final class NotchModel: ObservableObject {
         if sessions.isEmpty { pinnedOpen = false }
         if doneItems.isEmpty { doneOpen = false; peek.cancel() }
         if !pending.isEmpty || pinnedOpen || doneOpen { peek.cancel() } // the user (or an approval) took over: no peek to resume on close
-        peeking = peek.isPeeking(now: clock())
+        let p = peek.isPeeking(now: clock())
+        if p != peeking { peeking = p }
         let live = store.derivedState
         state = !pending.isEmpty ? .needsYou : (live == .working ? .working : (doneItems.isEmpty ? live : .done))
         tall = pending.isEmpty && !pinnedOpen && doneOpen
@@ -83,12 +86,10 @@ public final class NotchModel: ObservableObject {
     /// The pointer entered or left the island: a running peek holds while it is over and resumes when it leaves.
     /// Ignored while expanded, and it never re-opens an expired peek.
     public func setHover(_ inside: Bool) {
+        hovering = inside
         guard density != .expanded else { return }
         peek.setHover(inside, now: clock())
     }
-
-    /// Ends an expired peek. Called by the app's 0.5s sweep.
-    public func tick() { if peeking, !peek.isPeeking(now: clock()) { refresh() } }
 
     /// Click on the notch. A waiting approval ignores it. A done chip opens its detail (click again to go back);
     /// otherwise it opens or closes the session peek.
@@ -181,10 +182,12 @@ public final class NotchModel: ObservableObject {
 
     /// Drop requests whose hook went away (timeout fallback, or answered in the terminal).
     public func sweep(now: Date = Date()) {
+        if peeking, !peek.isPeeking(now: clock()) { refresh() } // an expired peek settles to collapsed
         let gone = pending.filter { connections[$0.id]?.peerGone ?? true }
-        let before = doneItems.count
-        doneItems.removeAll { now.timeIntervalSince($0.at) > Self.doneSeconds }
-        if doneItems.count != before { refresh() }
+        if doneItems.contains(where: { now.timeIntervalSince($0.at) > Self.doneSeconds }) { // assign only on change: a no-op write still notifies
+            doneItems.removeAll { now.timeIntervalSince($0.at) > Self.doneSeconds }
+            refresh()
+        }
         guard !gone.isEmpty else { return }
         for r in gone {
             connections.removeValue(forKey: r.id)?.respond(nil); questionInputs.removeValue(forKey: r.id)
@@ -204,7 +207,7 @@ public final class NotchModel: ObservableObject {
                 doneItems.removeAll { $0.sessionId == r.id }
                 doneItems.append(DoneItem(sessionId: r.id, project: r.project, branch: r.branch,
                                           files: r.filesEdited.count, added: r.added, removed: r.removed, reply: r.lastReply, prompt: r.lastPrompt, at: now, host: r.host))
-                peek.start(now: clock())
+                peek.start(now: clock(), hovering: hovering)
             }
         case "UserPromptSubmit", "SessionEnd", "PreToolUse", "PostToolUse":
             // Only the thread itself moving on (new prompt, tool use after a Stop, or ending) clears its chip; another thread's activity must not.
