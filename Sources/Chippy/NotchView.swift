@@ -416,11 +416,30 @@ struct DoneCard: View {
                     .font(.caption2).foregroundStyle(.white.opacity(0.6))
                 Spacer()
                 if TerminalJump.available(item.host) {
-                    ChipButton(title: "Open terminal", kind: .neutral) { TerminalJump.open(item.host) }
+                    OpenTerminalButton(host: item.host)
                 }
                 ChipButton(title: "Dismiss", kind: .neutral, action: dismiss)
             }
         }
+    }
+}
+
+/// "Open terminal" with visible feedback: if the host app can't be brought forward the button says so
+/// instead of appearing to do nothing.
+struct OpenTerminalButton: View {
+    let host: HostInfo?
+    @State private var failed = false
+
+    var body: some View {
+        ChipButton(title: failed ? "Couldn't open" : "Open terminal",
+                   hint: failed ? "switch to it yourself" : nil, kind: .neutral) {
+            failed = false
+            TerminalJump.open(host) { ok in
+                failed = !ok
+                if !ok { DispatchQueue.main.asyncAfter(deadline: .now() + 4) { failed = false } }
+            }
+        }
+        .help(failed ? "Chippy couldn't bring the app forward. Switch to it from the Dock or Cmd-Tab." : "")
     }
 }
 

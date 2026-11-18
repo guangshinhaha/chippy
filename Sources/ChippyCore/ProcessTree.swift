@@ -11,6 +11,12 @@ public struct HostInfo: Equatable {
     public var hasHost: Bool { pid != nil && bundle != nil }
 }
 
+/// Pure check behind the "Open terminal" feedback.
+public enum ActivationOutcome {
+    /// The jump worked when the target app is frontmost afterwards (already being frontmost counts).
+    public static func isFrontmost(frontmostPid: Int32?, target: Int32) -> Bool { frontmostPid == target }
+}
+
 /// Pure ancestry walk, driven by lookup closures so it can be tested with a fake process table.
 public enum ProcessTree {
     public static let maxSteps = 32
