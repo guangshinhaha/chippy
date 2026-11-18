@@ -75,6 +75,7 @@ struct CountBadge: View {
     var deadline: (start: Date, end: Date)? = nil
     /// Whose request is next (the rank-first needs-you one), when a count alone would not say (#89).
     var mark: SessionIdentity? = nil
+    var markRepo: String? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pulse = false
 
@@ -109,11 +110,11 @@ struct CountBadge: View {
     private func badge(now: Date) -> some View {
         let left = deadline.map { NeedsMeFold.timeLeft(createdAt: $0.start, timeout: $0.end.timeIntervalSince($0.start), now: now) }
         let fraction = deadline.map { NeedsMeFold.fractionLeft(createdAt: $0.start, timeout: $0.end.timeIntervalSince($0.start), now: now) } ?? 1
+        let showMark = mark != nil && maxWidth >= 34
         let label = needsYou
-            ? "\(text) waiting, needs you" + (mark.map { ", next from \($0.spoken)" } ?? "") + (left.map { ", times out to the terminal in \(Int($0.rounded(.up))) seconds" } ?? "")
+            ? "\(text) waiting, needs you" + (showMark ? mark.map { ", next from \(markRepo ?? "one repo"), \($0.spokenShort)" } ?? "" : "") + (left.map { ", times out to the terminal in \(Int($0.rounded(.up))) seconds" } ?? "")
             : "\(text) finished waiting"
         let pulsing = needsYou && pulse && !reduceMotion
-        let showMark = mark != nil && maxWidth >= 34
         return HStack(spacing: 3) {
             if showMark, let mark { IdentityMark(identity: mark, size: 11) }
             Text(text).font(.system(size: 10, weight: .bold, design: .rounded).monospacedDigit()).foregroundStyle(needsYou ? .white : .black)
@@ -230,22 +231,15 @@ struct NotchView: View {
         reduceMotion ? .linear(duration: 0.01) : .spring(response: 0.38, dampingFraction: 0.82)
     }
 
-    /// Glance text: who finished (repo · branch), so several threads can be told apart.
-    /// Whose chip the compact glance shows (same pick as `compactText`), for the identity mark.
-    private var compactMark: SessionIdentity? {
-        if model.state == .needsYou, let t = model.terminalItems.last, model.pending.isEmpty, t.at >= (model.doneItems.last?.at ?? .distantPast) {
-            return model.identity(cwd: t.cwd, project: t.project)
-        }
-        return model.doneItems.last.map { model.identity(cwd: $0.cwd, project: $0.project) }
-    }
-
-    private var compactText: String {
+    /// Glance chip: who finished (repo · branch), so several threads can be told apart, and that repo's identity mark.
+    /// One pick for both, so the text and the mark never describe different sessions.
+    private var compactChip: (text: String, mark: SessionIdentity?) {
         // Only when the icon says "needs you" too: live work (icon: working) wins over the chip text.
         if model.state == .needsYou, let t = model.terminalItems.last, model.pending.isEmpty, t.at >= (model.doneItems.last?.at ?? .distantPast) {
-            return t.glance(repo: model.repoLabel(cwd: t.cwd, project: t.project).text)
+            return (t.glance(repo: model.repoLabel(cwd: t.cwd, project: t.project).text), model.identity(cwd: t.cwd, project: t.project))
         }
-        guard let d = model.doneItems.last else { return model.state.title }
-        return d.glance(showReply: model.showReplyInGlance, repo: model.repoLabel(cwd: d.cwd, project: d.project).text)
+        guard let d = model.doneItems.last else { return (model.state.title, nil) }
+        return (d.glance(showReply: model.showReplyInGlance, repo: model.repoLabel(cwd: d.cwd, project: d.project).text), model.identity(cwd: d.cwd, project: d.project))
     }
 
     static let terminalCardCap = 2
@@ -279,7 +273,7 @@ struct NotchView: View {
                     HStack(spacing: 0) {
                         Color.clear.frame(width: off)
                         CountBadge(text: badge, maxWidth: m.width - off - 8, onTap: { model.openBadge() },
-                                   needsYou: model.badgeNeedsYou, dotLabel: model.badgeDotLabel, deadline: model.foldedDeadline, mark: model.badgeIdentity) // stays inside the tab
+                                   needsYou: model.badgeNeedsYou, dotLabel: model.badgeDotLabel, deadline: model.foldedDeadline, mark: model.badgeIdentity, markRepo: model.badgeRepo) // stays inside the tab
                         Spacer(minLength: 0)
                     }.frame(height: NotchMetrics.tabHeight)
                 }
@@ -290,7 +284,7 @@ struct NotchView: View {
                     Color.clear.frame(width: wing)
                     Color.clear.frame(width: m.width)
                     CountBadge(text: badge, maxWidth: wing - 8, onTap: { model.openBadge() },
-                                   needsYou: model.badgeNeedsYou, dotLabel: model.badgeDotLabel, deadline: model.foldedDeadline, mark: model.badgeIdentity).frame(width: wing)
+                                   needsYou: model.badgeNeedsYou, dotLabel: model.badgeDotLabel, deadline: model.foldedDeadline, mark: model.badgeIdentity, markRepo: model.badgeRepo).frame(width: wing)
                 }
                 .frame(height: m.band, alignment: .center)
                 .frame(maxHeight: .infinity, alignment: .top)
@@ -299,12 +293,13 @@ struct NotchView: View {
             }
         case .compact where m.isTab:
             // No room beside the camera: the glance lives in a tab under it (icon is drawn by NotchView.icon).
+            let chip = compactChip
             VStack(spacing: 0) {
                 Color.clear.frame(height: m.band)
                 HStack(spacing: 6) {
                     Color.clear.frame(width: NotchMetrics.glanceIcon + 12)
-                    if let m = compactMark { IdentityMark(identity: m, size: 12) }
-                    Text(compactText).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.tail)
+                    if let m = chip.mark { IdentityMark(identity: m, size: 12) }
+                    Text(chip.text).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.tail)
                     if model.doneItems.count + model.terminalItems.count > 1 {
                         Text("+\(model.doneItems.count + model.terminalItems.count - 1)").font(.caption2).foregroundStyle(.white.opacity(0.6))
                     }
@@ -318,12 +313,13 @@ struct NotchView: View {
             Color.clear.frame(height: m.band) // gap too small: the collapsed pill only
         case .compact:
             let wing = m.wing(for: .compact)
+            let chip = compactChip
             HStack(spacing: 0) {
                 Color.clear.frame(width: wing)
                 Color.clear.frame(width: m.width)
                 HStack(spacing: 6) {
-                    if let m = compactMark { IdentityMark(identity: m, size: 12) }
-                    Text(compactText)
+                    if let m = chip.mark { IdentityMark(identity: m, size: 12) }
+                    Text(chip.text)
                         .font(.caption.bold()).foregroundStyle(.white)
                         .lineLimit(1).truncationMode(.tail)
                     if model.doneItems.count + model.terminalItems.count > 1 {
@@ -941,7 +937,7 @@ struct WaitingListView: View {
     private func needsRows(_ layout: WaitingLayout) -> some View {
         VStack(spacing: 0) {
             ForEach(layout.needs) { item in
-                NeedsRow(item: item, mark: model.identity(repo: item.repo), selected: model.listSelection == item.target, host: model.terminalItems.first { .terminal($0.sessionId) == item.target }?.host,
+                NeedsRow(item: item, mark: model.identity(item: item), selected: model.listSelection == item.target, host: model.terminalItems.first { .terminal($0.sessionId) == item.target }?.host,
                          open: { model.activate(item.target) },
                          handled: { if case .terminal(let sid) = item.target { model.dismissTerminal(sid) } })
                     .frame(height: WaitingList.needsRowHeight).id(item.target)
@@ -967,7 +963,7 @@ struct WaitingListView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     section("FINISHED", count: layout.totalFinished, clearAll: { model.dismissDone(nil) })
                     ForEach(layout.finished) { item in
-                        FinishedRow(item: item, mark: model.identity(repo: item.repo), selected: model.listSelection == item.target,
+                        FinishedRow(item: item, mark: model.identity(item: item), selected: model.listSelection == item.target,
                                     open: { model.activate(item.target) }, dismiss: { if case .done(let sid) = item.target { model.dismissDone(sid) } })
                             .frame(height: WaitingList.finishedRowHeight)
                     }
@@ -1017,9 +1013,14 @@ struct IdentityMark: View {
 }
 
 extension View {
-    /// The identity mark before a header line; nothing when there is none.
-    @ViewBuilder func identityLead(_ mark: SessionIdentity?) -> some View {
-        if let mark { HStack(alignment: .center, spacing: 6) { IdentityMark(identity: mark, size: 14); self } } else { self }
+    /// The identity mark before a header line.
+    /// Same view structure with or without a mark (a zero-width placeholder stands in), so a header never re-identifies
+    /// when its mark appears; the text keeps layout priority so the mark cannot squeeze it.
+    func identityLead(_ mark: SessionIdentity?) -> some View {
+        HStack(alignment: .center, spacing: 0) {
+            if let mark { IdentityMark(identity: mark, size: 14).padding(.trailing, 6) } else { Color.clear.frame(width: 0, height: 14) }
+            self.layoutPriority(1)
+        }
     }
 }
 

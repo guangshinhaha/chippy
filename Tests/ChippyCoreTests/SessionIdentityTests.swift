@@ -2,7 +2,7 @@ import XCTest
 @testable import ChippyCore
 
 final class SessionIdentityTests: XCTestCase {
-    func testSameRepoSameIdentityAcrossBooks() {
+    func testSameRepoSameIdentityAcrossBooks() { // holds absent collisions: a lone repo takes its hash slot in any fresh book
         XCTAssertEqual(IdentityBook().identity(repo: "chippy"), IdentityBook().identity(repo: "chippy"))
     }
 
@@ -41,15 +41,36 @@ final class SessionIdentityTests: XCTestCase {
         let b = IdentityBook()
         XCTAssertEqual(b.identity(repo: "chippy").glyph, "C")
         XCTAssertEqual(b.identity(repo: "-api").glyph, "A")
-        XCTAssertEqual(b.identity(repo: "").glyph, "?")
+        XCTAssertEqual(b.identity(repo: "").glyph, "#")
+        XCTAssertEqual(b.identity(repo: "ßtool").glyph, "S")   // uppercased first Character, ASCII only
+        XCTAssertEqual(b.identity(repo: "élan").glyph, "#")
         XCTAssertTrue(SessionIdentity.Shape.allCases.count >= 3, "colour is never the only cue")
         XCTAssertFalse(b.identity(repo: "chippy").spoken.isEmpty)
     }
 
-    func testPastCapacityStillAnswersDeterministically() {
+    func testPastCapacityEvictsLeastRecentlyUsed() {
         let b = IdentityBook()
-        for i in 0..<(SessionIdentity.slotCount + 5) { _ = b.identity(repo: "r\(i)") }
-        XCTAssertEqual(b.identity(repo: "late"), b.identity(repo: "late"))
+        for i in 0..<SessionIdentity.slotCount { _ = b.identity(repo: "r\(i)") }
+        XCTAssertEqual(b.count, SessionIdentity.slotCount)
+        _ = b.identity(repo: "r0")                       // r0 is now the most recent; r1 is the oldest
+        let late = b.identity(repo: "late")
+        XCTAssertEqual(b.count, SessionIdentity.slotCount)
+        XCTAssertTrue(b.knows("late")); XCTAssertTrue(b.knows("r0")); XCTAssertFalse(b.knows("r1"))
+        XCTAssertEqual(b.identity(repo: "late"), late)   // stored, so stable
+    }
+
+    func testUnresolvedFallbackIsNotStoredAndResolvedGetsItsSlot() {
+        let b = IdentityBook()
+        _ = b.identity(for: RepoLabel(repo: "fix-53"), resolved: false)
+        XCTAssertFalse(b.knows("fix-53")); XCTAssertEqual(b.count, 0)
+        let g = b.identity(for: RepoLabel(repo: "govapps", worktree: "fix-53"), resolved: true)
+        XCTAssertTrue(b.knows("govapps")); XCTAssertFalse(b.knows("fix-53")); XCTAssertEqual(b.count, 1)
+        XCTAssertEqual(b.identity(repo: "govapps", resolved: false), g) // a stored repo keeps its slot even if asked unresolved
+    }
+
+    func testUnresolvedUsesRawHashSlot() {
+        let raw = Int(IdentityBook.fnv1a("x") % UInt64(SessionIdentity.slotCount))
+        XCTAssertEqual(IdentityBook().identity(repo: "x", resolved: false), SessionIdentity(slot: raw, repo: "x"))
     }
 
     func testHashIsFixed() { XCTAssertEqual(IdentityBook.fnv1a(""), 0xcbf29ce484222325) }

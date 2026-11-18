@@ -132,13 +132,23 @@ public final class NotchModel: ObservableObject {
     public func repoLabel(cwd: String, project: String) -> RepoLabel { identities.label(cwd: cwd, project: project) }
 
     /// The identity for a cwd's resolved repo, consistent with the label every list and card shows.
-    public func identity(cwd: String, project: String) -> SessionIdentity { marks.identity(for: repoLabel(cwd: cwd, project: project)) }
-    public func identity(repo: String) -> SessionIdentity { marks.identity(repo: repo) }
+    /// Until the cache has resolved the cwd the raw hash slot is used and nothing is stored, so the mark cannot flip later (#89).
+    public func identity(cwd: String, project: String) -> SessionIdentity {
+        let label = repoLabel(cwd: cwd, project: project)
+        return marks.identity(for: label, resolved: identities.isResolved(cwd: cwd))
+    }
+    public func identity(item: WaitingItem) -> SessionIdentity { marks.identity(repo: item.repo, resolved: item.resolved) }
 
     /// Whose request the needs-you badge points at: the rank-first needs-you item (the one a badge tap opens).
     public var badgeIdentity: SessionIdentity? {
         guard badgeNeedsYou, let top = waitingItems.first(where: { $0.needsYou }) else { return nil }
-        return identity(repo: top.repo)
+        return identity(item: top)
+    }
+
+    /// The repo name the badge's mark stands for (spoken by VoiceOver).
+    public var badgeRepo: String? {
+        guard badgeNeedsYou else { return nil }
+        return waitingItems.first(where: { $0.needsYou })?.repo
     }
 
     private func refresh() {
@@ -148,7 +158,8 @@ public final class NotchModel: ObservableObject {
             if refreshAgain { refreshAgain = false; labelsChanged() }
         }
         let waiting = WaitingList.items(pending: pending, done: doneItems, terminal: terminalItems, timeout: timeout(for:),
-                                        label: { [identities] cwd, project in identities.label(cwd: cwd, project: project) }) // computed once per refresh
+                                        label: { [identities] cwd, project in identities.label(cwd: cwd, project: project) }, // computed once per refresh
+                                        resolved: { [identities] in identities.isResolved(cwd: $0) })
         if waiting != waitingItems {
             waitingItems = waiting
             waitingLayout = WaitingList.layout(waiting)

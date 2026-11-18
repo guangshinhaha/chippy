@@ -14,11 +14,21 @@ public struct SessionIdentity: Equatable {
     /// Index into the app's palette, 0..<colourCount.
     public let colour: Int
     public let shape: Shape
-    /// First letter or digit of the repo, uppercased ("?" when there is none).
+    /// First character of the uppercased repo, only when it is an ASCII letter or digit; "#" otherwise.
     public let glyph: String
 
     /// "teal diamond R", for VoiceOver and tests.
-    public var spoken: String { "\(Self.colourNames[colour]) \(shape.name) \(glyph)" }
+    public var spoken: String { "\(spokenShort) \(glyph)" }
+    /// "teal diamond": colour and shape only, for places that already say the repo name.
+    public var spokenShort: String { "\(Self.colourNames[colour]) \(shape.name)" }
+
+    /// The glyph for a repo name: leading separators are skipped, then the first Character of the uppercased remainder is
+    /// used only if it is an ASCII letter or digit ("ßtool" gives "S"; "élan" and "" give "#").
+    static func glyph(for repo: String) -> String {
+        guard let first = repo.first(where: { $0.isLetter || $0.isNumber }), let c = String(first).uppercased().first,
+              c.isASCII, c.isLetter || c.isNumber else { return "#" }
+        return String(c)
+    }
 
     /// For previews (the gallery's sheet of every mark).
     public init(colour: Int, shape: Shape, glyph: String) { self.colour = colour; self.shape = shape; self.glyph = glyph }
@@ -27,30 +37,41 @@ public struct SessionIdentity: Equatable {
         let s = ((slot % Self.slotCount) + Self.slotCount) % Self.slotCount
         colour = s % Self.colourCount
         shape = Shape(rawValue: s / Self.colourCount) ?? .circle
-        glyph = repo.first(where: { $0.isLetter || $0.isNumber }).map { String($0).uppercased() } ?? "?"
+        glyph = Self.glyph(for: repo)
     }
 }
 
-/// Hands out identities: the repo's hash picks a preferred slot (same repo, same identity across launches), and when another
-/// known repo already holds it the next free slot is used, so repos seen together differ. An assignment is remembered for
-/// the life of the process, so a repo never changes look while the app runs. Past `slotCount` repos, slots are shared.
+/// Hands out identities: the repo's hash picks a preferred slot, and when another live repo already holds it the next free
+/// slot is used, so repos seen together differ. "Same repo, same identity across launches" holds only absent collisions:
+/// a collision-moved repo's slot depends on which repos were seen first.
+/// Only RESOLVED repos are stored (an unresolved folder-name fallback would flip when the git label arrives): an unresolved
+/// repo gets its raw hash slot, unstored. At `slotCount` live repos the least recently used entry is evicted.
 public final class IdentityBook {
     private let lock = NSLock()
     private var slots: [String: Int] = [:]
+    private var lastUse: [String: Int] = [:]
+    private var clock = 0
 
     public init() {}
 
-    public func identity(for label: RepoLabel) -> SessionIdentity { identity(repo: label.repo) }
+    /// Live (stored) slots, for tests.
+    var count: Int { lock.lock(); defer { lock.unlock() }; return slots.count }
+    func knows(_ repo: String) -> Bool { lock.lock(); defer { lock.unlock() }; return slots[repo] != nil }
 
-    public func identity(repo: String) -> SessionIdentity {
+    public func identity(for label: RepoLabel, resolved: Bool = true) -> SessionIdentity { identity(repo: label.repo, resolved: resolved) }
+
+    public func identity(repo: String, resolved: Bool = true) -> SessionIdentity {
         lock.lock(); defer { lock.unlock() }
-        if let s = slots[repo] { return SessionIdentity(slot: s, repo: repo) }
+        clock += 1
+        if let s = slots[repo] { lastUse[repo] = clock; return SessionIdentity(slot: s, repo: repo) }
         var pick = Int(Self.fnv1a(repo) % UInt64(SessionIdentity.slotCount))
-        if slots.count < SessionIdentity.slotCount {
-            let taken = Set(slots.values)
-            while taken.contains(pick) { pick = (pick + 1) % SessionIdentity.slotCount }
-            slots[repo] = pick
+        guard resolved else { return SessionIdentity(slot: pick, repo: repo) }
+        if slots.count >= SessionIdentity.slotCount, let lru = lastUse.min(by: { $0.value < $1.value })?.key {
+            slots[lru] = nil; lastUse[lru] = nil
         }
+        let taken = Set(slots.values)
+        while taken.contains(pick) { pick = (pick + 1) % SessionIdentity.slotCount }
+        slots[repo] = pick; lastUse[repo] = clock
         return SessionIdentity(slot: pick, repo: repo)
     }
 

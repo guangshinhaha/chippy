@@ -46,6 +46,7 @@ Source: web research on Apple's Live Activities HIG and existing Claude Code not
 
 ## Session identity (#89)
 - Identity is per resolved repo (`RepoLabel.repo`): a colour (8), a shape (4) and the repo's first letter, never colour alone. Worktrees of one repo share it; the worktree stays the sub-label tag.
-- `IdentityBook`: FNV-1a of the repo picks a preferred slot (stable across launches); a taken slot moves to the next free one, remembered for the life of the process. Beyond 32 repos slots are shared.
-- Shown on list rows, Recent rows, every card header, the compact glance and the needs-you badge (rank-first item, only when the badge has 34pt or more). VoiceOver rows and the badge say the spoken form ("pink circle G").
+- `IdentityBook`: FNV-1a of the repo picks a preferred slot; a taken slot moves to the next free one. The same repo gets the same identity across launches only absent collisions (a collision-moved repo depends on which repos were seen first). Only resolved repos are stored: until `RepoIdentityCache` has resolved the cwd the raw hash slot is used and nothing is remembered, so a mark never flips when the git label arrives. 32 live slots; beyond that the least recently used entry is evicted.
+- Glyph: first Character of the uppercased repo name if it is an ASCII letter or digit, else `#`.
+- Shown on list rows, Recent rows, every card header, the compact glance and the needs-you badge (rank-first item, only when the badge has 34pt or more). VoiceOver rows say the spoken form ("pink circle G"); the badge says the repo and mark ("next from govapps, teal diamond") and only when the mark is visible.
 - Gallery: `Chippy --render-identity out.png`.
