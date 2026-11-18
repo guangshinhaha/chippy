@@ -37,22 +37,66 @@ final class TerminalChipTests: XCTestCase {
         let m = model()
         let conn = Connection.detached()
         m.receiveApproval(perm("Bash", ["command": "rm -rf secret-dir"]), conn)
-        XCTAssertTrue(m.terminalItems.isEmpty)
         conn.respond(nil)
-        m.sweep()
+        m.sweep(now: Date().addingTimeInterval(TimeInterval(SettingsInstaller.defaultApprovalTimeout) + 1))
         XCTAssertTrue(m.pending.isEmpty)
         XCTAssertEqual(m.terminalItems.map(\.glance), ["api-server · asked in terminal"])
         XCTAssertFalse(String(reflecting: m.terminalItems).contains("secret-dir"))
     }
 
-    func testNextEventOfSameSessionClearsOthersStay() {
-        for ev in ["PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop", "SessionEnd"] {
-            let m = model()
-            m.receiveApproval(perm("AskUserQuestion", multi, sid: "s1"), Connection.detached())
-            m.receiveApproval(perm("AskUserQuestion", multi, sid: "s2"), Connection.detached())
-            m.apply(hook(ev, "s1"))
-            XCTAssertEqual(m.terminalItems.map(\.sessionId), ["s2"], ev)
+    func testGoneInsideTheWindowIsATerminalAnswerNoChip() {
+        let m = model()
+        let conn = Connection.detached()
+        m.receiveApproval(perm("Bash", ["command": "ls"]), conn)
+        conn.respond(nil)
+        m.sweep(now: Date().addingTimeInterval(3))
+        XCTAssertTrue(m.pending.isEmpty); XCTAssertTrue(m.terminalItems.isEmpty)
+    }
+
+    func testStaleResolveBehavesLikeSweepAndUsesPayloadHost() {
+        let late = Date().addingTimeInterval(TimeInterval(SettingsInstaller.defaultApprovalTimeout) + 1)
+        let m = model(); let c = Connection.detached()
+        let json: [String: Any] = ["session_id": "s1", "hook_event_name": "PermissionRequest", "cwd": "/Users/x/repos/api-server",
+            "chippy_branch": "main", "tool_name": "Bash", "tool_input": ["command": "ls"], "chippy_host_pid": 123]
+        m.receiveApproval(HookPayload(json: try! JSONSerialization.data(withJSONObject: json))!, c)
+        c.respond(nil)
+        m.resolve(m.pending[0].id, .allow, now: late)
+        XCTAssertEqual(m.terminalItems.count, 1)
+        XCTAssertEqual(m.terminalItems[0].host?.pid, 123) // payload host fallback, same as receiveApproval
+        let early = model(); let c2 = Connection.detached()
+        early.receiveApproval(perm("Bash", ["command": "ls"]), c2); c2.respond(nil)
+        early.resolve(early.pending[0].id, .allow, now: Date().addingTimeInterval(2))
+        XCTAssertTrue(early.terminalItems.isEmpty)
+    }
+
+    func testOnlyBoundaryOrSameToolPostClearsOthersStay() {
+        let m = model(); let t0 = Date()
+        m.receiveApproval(perm("AskUserQuestion", multi, sid: "s1"), Connection.detached())
+        m.receiveApproval(perm("AskUserQuestion", multi, sid: "s2"), Connection.detached())
+        func post(_ tool: String, _ sid: String) -> HookPayload {
+            HookPayload(json: Data(#"{"session_id":"\#(sid)","hook_event_name":"PostToolUse","cwd":"/x/api-server","tool_name":"\#(tool)"}"#.utf8))!
         }
+        m.apply(hook("PreToolUse", "s1"), now: t0.addingTimeInterval(5))      // parallel/subagent noise: stays
+        m.apply(post("Bash", "s1"), now: t0.addingTimeInterval(5))            // other tool: stays
+        m.apply(post("AskUserQuestion", "s1"), now: t0.addingTimeInterval(1)) // inside the 2s grace: stays
+        XCTAssertEqual(m.terminalItems.count, 2)
+        m.apply(post("AskUserQuestion", "s1"), now: t0.addingTimeInterval(5))
+        XCTAssertEqual(m.terminalItems.map(\.sessionId), ["s2"])
+        for ev in ["UserPromptSubmit", "Stop", "SessionEnd"] {
+            let x = model()
+            x.receiveApproval(perm("AskUserQuestion", multi, sid: "s1"), Connection.detached())
+            x.apply(hook(ev, "s1"))
+            XCTAssertTrue(x.terminalItems.isEmpty, ev)
+        }
+    }
+
+    func testChipNeverOverridesWorkingAndCountsWaiting() {
+        let m = model()
+        m.apply(hook("UserPromptSubmit", "s1"))
+        m.receiveApproval(perm("AskUserQuestion", multi, sid: "s2"), Connection.detached())
+        XCTAssertEqual(m.state, .working)
+        XCTAssertEqual(m.waitingCount, 1)
+        XCTAssertFalse(m.tall)
     }
 
     func testExpiresAfterTenMinutes() {

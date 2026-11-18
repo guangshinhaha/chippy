@@ -45,6 +45,12 @@ public final class NotchModel: ObservableObject {
         didSet { UserDefaults.standard.set(showReplyInGlance, forKey: "showReplyInGlance") }
     }
     public static let doneSeconds: TimeInterval = 600
+    /// A finished chip is shown compact while peeking, then the island settles to collapsed (chip stays in `doneItems`).
+    @Published public private(set) var peeking = false
+    private var peek = PeekGate()
+    /// Last pointer state from the panel, kept even while expanded so a new peek can start from it.
+    private var hovering = false
+    private let clock: () -> TimeInterval
     private var store = SessionStore()
     private var connections: [String: Connection] = [:]
     private var questionInputs: [String: [String: Any]] = [:]
@@ -56,7 +62,9 @@ public final class NotchModel: ObservableObject {
     private let log: EventLog
 
     public init(state: ChippyState = .idle, density: Density = .collapsed,
-                always: AlwaysStore = AlwaysStore(), log: EventLog = EventLog()) {
+                always: AlwaysStore = AlwaysStore(), log: EventLog = EventLog(),
+                clock: @escaping () -> TimeInterval = PeekGate.monotonicNow) {
+        self.clock = clock
         self.state = state
         self.density = density
         self.always = always
@@ -66,14 +74,31 @@ public final class NotchModel: ObservableObject {
     private func refresh() {
         guard !debugLock else { visible = true; return }
         if sessions.isEmpty { pinnedOpen = false }
+        if doneItems.isEmpty { peek.cancel() }
         if doneItems.isEmpty && terminalItems.isEmpty { doneOpen = false }
+        if !pending.isEmpty || pinnedOpen || doneOpen { peek.cancel() } // the user (or an approval) took over: no peek to resume on close
+        let p = peek.isPeeking(now: clock())
+        if p != peeking { peeking = p }
         let live = store.derivedState
-        let waiting = !pending.isEmpty || !terminalItems.isEmpty
-        state = waiting ? .needsYou : (live == .working ? .working : (doneItems.isEmpty ? live : .done))
-        tall = pending.isEmpty && !pinnedOpen && doneOpen && !doneItems.isEmpty
+        // A terminal chip never hides live work: working wins over it, it wins over done.
+        state = !pending.isEmpty ? .needsYou : (live == .working ? .working : (!terminalItems.isEmpty ? .needsYou : (doneItems.isEmpty ? live : .done)))
+        // Terminal cards share the panel, so the tall one-card reply view only applies when none are showing.
+        tall = pending.isEmpty && !pinnedOpen && doneOpen && !doneItems.isEmpty && terminalItems.isEmpty
         if !pending.isEmpty || pinnedOpen || doneOpen { density = .expanded; visible = true }
-        else if !doneItems.isEmpty || !terminalItems.isEmpty { density = .compact; visible = true }
+        else if !terminalItems.isEmpty { density = .compact; visible = true }
+        else if !doneItems.isEmpty { density = peeking ? .compact : .collapsed; visible = true }
         else { density = .collapsed; visible = false }
+    }
+
+    /// Count shown on the collapsed notch while finished items wait (nil at 0, "9+" over 9).
+    public var badge: String? { PeekGate.badge(count: doneItems.count) }
+
+    /// The pointer entered or left the island: a running peek holds while it is over and resumes when it leaves.
+    /// Ignored while expanded, and it never re-opens an expired peek.
+    public func setHover(_ inside: Bool) {
+        hovering = inside
+        guard density != .expanded else { return }
+        peek.setHover(inside, now: clock())
     }
 
     /// Click on the notch. A waiting approval ignores it. A done chip opens its detail (click again to go back);
@@ -103,12 +128,41 @@ public final class NotchModel: ObservableObject {
         refresh()
     }
 
+    /// Hook-side waits, mirrored here to tell a timeout from an answer (defaults; the installer writes the same numbers).
+    public var approvalTimeout: TimeInterval = TimeInterval(SettingsInstaller.defaultApprovalTimeout)
+    public var questionTimeout: TimeInterval = TimeInterval(SettingsInstaller.defaultQuestionTimeout)
+
+    /// Requests and chips that want the user's attention: pending cards plus terminal chips.
+    public var waitingCount: Int { pending.count + terminalItems.count }
+
+    /// The stored session host first, then the one the request arrived with (same order everywhere).
+    private func host(for req: PendingRequest) -> HostInfo? {
+        sessions.first { $0.id == req.sessionId }?.host ?? req.host
+    }
+
     /// Show `repo · asked in terminal` for this request's session. Metadata only: never the question, command or input.
-    private func noteTerminal(_ req: PendingRequest, host: HostInfo?, now: Date) {
+    private func noteTerminal(_ req: PendingRequest, now: Date) {
         guard !Tour.isDemo(req.sessionId) else { return }
         terminalItems.removeAll { $0.sessionId == req.sessionId }
-        terminalItems.append(TerminalItem(sessionId: req.sessionId, project: req.project, at: now, host: host))
+        terminalItems.append(TerminalItem(sessionId: req.sessionId, project: req.project, at: now, host: host(for: req), tool: req.toolName))
     }
+
+    /// The one path for a request whose hook went away (used by `sweep` and by a stale `resolve`/`answer`).
+    /// Rule for the chip: the hook waits `approvalTimeout` / `questionTimeout`. Gone at or after that (give or take
+    /// a second) means it timed out unanswered, so the terminal is showing the prompt: chip. Gone earlier means the
+    /// terminal was answered (or the session died): no chip. Unsupported questions get theirs in `receiveApproval`.
+    private func dropGone(_ r: PendingRequest, now: Date) {
+        let wait = r.questions != nil ? questionTimeout : approvalTimeout
+        if now.timeIntervalSince(r.createdAt) >= wait - 1 { noteTerminal(r, now: now) }
+        connections.removeValue(forKey: r.id)?.respond(nil)
+        questionInputs.removeValue(forKey: r.id)
+        record(r, channel: .terminal, decision: "none", now: now)
+    }
+
+    private static let boundaryEvents: Set<String> = ["UserPromptSubmit", "SessionEnd"]
+    private static let toolEvents: Set<String> = ["PreToolUse", "PostToolUse"]
+    /// A terminal chip must outlive a parallel call's tool events, so a matching PostToolUse counts only after this.
+    private static let terminalGrace: TimeInterval = 2
 
     /// A PermissionRequest hook is waiting on `conn`. Main thread only.
     /// AskUserQuestion is answerable only when every question is single-select; otherwise no reply, so the terminal handles it.
@@ -117,7 +171,7 @@ public final class NotchModel: ObservableObject {
         if payload.toolName == "AskUserQuestion" {
             guard req.questions != nil else {
                 conn.respond(nil)
-                noteTerminal(req, host: sessions.first { $0.id == payload.sessionId }?.host ?? payload.host, now: req.createdAt)
+                noteTerminal(req, now: req.createdAt)
                 refresh()
                 return
             }
@@ -149,8 +203,8 @@ public final class NotchModel: ObservableObject {
               let conn = connections.removeValue(forKey: id) else { return } // questions are answered via answer(), not Allow/Deny
         let req = pending.remove(at: i)
         if conn.peerGone { // the hook already gave up (timeout) or the terminal answered: this click is stale
-            conn.respond(nil)
-            record(req, channel: .terminal, decision: "none", now: now)
+            connections[id] = conn
+            dropGone(req, now: now)
             refresh()
             return
         }
@@ -167,7 +221,8 @@ public final class NotchModel: ObservableObject {
         let req = pending.remove(at: i)
         // A complete set of real option labels, or nothing: a partial answer would run the tool with a wrong one.
         let valid = req.questions?.allSatisfy { q in answers[q.question].map { a in q.options.contains { $0.label == a } } ?? false } ?? false
-        if conn.peerGone || !valid { conn.respond(nil); record(req, channel: .terminal, decision: "none", now: now); refresh(); return }
+        if conn.peerGone { connections[id] = conn; dropGone(req, now: now); refresh(); return }
+        if !valid { conn.respond(nil); record(req, channel: .terminal, decision: "none", now: now); refresh(); return }
         input["answers"] = answers
         let reply: [String: Any] = ["behavior": "allow", "updatedInput": input]
         conn.respond(try? JSONSerialization.data(withJSONObject: reply))
@@ -188,18 +243,17 @@ public final class NotchModel: ObservableObject {
 
     /// Drop requests whose hook went away (timeout fallback, or answered in the terminal).
     public func sweep(now: Date = Date()) {
+        if peeking, !peek.isPeeking(now: clock()) { refresh() } // an expired peek settles to collapsed
         let gone = pending.filter { connections[$0.id]?.peerGone ?? true }
-        let before = doneItems.count
-        doneItems.removeAll { now.timeIntervalSince($0.at) > Self.doneSeconds }
-        let tBefore = terminalItems.count
-        terminalItems.removeAll { now.timeIntervalSince($0.at) > Self.doneSeconds }
-        if doneItems.count != before || terminalItems.count != tBefore { refresh() }
-        guard !gone.isEmpty else { return }
-        for r in gone {
-            noteTerminal(r, host: sessions.first { $0.id == r.sessionId }?.host, now: now)
-            connections.removeValue(forKey: r.id)?.respond(nil); questionInputs.removeValue(forKey: r.id)
-            record(r, channel: .terminal, decision: "none", now: now)
+        let expired = doneItems.contains { now.timeIntervalSince($0.at) > Self.doneSeconds }
+            || terminalItems.contains { now.timeIntervalSince($0.at) > Self.doneSeconds }
+        if expired { // assign only on change: a no-op write still notifies
+            doneItems.removeAll { now.timeIntervalSince($0.at) > Self.doneSeconds }
+            terminalItems.removeAll { now.timeIntervalSince($0.at) > Self.doneSeconds }
+            refresh()
         }
+        guard !gone.isEmpty else { return }
+        for r in gone { dropGone(r, now: now) }
         pending.removeAll { r in gone.contains { $0.id == r.id } }
         refresh()
     }
@@ -208,9 +262,12 @@ public final class NotchModel: ObservableObject {
     public func apply(_ payload: HookPayload, now: Date = Date()) {
         store.apply(payload, now: now)
         sessions = store.rows
-        // The session's next event means the terminal ask was handled (or abandoned): its chip goes, other sessions' stay.
-        if ["Stop", "UserPromptSubmit", "SessionEnd", "PreToolUse", "PostToolUse"].contains(payload.event) {
-            terminalItems.removeAll { $0.sessionId == payload.sessionId }
+        // Conservative: tool events are shared with parallel/subagent calls, so only a turn boundary (prompt, Stop, end)
+        // clears a terminal chip, or the PostToolUse of the same tool 2s+ after it (the ask was answered). Others stay.
+        terminalItems.removeAll { t in
+            guard t.sessionId == payload.sessionId else { return false }
+            if Self.boundaryEvents.contains(payload.event) || payload.event == "Stop" { return true }
+            return payload.event == "PostToolUse" && payload.toolName == t.tool && now.timeIntervalSince(t.at) > Self.terminalGrace
         }
         switch payload.event {
         case "Stop" where !payload.isAgentWorktree:
@@ -219,9 +276,10 @@ public final class NotchModel: ObservableObject {
                 doneItems.removeAll { $0.sessionId == r.id }
                 doneItems.append(DoneItem(sessionId: r.id, project: r.project, branch: r.branch,
                                           files: r.filesEdited.count, added: r.added, removed: r.removed, reply: r.lastReply, prompt: r.lastPrompt, at: now, host: r.host))
+                peek.start(now: clock(), hovering: hovering)
                 if isNew, !Tour.isDemo(r.id) { onSound?(.done, r.id, r.host ?? payload.host) }
             }
-        case "UserPromptSubmit", "SessionEnd", "PreToolUse", "PostToolUse":
+        case let e where Self.boundaryEvents.contains(e) || Self.toolEvents.contains(e):
             // Only the thread itself moving on (new prompt, tool use after a Stop, or ending) clears its chip; another thread's activity must not.
             doneItems.removeAll { $0.sessionId == payload.sessionId }
             if payload.event == "SessionEnd" { onSessionEnd?(payload.sessionId) }
@@ -272,6 +330,8 @@ public struct TerminalItem: Identifiable, Equatable {
     public let project: String
     public let at: Date
     public var host: HostInfo? = nil
+    /// Tool name only (never shown): lets that tool's PostToolUse clear the chip.
+    public let tool: String
 
     public var glance: String { "\(project) · asked in terminal" }
 }
