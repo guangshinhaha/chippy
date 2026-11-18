@@ -123,6 +123,8 @@ struct NotchView: View {
 
     /// Glance text: who finished (repo · branch), so several threads can be told apart.
     private var compactText: String {
+        // Only when the icon says "needs you" too: live work (icon: working) wins over the chip text.
+        if model.state == .needsYou, let t = model.terminalItems.last, model.pending.isEmpty, t.at >= (model.doneItems.last?.at ?? .distantPast) { return t.glance }
         guard let d = model.doneItems.last else { return model.state.title }
         return d.glance(showReply: model.showReplyInGlance)
     }
@@ -131,6 +133,21 @@ struct NotchView: View {
         if model.pending.isEmpty { return model.state.title }
         let n = model.pending.count
         return n > 1 ? "Needs you · 1 of \(n)" : "Needs you"
+    }
+
+    static let terminalCardCap = 2
+
+    /// Terminal chips as cards (at most `terminalCardCap`, then a "N more" row, so the panel's measured height stays within its cap beside done cards).
+    @ViewBuilder private var terminalCards: some View {
+        ForEach(model.terminalItems.reversed().prefix(Self.terminalCardCap)) { t in TerminalCard(item: t) { model.dismissTerminal(t.sessionId) }.reveal(0.12) }
+        let hidden = model.terminalItems.count - Self.terminalCardCap
+        if hidden > 0 {
+            Text("\(hidden) more asked in terminal").font(.caption2).foregroundStyle(.white.opacity(0.6)).reveal(0.12)
+        }
+    }
+
+    @ViewBuilder private func doneCards(limit: Int, full: Bool = false) -> some View {
+        ForEach(model.doneItems.reversed().prefix(limit)) { d in DoneCard(item: d, full: full) { model.dismissDone(d.sessionId) }.reveal(0.12) }
     }
 
     /// Content beside the camera: icon in the left wing, text in the right wing, nothing under the cutout.
@@ -170,8 +187,8 @@ struct NotchView: View {
                 HStack(spacing: 6) {
                     Color.clear.frame(width: NotchMetrics.glanceIcon + 12)
                     Text(compactText).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.tail)
-                    if model.doneItems.count > 1 {
-                        Text("+\(model.doneItems.count - 1)").font(.caption2).foregroundStyle(.white.opacity(0.6))
+                    if model.doneItems.count + model.terminalItems.count > 1 {
+                        Text("+\(model.doneItems.count + model.terminalItems.count - 1)").font(.caption2).foregroundStyle(.white.opacity(0.6))
                     }
                     Spacer(minLength: 0)
                 }
@@ -190,8 +207,8 @@ struct NotchView: View {
                     Text(compactText)
                         .font(.caption.bold()).foregroundStyle(.white)
                         .lineLimit(1).truncationMode(.tail)
-                    if model.doneItems.count > 1 {
-                        Text("+\(model.doneItems.count - 1)").font(.caption2).foregroundStyle(.white.opacity(0.6))
+                    if model.doneItems.count + model.terminalItems.count > 1 {
+                        Text("+\(model.doneItems.count + model.terminalItems.count - 1)").font(.caption2).foregroundStyle(.white.opacity(0.6))
                     }
                     Spacer(minLength: 0)
                 }
@@ -215,7 +232,8 @@ struct NotchView: View {
                         ApprovalCard(req: req) { model.resolve(req.id, $0) }.reveal(0.12)
                     }
                 } else if model.pinnedOpen {
-                    ForEach(model.doneItems.reversed().prefix(3)) { d in DoneCard(item: d) { model.dismissDone(d.sessionId) }.reveal(0.12) }
+                    terminalCards
+                    doneCards(limit: 3)
                     if model.sessions.isEmpty { Text("No agent sessions.").font(.caption).foregroundStyle(.white.opacity(0.6)) }
                     ForEach(model.sessions) { row in
                         VStack(alignment: .leading, spacing: 1) {
@@ -224,7 +242,8 @@ struct NotchView: View {
                         }
                     }
                 } else {
-                    ForEach(model.doneItems.reversed().prefix(model.tall ? 1 : 3)) { d in DoneCard(item: d, full: model.tall) { model.dismissDone(d.sessionId) }.reveal(0.12) }
+                    terminalCards
+                    doneCards(limit: model.tall ? 1 : 3, full: model.tall)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -514,6 +533,24 @@ struct DoneCard: View {
                 if TerminalJump.available(item.host) {
                     OpenTerminalButton(host: item.host, onOpened: dismiss)
                 }
+                ChipButton(title: "Dismiss", kind: .neutral, action: dismiss)
+            }
+        }
+    }
+}
+
+/// A question or approval that went to the terminal. Repo name only, never the question or command (PDPA, #30).
+struct TerminalCard: View {
+    let item: TerminalItem
+    let dismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(item.glance).font(.caption.bold()).foregroundStyle(.white.opacity(0.85))
+            HStack {
+                Text("Claude is waiting for you there").font(.caption2).foregroundStyle(.white.opacity(0.6))
+                Spacer()
+                if TerminalJump.available(item.host) { OpenTerminalButton(host: item.host, onOpened: dismiss) }
                 ChipButton(title: "Dismiss", kind: .neutral, action: dismiss)
             }
         }

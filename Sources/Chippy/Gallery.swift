@@ -166,6 +166,60 @@ enum Gallery {
               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
         try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
     }
+    /// `Chippy --render-terminal-chip out.png`: the compact `repo · asked in terminal` chip and its opened card (sample text only).
+    @MainActor
+    static func renderTerminalChip(to path: String) {
+        func make(open: Bool) -> NotchModel {
+            let model = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("gal.jsonl")))
+            let json: [String: Any] = ["session_id": "a", "hook_event_name": "PermissionRequest", "cwd": "/demo/api-server", "chippy_branch": "main",
+                "tool_name": "AskUserQuestion", "tool_input": ["questions": [["question": "SECRET QUESTION TEXT", "header": "x", "multiSelect": true, "options": [["label": "A, x", "description": "a"], ["label": "B", "description": "b"]]]]]]
+            model.receiveApproval(HookPayload(json: try! JSONSerialization.data(withJSONObject: json))!, Connection.detached())
+            if open { model.toggleOpen() }
+            return model
+        }
+        let m = NotchMetrics(width: 185, height: 32)
+        func cell(_ open: Bool, _ title: String) -> some View {
+            let model = make(open: open)
+            let sz = m.size(for: model.density, tall: model.tall)
+            return VStack(spacing: 4) {
+                NotchView(model: model, box: box(m)).frame(width: sz.width, height: sz.height)
+                Text(title).font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        // Worst case: done chips (long replies) mixed with two terminal chips, at the tallest the panel ever gets.
+        func mixed() -> some View {
+            let model = make(open: false)
+            let reply = "Fixed the login timeout.\n\n" + (1...12).map { "- change \($0) in auth.ts" }.joined(separator: "\n") + "\n\nShould I also bump the refresh-token lifetime?"
+            func send(_ fields: [String: Any]) {
+                model.apply(HookPayload(json: try! JSONSerialization.data(withJSONObject: fields))!)
+            }
+            for sid in ["d1", "d2", "d3"] {
+                let base: [String: Any] = ["session_id": sid, "cwd": "/demo/repo-\(sid)"]
+                send(base.merging(["hook_event_name": "UserPromptSubmit", "prompt": "Fix it"]) { $1 })
+                send(base.merging(["hook_event_name": "Stop", "last_assistant_message": reply]) { $1 }) // JSONSerialization does the escaping
+            }
+            // Two terminal chips, built explicitly: the one from make() ("a" / api-server) plus a second session.
+            let ask: [String: Any] = ["session_id": "b", "hook_event_name": "PermissionRequest", "cwd": "/demo/web-app", "tool_name": "AskUserQuestion",
+                "tool_input": ["questions": [["question": "q"]]]] // no options: not answerable, so it goes to the terminal
+            model.receiveApproval(HookPayload(json: try! JSONSerialization.data(withJSONObject: ask))!, Connection.detached())
+            precondition(model.terminalItems.count == 2, "mixed() needs exactly two terminal chips")
+            model.toggleOpen()
+            let b = box(m); b.contentHeight = NotchMetrics.maxExpandedHeight
+            let sz = m.size(for: .expanded, tall: model.tall, contentHeight: b.contentHeight)
+            return VStack(spacing: 4) {
+                NotchView(model: model, box: b).frame(width: sz.width, height: sz.height)
+                Text("done x3 + terminal x2, opened, at max height tall=\(model.tall)").font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        let r = ImageRenderer(content: HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 12) { cell(false, "compact"); cell(true, "opened") }
+            mixed()
+        }.padding(16).background(Color(white: 0.25)))
+        r.scale = 2
+        guard let img = r.nsImage, let tiff = img.tiffRepresentation,
+              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { exit(1) }
+        try? png.write(to: URL(fileURLWithPath: path)); print("wrote \(path)")
+    }
     /// `Chippy --render-approval out.png`: approval cards for a short Bash command with a description, an Edit, and a very long command (sample text only).
     @MainActor
     static func renderApproval(to path: String) {

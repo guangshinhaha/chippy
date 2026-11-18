@@ -55,6 +55,8 @@ public struct PendingRequest: Identifiable, Equatable {
     public let detail: String
     /// The thread's last prompt, for context. In memory only.
     public var lastPrompt: String?
+    /// The terminal app that sent the hook, as seen on the payload (a stored session host wins when there is one).
+    public var host: HostInfo?
     /// Claude's words just before an AskUserQuestion, from the transcript. In memory only.
     public let leadIn: String?
     /// Set for an answerable AskUserQuestion; the card shows options instead of Allow/Deny.
@@ -73,6 +75,7 @@ public struct PendingRequest: Identifiable, Equatable {
         createdAt = now
         leadIn = p.toolName == "AskUserQuestion" ? p.leadIn : nil
         branch = p.branch
+        host = p.host
         questions = p.toolName == "AskUserQuestion" ? AskQuestion.parse(p.toolInput) : nil
         detail = ApprovalIntent.headTail(ApprovalIntent.reveal(Self.rawDetail(p.toolInput)))
         let canon = (try? JSONSerialization.data(withJSONObject: p.toolInput, options: [.sortedKeys])) ?? Data()
