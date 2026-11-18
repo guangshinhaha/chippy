@@ -246,7 +246,7 @@ struct NotchView: View {
     /// Session rows in the peek, so the card's measured height stays within its cap.
     static let sessionRowCap = GlanceMetrics.rowCap // rows are GlanceMetrics.rowHeight each
 
-    /// Terminal chips as cards (at most `terminalCardCap`, then a "N more" row, so the panel's measured height stays within its cap beside done cards).
+    /// Live glance (#90): one line per session, needs-you first.
     @ViewBuilder private var glanceRows: some View {
         // Live glance (#90): one line per session, working first. The word is the tool's category only, never its input.
         // One timeline for the rows: a word with no new event for 90s (Esc, crash) falls back to the state at read time.
@@ -262,6 +262,7 @@ struct NotchView: View {
         }
     }
 
+    /// Terminal chips as cards (at most `terminalCardCap`, then a "N more" row, so the panel's measured height stays within its cap beside done cards).
     @ViewBuilder private var terminalCards: some View {
         ForEach(model.terminalItems.reversed().prefix(Self.terminalCardCap)) { t in TerminalCard(item: t, repo: model.repoLabel(cwd: t.cwd, project: t.project).text, mark: model.identity(cwd: t.cwd, project: t.project)) { model.dismissTerminal(t.sessionId) }.reveal(0.12) }
         let hidden = model.terminalItems.count - Self.terminalCardCap
@@ -388,12 +389,18 @@ struct NotchView: View {
                 } else if model.restOpen, let digest = model.awayDigest {
                     AwayDigestView(model: model, digest: digest).reveal(0.12) // #92: on top; it covers its own chips and Recent
                     // Everything the digest does not cover stays reachable below, compact.
-                    let covered = Set(digest.rows.map(\.sessionId)).union(digest.finishedIds)
+                    let covered = Set(digest.rows.map(\.sessionId))
                     ForEach(model.terminalItems.reversed().filter { !covered.contains($0.sessionId) }.prefix(2)) { t in
                         TerminalCard(item: t, repo: model.repoLabel(cwd: t.cwd, project: t.project).text, mark: model.identity(cwd: t.cwd, project: t.project)) { model.dismissTerminal(t.sessionId) }.reveal(0.12)
                     }
                     ForEach(model.doneItems.reversed().filter { !covered.contains($0.sessionId) }.prefix(1)) { d in
                         DoneCard(item: d, repo: model.repoLabel(cwd: d.cwd, project: d.project).text, mark: model.identity(cwd: d.cwd, project: d.project), full: false) { model.dismissDone(d.sessionId) }.reveal(0.12)
+                    }
+                    // Recent entries the digest rows do not already show, compact.
+                    let recentLeft = model.recent.items.filter { !covered.contains($0.sessionId) }
+                    if !recentLeft.isEmpty {
+                        RecentListView(items: Array(recentLeft.prefix(3)), label: { model.repoLabel(cwd: $0.cwd, project: $0.project).text },
+                                       mark: { model.identity(cwd: $0.cwd, project: $0.project) }).reveal(0.12)
                     }
                     glanceRows
                 } else if model.restOpen {

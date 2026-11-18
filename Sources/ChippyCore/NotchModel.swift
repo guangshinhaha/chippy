@@ -184,10 +184,11 @@ public final class NotchModel: ObservableObject {
 
     /// Pure: the digest for a given start, from state already held. nil when nothing is left to report.
     private func digest(since: Date?, until: Date?) -> AwayDigest.Result? {
-        guard let since, let until else { return nil }
-        let d = AwayDigest.build(since: since, until: until, terminal: terminalItems, done: doneItems, recent: recent.items,
+        guard let since else { return nil }
+        let d = AwayDigest.build(since: since, until: until ?? .distantFuture, terminal: terminalItems, done: doneItems, recent: recent.items,
                                  label: { [identities] cwd, project in identities.label(cwd: cwd, project: project) },
-                                 resolved: { [identities] in identities.isResolved(cwd: $0) })
+                                 resolved: { [identities] in identities.isResolved(cwd: $0) },
+                                 cap: .max) // every covered chip is a row: none hides behind "+N more"
         return d.isEmpty ? nil : d
     }
 
@@ -225,8 +226,17 @@ public final class NotchModel: ObservableObject {
         if let l = lastAwayPoll, now >= l, now.timeIntervalSince(l) < Self.awayPollInterval { return }
         lastAwayPoll = now
         let s = awaySignal()
-        guard let since = awayTracker.observe(now: now, locked: s.locked, idle: s.idle) else { return }
-        guard awaySince == nil else { return } // an unseen digest stands; a later period starts fresh once it is seen, dismissed or empty
+        let returned = awayTracker.observe(now: now, locked: s.locked, idle: s.idle)
+        if awaySince != nil { // an unseen digest: its window stays open while the user is away again, and closes when they are back
+            let end: Date? = awayTracker.isAway ? nil : (awayEnd ?? now)
+            if end != awayEnd { awayEnd = end; refresh() }
+        }
+        guard let since = returned else { return }
+        if let earlier = awaySince { // merge into one digest: earliest unseen start to the latest return
+            awaySince = min(earlier, since); awayEnd = now
+            refresh()
+            return
+        }
         guard digest(since: since, until: now) != nil else { awaySince = nil; awayEnd = nil; return } // nothing to report: no dot
         awaySince = since; awayEnd = now
         refresh()

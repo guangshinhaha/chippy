@@ -251,7 +251,7 @@ final class AwayDigestTests: XCTestCase {
         m.sweep(now: at(0))
         for i in 0..<8 { stop(m, "s\(i)", cwd: "/x/p\(i)", at: at(50 + Double(i))) }
         locked = false; m.sweep(now: at(400))
-        XCTAssertEqual(m.awayDigest?.total, 8); XCTAssertEqual(m.awayDigest?.hidden, 3)
+        XCTAssertEqual(m.awayDigest?.total, 8); XCTAssertEqual(m.awayDigest?.rows.count, 8) // every chip is a row now
         m.dismissAwayDigest(now: at(401))
         XCTAssertTrue(m.doneItems.isEmpty)
         XCTAssertFalse(m.recent.items.isEmpty) // Recent keeps its own cap; the point is no chip is left behind
@@ -368,5 +368,26 @@ final class AwayDigestTests: XCTestCase {
         m.openBadge(); m.activate(.done("a"))
         m.closeDetail()
         XCTAssertNotNil(m.awaySince)
+    }
+
+    func testSecondAwayPeriodMergesIntoUnseenDigest() {
+        var locked = true
+        let m = model(locked: { locked })
+        m.sweep(now: at(0)); stop(m, "night", at: at(50)); locked = false; m.sweep(now: at(400)) // overnight, unseen
+        locked = true; m.sweep(now: at(1000)) // lunch lock: the window reopens
+        XCTAssertNil(m.awayEnd)
+        stop(m, "lunch", cwd: "/x/q", at: at(1100))
+        locked = false; m.sweep(now: at(1500))
+        XCTAssertEqual(m.awaySince, at(0)); XCTAssertEqual(m.awayEnd, at(1500))
+        XCTAssertEqual(Set(m.awayDigest?.rows.map(\.sessionId) ?? []), ["night", "lunch"])
+    }
+
+    func testEveryCoveredChipIsARow() {
+        var locked = true
+        let m = model(locked: { locked })
+        m.sweep(now: at(0))
+        for i in 0..<8 { stop(m, "s\(i)", cwd: "/x/p\(i)", at: at(10 + Double(i))) }
+        locked = false; m.sweep(now: at(400))
+        XCTAssertEqual(m.awayDigest?.rows.count, 8); XCTAssertEqual(m.awayDigest?.hidden, 0)
     }
 }
