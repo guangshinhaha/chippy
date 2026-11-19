@@ -276,9 +276,9 @@ final class NeedsYouFinishedTests: XCTestCase {
 
     func testEveryRowIdIsUniqueAcrossSections() {
         let m = model()
-        approval(m, "a1"); question(m, "q1"); terminalAsk(m, "t1"); stop(m, "x", cwd: "/w/x"); stop(m, "t1", cwd: "/w/term")
+        approval(m, "a1"); question(m, "q1"); stop(m, "x", cwd: "/w/x"); stop(m, "t1", cwd: "/w/term"); terminalAsk(m, "t1") // t1: a finished row AND a terminal row
         let ids = m.waitingLayout.selectable.map(\.target)
-        XCTAssertGreaterThan(ids.count, 3)
+        XCTAssertTrue(ids.contains(.terminal("t1")) && ids.contains(.done("t1")), "the same session sits in both sections")
         XCTAssertEqual(ids.count, Set(ids).count, "scrollTo(id) can only land on one row")
         XCTAssertNotEqual(WaitingTarget.terminal("s"), WaitingTarget.done("s"), "one session can be in both sections under different ids")
     }
