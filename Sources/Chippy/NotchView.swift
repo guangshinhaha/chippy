@@ -404,8 +404,7 @@ struct NotchView: View {
                         // Recent entries the digest rows do not already show, compact.
                         let recentLeft = model.recent.items.filter { !covered.contains($0.sessionId) }
                         if !recentLeft.isEmpty {
-                            RecentListView(items: Array(recentLeft.prefix(3)), label: { model.repoLabel(cwd: $0.cwd, project: $0.project).text },
-                                           mark: { model.identity(cwd: $0.cwd, project: $0.project) }).reveal(0.12)
+                            RecentListView(items: Array(recentLeft.prefix(3)), label: { $0.label.text }, mark: { model.identity(recent: $0) }).reveal(0.12)
                         }
                             glanceRows
                         }
@@ -1133,7 +1132,7 @@ struct AwayDigestView: View {
 struct RecentListView: View {
     let items: [RecentItem]
     /// The one resolved repo label, as the list rows show it.
-    var label: (RecentItem) -> String = { $0.project }
+    var label: (RecentItem) -> String = { $0.label.text }
     var mark: (RecentItem) -> SessionIdentity? = { _ in nil }
 
     var body: some View {
@@ -1177,7 +1176,7 @@ struct PanelSectionsView: View {
                     Text(section.title.rawValue.uppercased()).font(.caption2.weight(.bold)).foregroundStyle(.white.opacity(0.5)).tracking(0.6)
                         .padding(.horizontal, 10).padding(.top, 2).accessibilityAddTraits(.isHeader)
                     ForEach(section.rows) { row in
-                        PanelRowView(row: row, mark: model.identity(cwd: row.cwd, project: row.project), age: WaitingList.age(since: row.at, now: ctx.date),
+                        PanelRowView(row: row, mark: model.identity(row: row), age: WaitingList.age(since: row.at, now: ctx.date),
                                      review: { if let id = row.pendingId { model.activate(.pending(id)) } },
                                      handled: { row.kind == .terminal ? model.dismissTerminal(row.sessionId) : model.dismissDone(row.sessionId) })
                     }
@@ -1355,7 +1354,7 @@ struct WaitingListView: View {
                     if layout.needsScrolls {
                         ScrollViewReader { proxy in
                             ScrollView { needsRows(layout) }.frame(height: layout.needsHeight)
-                                .onChange(of: model.listSelection) { if let t = $0, t != .moreToggle { withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(t) } } }
+                                .onChange(of: model.listSelection) { if let t = $0, layout.needs.contains(where: { $0.target == t }) { withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(t) } } }
                         }
                     } else { needsRows(layout) }
                 }
@@ -1368,7 +1367,7 @@ struct WaitingListView: View {
                     } else if layout.expanded {
                         ScrollViewReader { proxy in
                             ScrollView { finishedRows(layout) }.frame(height: layout.finishedHeight)
-                                .onChange(of: model.listSelection) { if let t = $0, t != .moreToggle { withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(t) } } }
+                                .onChange(of: model.listSelection) { if let t = $0, layout.finished.contains(where: { $0.target == t }) { withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(t) } } }
                         }
                     } else { finishedRows(layout) }
                     if layout.hasToggle { moreRow(layout) }

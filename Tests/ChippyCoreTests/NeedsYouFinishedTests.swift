@@ -260,6 +260,29 @@ final class NeedsYouFinishedTests: XCTestCase {
         XCTAssertFalse(m.badgeNeedsYou)
     }
 
+    // MARK: one published state, unique row ids (#111)
+
+    func testItemsAndLayoutPublishTogether() {
+        let m = model()
+        var published = 0
+        let c = m.$waiting.dropFirst().sink { _ in published += 1 }
+        stop(m, "d", cwd: "/w/d")
+        XCTAssertEqual(published, 1, "a change to the list is one publish: no view sees new items with an old layout")
+        XCTAssertEqual(m.waiting.items, m.waitingItems)
+        XCTAssertEqual(m.waiting.layout, m.waitingLayout)
+        XCTAssertEqual(m.waiting.layout.finished.map(\.target), m.waiting.items.map(\.target))
+        c.cancel()
+    }
+
+    func testEveryRowIdIsUniqueAcrossSections() {
+        let m = model()
+        approval(m, "a1"); question(m, "q1"); stop(m, "x", cwd: "/w/x"); stop(m, "t1", cwd: "/w/term"); terminalAsk(m, "t1") // t1: a finished row AND a terminal row
+        let ids = m.waitingLayout.selectable.map(\.target)
+        XCTAssertTrue(ids.contains(.terminal("t1")) && ids.contains(.done("t1")), "the same session sits in both sections")
+        XCTAssertEqual(ids.count, Set(ids).count, "scrollTo(id) can only land on one row")
+        XCTAssertNotEqual(WaitingTarget.terminal("s"), WaitingTarget.done("s"), "one session can be in both sections under different ids")
+    }
+
     // MARK: label cache wiring
 
     func testResolvedBurstRefreshesOncePerTick() {
@@ -270,7 +293,7 @@ final class NeedsYouFinishedTests: XCTestCase {
         let m = model(identities: cache, tick: { queued.append($0) })
         for i in 1...5 { stop(m, "s\(i)", cwd: "/w/p\(i)") }
         var published = 0
-        let c = m.$waitingItems.dropFirst().sink { _ in published += 1 }
+        let c = m.$waiting.dropFirst().sink { _ in published += 1 }
         jobs.forEach { $0() }                      // five resolutions in one burst
         XCTAssertEqual(queued.count, 1)            // one scheduled refresh, not five
         queued.removeFirst()()
@@ -304,7 +327,7 @@ final class NeedsYouFinishedTests: XCTestCase {
         XCTAssertTrue(d.identityLine(repo: want).hasPrefix(want))
         m.dismissDone("d")
         let r = m.recent.items[0]
-        XCTAssertEqual(m.repoLabel(cwd: r.cwd, project: r.project).text, want)
+        XCTAssertEqual(r.label.text, want, "Recent keeps the resolved label, not the path")
     }
 
     // MARK: height budget

@@ -1,21 +1,29 @@
 import Foundation
 
-/// One entry of the Recent list (#85). By construction it holds no reply, prompt, question or command (PDPA #30):
-/// only the repo name, when the thread finished, and which app hosts it (for the Open button).
+/// One entry of the Recent list (#85). By construction it holds no reply, prompt, question, command or full path (PDPA #30):
+/// only the repo label, when the thread finished, and which app hosts it (for the Open button).
 public struct RecentItem: Identifiable, Equatable {
     public var id: String { sessionId }
     public let sessionId: String
     public let project: String
     public let at: Date
+    /// Without the session's cwd unless the host needs it to find the session (`HostAdapter.keepsCwd`).
     public let host: HostInfo?
-    /// Kept only to resolve the repo + worktree label (#101); never shown.
-    public let cwd: String
+    /// The repo + worktree label as it was resolved when the thread finished (#111): the cwd itself is not kept.
+    public let label: RepoLabel
+    /// Whether git had answered for `label`; an unresolved one must not claim an identity slot (#89).
+    public let resolved: Bool
 
-    public init(sessionId: String, project: String, at: Date, host: HostInfo? = nil, cwd: String = "") {
-        self.sessionId = sessionId; self.project = project.isEmpty ? "unknown" : project; self.at = at; self.host = host; self.cwd = cwd
+    public init(sessionId: String, project: String, at: Date, host: HostInfo? = nil, label: RepoLabel? = nil, resolved: Bool = true) {
+        let p = project.isEmpty ? "unknown" : project
+        self.sessionId = sessionId; self.project = p; self.at = at; self.host = HostAdapters.minimal(host)
+        self.label = label ?? RepoLabel(repo: p); self.resolved = resolved
     }
 
-    public init(_ done: DoneItem) { self.init(sessionId: done.sessionId, project: done.project, at: done.at, host: done.host, cwd: done.cwd) }
+    /// `label` is the model's resolved label for the finished thread's cwd.
+    public init(_ done: DoneItem, label: RepoLabel, resolved: Bool) {
+        self.init(sessionId: done.sessionId, project: done.project, at: done.at, host: done.host, label: label, resolved: resolved)
+    }
 }
 
 /// The last few finished threads, kept in memory only after their chip is dismissed or expires. A hard cap and a TTL

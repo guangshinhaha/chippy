@@ -19,9 +19,8 @@ public enum PanelSections {
         public let kind: Kind
         /// The one label every section uses: repo, plus a worktree tag only when it says something (never a hash).
         public let label: RepoLabel
-        /// Kept so the view can fetch the identity mark and the host's name; never shown.
-        public let cwd: String
-        public let project: String
+        /// Whether git has answered for `label`; an unresolved repo must not claim an identity slot (#89).
+        public let resolved: Bool
         /// From the live session when there is one, else from the finished thread.
         public let branch: String?
         public let at: Date
@@ -51,12 +50,16 @@ public enum PanelSections {
 
     /// `pending` is in rank order (see `WaitingList.items`). `label` is the model's resolved label for a cwd.
     public static func build(pending: [PendingRequest], terminal: [TerminalItem], done: [DoneItem], sessions: [SessionRow], recent: [RecentItem],
-                             label: (_ cwd: String, _ project: String) -> RepoLabel, now: Date) -> Result {
+                             label: (_ cwd: String, _ project: String) -> RepoLabel, resolved: (_ cwd: String) -> Bool = { _ in true }, now: Date) -> Result {
         let live = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         var claimed = Set<String>()
         func row(_ sid: String, _ kind: Kind, cwd: String, project: String, at: Date, host: HostInfo?, branch: String? = nil,
                  detail: String, pendingId: String? = nil, button: Bool) -> Row {
-            Row(sessionId: sid, kind: kind, label: display(label(cwd, project)), cwd: cwd, project: project, branch: live[sid]?.branch ?? branch,
+            make(sid, kind, label: label(cwd, project), resolved: resolved(cwd), at: at, host: host, branch: branch, detail: detail, pendingId: pendingId, button: button)
+        }
+        func make(_ sid: String, _ kind: Kind, label: RepoLabel, resolved: Bool, at: Date, host: HostInfo?, branch: String? = nil,
+                  detail: String, pendingId: String? = nil, button: Bool) -> Row {
+            Row(sessionId: sid, kind: kind, label: display(label), resolved: resolved, branch: live[sid]?.branch ?? branch,
                 at: at, host: host ?? live[sid]?.host, detail: detail, pendingId: pendingId, hasButton: button)
         }
 
@@ -85,7 +88,7 @@ public enum PanelSections {
             finished.append(row(d.sessionId, .finished, cwd: d.cwd, project: d.project, at: d.at, host: d.host, branch: d.branch, detail: "Finished", button: false))
         }
         for r in recent where !claimed.contains(r.sessionId) && !finished.contains(where: { $0.sessionId == r.sessionId }) {
-            finished.append(row(r.sessionId, .finished, cwd: r.cwd, project: r.project, at: r.at, host: r.host, detail: "Finished", button: false))
+            finished.append(make(r.sessionId, .finished, label: r.label, resolved: r.resolved, at: r.at, host: r.host, detail: "Finished", button: false))
         }
         let doneRows = Array(finished.filter { now.timeIntervalSince($0.at) <= doneTTL }
             .enumerated().sorted { $0.element.at != $1.element.at ? $0.element.at > $1.element.at : $0.offset < $1.offset }.map(\.element).prefix(doneCap))

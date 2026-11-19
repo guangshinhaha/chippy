@@ -79,19 +79,20 @@ public enum RepoResolver {
 /// when a shown label turns out different, so the UI redraws. Entries older than `ttl` are served as-is and re-read in the
 /// background, so labels follow a `git init` or a worktree change.
 public final class RepoIdentityCache {
-    private struct Entry { var label: RepoLabel; var at: Date; var seq: Int }
+    private struct Entry { var label: RepoLabel; var at: Date; var used: Int }
     private let lock = NSLock()
     private var labels: [String: Entry] = [:]
     private var inflight: Set<String> = []
     /// What the latest caller was shown while no resolved label existed (its own fallback), per in-flight cwd.
     private var shownWhileLoading: [String: RepoLabel] = [:]
-    private var seq = 0
+    /// Bumped on every use; the entry with the lowest `used` is the least recently used.
+    private var tick = 0
     private var observers: [() -> Void] = []
     private let resolver: (String) -> RepoLabel
     private let background: (@escaping () -> Void) -> Void
     private let deliver: (@escaping () -> Void) -> Void
     private let now: () -> Date
-    /// Folders kept; at the cap the single oldest entry makes room (a long day of throwaway worktrees must not grow it forever).
+    /// Folders kept; at the cap the single least recently used entry makes room (a long day of throwaway worktrees must not grow it forever).
     public static let capacity = 256
     /// How long a label is trusted before a background re-read.
     public static let ttl: TimeInterval = 60
@@ -121,6 +122,7 @@ public final class RepoIdentityCache {
         let t = now()
         lock.lock()
         let hit = labels[cwd]
+        if hit != nil { tick += 1; labels[cwd]?.used = tick }
         let stale = hit.map { t.timeIntervalSince($0.at) >= Self.ttl } ?? true
         let start = stale && inflight.insert(cwd).inserted
         if hit == nil, inflight.contains(cwd) { shownWhileLoading[cwd] = fb }
@@ -133,9 +135,9 @@ public final class RepoIdentityCache {
                 let shown = self.labels[cwd]?.label ?? self.shownWhileLoading[cwd] ?? fb
                 self.shownWhileLoading[cwd] = nil
                 if self.labels[cwd] == nil, self.labels.count >= Self.capacity,
-                   let oldest = self.labels.min(by: { $0.value.seq < $1.value.seq })?.key { self.labels[oldest] = nil }
-                self.seq += 1
-                self.labels[cwd] = Entry(label: found, at: self.now(), seq: self.seq)
+                   let oldest = self.labels.min(by: { $0.value.used < $1.value.used })?.key { self.labels[oldest] = nil }
+                self.tick += 1
+                self.labels[cwd] = Entry(label: found, at: self.now(), used: self.tick)
                 self.inflight.remove(cwd)
                 let obs = found != shown ? self.observers : []
                 self.lock.unlock()

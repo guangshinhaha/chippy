@@ -196,6 +196,8 @@ public final class NotchModel: ObservableObject {
     }
 
     public func identity(row: DigestRow) -> SessionIdentity { marks.identity(repo: row.repo, resolved: row.resolved) }
+    public func identity(row: PanelSections.Row) -> SessionIdentity { marks.identity(repo: row.label.repo, resolved: row.resolved) }
+    public func identity(recent item: RecentItem) -> SessionIdentity { marks.identity(repo: item.label.repo, resolved: item.resolved) }
 
     /// Open the rest panel on the digest (the dot's tap). An approval or question on screen takes precedence.
     public func openDigest() {
@@ -256,26 +258,25 @@ public final class NotchModel: ObservableObject {
             refreshing = false
             if refreshAgain { refreshAgain = false; labelsChanged() }
         }
-        let waiting = WaitingList.items(pending: pending, done: doneItems, terminal: terminalItems, timeout: timeout(for:),
-                                        label: { [identities] cwd, project in identities.label(cwd: cwd, project: project) }, // computed once per refresh
-                                        resolved: { [identities] in identities.isResolved(cwd: $0) })
+        let list = WaitingList.items(pending: pending, done: doneItems, terminal: terminalItems, timeout: timeout(for:),
+                                     label: { [identities] cwd, project in identities.label(cwd: cwd, project: project) }, // computed once per refresh
+                                     resolved: { [identities] in identities.isResolved(cwd: $0) })
         let dg = digest(since: awaySince, until: awayEnd)
         if dg == nil, awaySince != nil || awayEnd != nil { awaySince = nil; awayEnd = nil } // emptied on its own
         if dg != awayDigest { awayDigest = dg }
         let previousTargets = waitingLayout.selectableTargets
-        if (!listOpen || waiting.isEmpty), finishedExpanded { finishedExpanded = false } // the expansion lives only while the list is open and non-empty
-        if waiting != waitingItems || waitingLayout.expanded != finishedExpanded {
-            let layout = WaitingList.layout(waiting, expanded: finishedExpanded)
+        if (!listOpen || list.isEmpty), finishedExpanded { finishedExpanded = false } // the expansion lives only while the list is open and non-empty
+        if list != waitingItems || waitingLayout.expanded != finishedExpanded {
+            let layout = WaitingList.layout(list, expanded: finishedExpanded)
             if layout.expanded != finishedExpanded { finishedExpanded = layout.expanded } // nothing left to expand: back to collapsed
-            waitingItems = waiting
-            waitingLayout = layout
+            waiting = WaitingState(items: list, layout: layout)
             let byId = Dictionary(pending.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-            rankedPending = waiting.compactMap { if case .pending(let id) = $0.target { return byId[id] } else { return nil } } // stored: not rebuilt per access
+            rankedPending = list.compactMap { if case .pending(let id) = $0.target { return byId[id] } else { return nil } } // stored: not rebuilt per access
         }
         guard !debugLock else { resting = false; return }
-        if waiting.isEmpty { listOpen = false }
+        if list.isEmpty { listOpen = false }
         if listOpen { let sel = WaitingList.reconcileAmong(listSelection, in: waitingLayout.selectableTargets, previous: previousTargets); if sel != listSelection { listSelection = sel } }
-        if let f = focus, !waiting.contains(where: { $0.target == f }) { // the jumped-to item went away
+        if let f = focus, !list.contains(where: { $0.target == f }) { // the jumped-to item went away
             focus = nil
             if case .done = f { doneOpen = false } // its detail was what doneOpen showed, whether or not an approval waits
         }
@@ -320,11 +321,17 @@ public final class NotchModel: ObservableObject {
         if r != resting { resting = r }
     }
 
-    /// Everything waiting, in list order (see `WaitingList.items`). Recomputed once per `refresh`.
-    @Published public private(set) var waitingItems: [WaitingItem] = []
-
-    /// The list cut into NEEDS YOU and FINISHED, with the FINISHED cap applied (#101). Recomputed with `waitingItems`.
-    @Published public private(set) var waitingLayout = WaitingLayout(needs: [], finished: [], hiddenFinished: 0, totalFinished: 0, needsHeight: 0, needsScrolls: false)
+    /// The waiting list and its layout, published together (#111): a view never draws new items with an old layout, and a change
+    /// costs one redraw, not two. Recomputed once per `refresh`.
+    public struct WaitingState: Equatable {
+        /// Everything waiting, in list order (see `WaitingList.items`).
+        public var items: [WaitingItem] = []
+        /// The list cut into NEEDS YOU and FINISHED, with the FINISHED cap applied (#101).
+        public var layout = WaitingLayout(needs: [], finished: [], hiddenFinished: 0, totalFinished: 0, needsHeight: 0, needsScrolls: false)
+    }
+    @Published public private(set) var waiting = WaitingState()
+    public var waitingItems: [WaitingItem] { waiting.items }
+    public var waitingLayout: WaitingLayout { waiting.layout }
 
     /// The approval or question card on screen, or nil while the list or a done detail covers it.
     /// Keyboard shortcuts act on this one only, so a key never answers a card the user cannot see.
@@ -371,7 +378,8 @@ public final class NotchModel: ObservableObject {
     /// The rest panel's header and sections (#139), built from state already held. Read at draw time, like `glanceSessions`.
     public func panelSections(now: Date = Date()) -> PanelSections.Result {
         PanelSections.build(pending: rankedPending, terminal: terminalItems, done: doneItems, sessions: sessions, recent: recent.items,
-                            label: { [identities] cwd, project in identities.label(cwd: cwd, project: project) }, now: now)
+                            label: { [identities] cwd, project in identities.label(cwd: cwd, project: project) },
+                            resolved: { [identities] in identities.isResolved(cwd: $0) }, now: now)
     }
 
     /// Open the waiting list (badge tap, or the header while several wait).
@@ -621,7 +629,10 @@ public final class NotchModel: ObservableObject {
     private func retire(_ items: [DoneItem], now: Date = Date()) {
         guard !items.isEmpty else { return }
         var r = recent
-        for d in items where !Tour.isDemo(d.sessionId) { r.add(RecentItem(d), now: now) }
+        for d in items where !Tour.isDemo(d.sessionId) {
+            // The resolved label is kept, not the folder path (#111): Recent holds nothing a path could leak.
+            r.add(RecentItem(d, label: identities.label(cwd: d.cwd, project: d.project), resolved: identities.isResolved(cwd: d.cwd)), now: now)
+        }
         if r != recent { recent = r } // assign only on change: a no-op write still notifies
     }
 

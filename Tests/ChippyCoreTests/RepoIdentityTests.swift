@@ -154,6 +154,17 @@ final class RepoIdentityTests: XCTestCase {
         XCTAssertEqual(cache.label(cwd: "/w/5").repo, "r/w/5")          // a survivor is still cached
     }
 
+    func testCacheEvictsTheLeastRecentlyUsedNotTheFirstInserted() {
+        var t = Date(timeIntervalSince1970: 1000)
+        let cache = RepoIdentityCache(resolver: { RepoLabel(repo: "r" + $0) }, background: { $0() }, deliver: { $0() }, now: { t })
+        for i in 0..<RepoIdentityCache.capacity { _ = cache.label(cwd: "/w/\(i)"); t = t.addingTimeInterval(0.001) }
+        _ = cache.label(cwd: "/w/0")                 // touch the first-inserted entry: it is now the most recently used
+        _ = cache.label(cwd: "/w/new")               // past capacity
+        XCTAssertTrue(cache.isResolved(cwd: "/w/0"), "a folder still in use survives")
+        XCTAssertFalse(cache.isResolved(cwd: "/w/1"), "the least recently used one made room")
+        XCTAssertEqual(cache.count, RepoIdentityCache.capacity)
+    }
+
     func testLabelsRefreshAfterTheTTLAndOnlyNotifyOnChange() {
         var t = Date(timeIntervalSince1970: 1000)
         var current = RepoLabel(repo: "api")
