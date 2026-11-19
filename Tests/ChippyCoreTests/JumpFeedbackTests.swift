@@ -49,6 +49,23 @@ final class JumpFeedbackTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(t0), 6)
     }
 
+    /// The process behind a timed-out select must be gone when `run` returns, not left running in the background.
+    private func assertGoneAfterTimeout(_ script: String, within seconds: TimeInterval, file: StaticString = #filePath, line: UInt = #line) throws {
+        let pidFile = FileManager.default.temporaryDirectory.appendingPathComponent("chippy-136-\(UUID().uuidString).pid")
+        defer { try? FileManager.default.removeItem(at: pidFile) }
+        let t0 = Date()
+        let r = HostProcess.run(sh, ["-c", "echo $$ > '\(pidFile.path)'; \(script)"], timeout: 1)
+        XCTAssertEqual(r, .failed("timed out"), file: file, line: line)
+        XCTAssertLessThan(Date().timeIntervalSince(t0), seconds, file: file, line: line)
+        let pid = try XCTUnwrap(Int32(String(contentsOf: pidFile).trimmingCharacters(in: .whitespacesAndNewlines)), file: file, line: line)
+        XCTAssertEqual(kill(pid, 0), -1, "the timed-out process is dead", file: file, line: line)
+        XCTAssertEqual(errno, ESRCH, file: file, line: line)
+    }
+
+    func testATimedOutProcessIsTerminated() throws { try assertGoneAfterTimeout("exec sleep 20", within: 2) }
+
+    func testAProcessThatIgnoresTermIsStillKilled() throws { try assertGoneAfterTimeout("trap '' TERM; while :; do :; done", within: 4) }
+
     func testAnAnswerWrittenInPiecesJustBeforeExitIsNeverSplitOrLost() {
         for i in 0..<100 {
             XCTAssertEqual(HostProcess.run(sh, ["-c", #"printf '{"ok":'; printf 'true}'"#], timeout: 5), .selected, "run \(i)")
