@@ -39,7 +39,7 @@ public final class NotchModel: ObservableObject {
     /// Nothing needs the user: the notch rests as a small tab holding the mascot (never fully hidden, #85).
     @Published public private(set) var resting: Bool
     /// The resting tab was clicked open (#85): Recent list plus the menu gear. Only a click opens it.
-    @Published public private(set) var restOpen = false
+    @Published public private(set) var restOpen = false { didSet { if restOpen != oldValue { digestVisibleSince = restOpen ? dwellClock() : nil } } }
     /// Last finished threads after their chip went away. Memory only, capped, repo + age only (PDPA).
     @Published public private(set) var recent = RecentList()
     /// Off by default (PDPA): the glance shows only `repo · finished`; the reply stays behind the click.
@@ -63,6 +63,19 @@ public final class NotchModel: ObservableObject {
     /// Default is never away, so tests and the gallery are unaffected.
     public var awaySignal: () -> (locked: Bool, idle: TimeInterval) = { (false, 0) }
     private var awayTracker = AwayTracker()
+    /// The model's own clock for the digest's dwell rule; tests set it (everything else takes an explicit `now`).
+    public var dwellClock: () -> Date = Date.init
+    /// When the open rest panel began showing a digest (the panel opened on one, or the digest arrived under it).
+    private var digestVisibleSince: Date?
+    /// A digest the user closed sooner than this was not read: the dot stays (#120).
+    public static let digestMinDwell: TimeInterval = 1
+    /// The digest is rebuilt only when what it is built from changed, not on every refresh (#120).
+    private struct DigestKey: Equatable {
+        var since: Date?; var until: Date?; var done: [DoneItem]; var terminal: [TerminalItem]; var recent: [RecentItem]; var labelEpoch: Int
+    }
+    private var digestCache: (key: DigestKey, value: AwayDigest.Result?)?
+    /// How many times the digest was actually built, for tests.
+    private(set) var digestBuilds = 0
     /// Start of the last away period that left something to report. The only thing kept for the digest (the rows are
     /// rebuilt from state already held), so nothing new is stored, logged or sent (PDPA). Cleared once seen.
     @Published public private(set) var awaySince: Date?
@@ -188,11 +201,16 @@ public final class NotchModel: ObservableObject {
     /// Pure: the digest for a given start, from state already held. nil when nothing is left to report.
     private func digest(since: Date?, until: Date?) -> AwayDigest.Result? {
         guard let since else { return nil }
+        let key = DigestKey(since: since, until: until, done: doneItems, terminal: terminalItems, recent: recent.items, labelEpoch: labelEpoch)
+        if let c = digestCache, c.key == key { return c.value }
+        digestBuilds += 1
         let d = AwayDigest.build(since: since, until: until ?? .distantFuture, terminal: terminalItems, done: doneItems, recent: recent.items,
                                  label: { [identities] cwd, project in identities.label(cwd: cwd, project: project) },
                                  resolved: { [identities] in identities.isResolved(cwd: $0) },
                                  cap: .max) // every covered chip is a row: none hides behind "+N more"
-        return d.isEmpty ? nil : d
+        let value = d.isEmpty ? nil : d
+        digestCache = (key, value)
+        return value
     }
 
     public func identity(row: DigestRow) -> SessionIdentity { marks.identity(repo: row.repo, resolved: row.resolved) }
@@ -208,8 +226,11 @@ public final class NotchModel: ObservableObject {
 
     /// The user read the digest and closed its panel themselves (Esc, click-away, dot toggle): the dot clears.
     /// Row activation and an approval folding the panel do not come through here, so they never mark it seen.
+    /// A digest shown for under `digestMinDwell` was not read (an accidental click-away): the dot stays.
     private func markDigestSeenIfOpen() {
-        if restOpen, awayDigest != nil, !listOpen, shownPending == nil, shownDone == nil { awaySince = nil; awayEnd = nil }
+        guard restOpen, awayDigest != nil, !listOpen, shownPending == nil, shownDone == nil else { return }
+        guard let since = digestVisibleSince, dwellClock().timeIntervalSince(since) >= Self.digestMinDwell else { return }
+        awaySince = nil; awayEnd = nil
     }
 
     /// Dismiss: the digest's finished chips move to Recent (same as "Clear all" for those), terminal asks stay (they
@@ -263,7 +284,10 @@ public final class NotchModel: ObservableObject {
                                      resolved: { [identities] in identities.isResolved(cwd: $0) })
         let dg = digest(since: awaySince, until: awayEnd)
         if dg == nil, awaySince != nil || awayEnd != nil { awaySince = nil; awayEnd = nil } // emptied on its own
-        if dg != awayDigest { awayDigest = dg }
+        if dg != awayDigest {
+            if restOpen, awayDigest == nil { digestVisibleSince = dwellClock() } // the digest arrived under an open panel
+            awayDigest = dg
+        }
         let previousTargets = waitingLayout.selectableTargets
         if (!listOpen || list.isEmpty), finishedExpanded { finishedExpanded = false } // the expansion lives only while the list is open and non-empty
         if list != waitingItems || waitingLayout.expanded != finishedExpanded {

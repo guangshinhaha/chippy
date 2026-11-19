@@ -19,6 +19,8 @@ public struct AwayTracker: Equatable {
         let idle = max(0, idle)
         // Sleep: nobody polled for longer than the threshold, so the machine was asleep. Away from the previous poll.
         // Only when the idle clock agrees (or the screen is locked): a throttled timer with an active user is not sleep.
+        // Accepted (#120): sleep with no lock, then input right at wake, is not away. A lone gap cannot tell it from a throttled
+        // timer, and calling every long gap "away" would show a false digest to a user who never left.
         if let last = lastPoll, awaySince == nil {
             let gap = now.timeIntervalSince(last)
             if gap > threshold, locked || idle >= gap * 0.9 { awaySince = last }
