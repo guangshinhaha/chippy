@@ -95,7 +95,7 @@ enum TerminalJump {
         /// One log line per jump, after the polling ends.
         func finish(_ v: ActivationOutcome.Verdict, _ err: Error? = nil) {
             switch v {
-            case .landed: break
+            case .landed, .workspaceNotSelected: break   // the latter is only produced after this step, by the host's own select
             case .landedUnverified:
                 NSLog("Chippy: window check inconclusive for %@ (%@), judged by frontmost only", bundle ?? "?", unreadable ? "window list unreadable" : "no windows found for its processes")
             case .offSpace:
@@ -119,18 +119,29 @@ enum TerminalJump {
         }
     }
 
-    /// Orca: after it is frontmost, ask its CLI to select the session's workspace (it has no AppleScript).
-    static func selectOrcaWorkspace(_ cwd: String) {
-        let cli = "/Applications/Orca.app/Contents/Resources/bin/orca"
-        guard FileManager.default.isExecutableFile(atPath: cli) else { return }
+    /// Orca: after it is frontmost, ask its CLI (from the running app's own bundle) to select the session's workspace
+    /// (it has no AppleScript). Reports what the CLI answered; `completion` runs on the main queue.
+    static func selectOrcaWorkspace(_ cwd: String, appBundleURL: URL?, completion: @escaping (OrcaCLI.Select) -> Void) {
+        func finish(_ s: OrcaCLI.Select) {
+            if case .failed(let why) = s { NSLog("Chippy: Orca workspace select failed (%@)", why) }
+            if s == .unconfirmed { NSLog("Chippy: Orca workspace select gave no readable answer, judged by exit code only") }
+            DispatchQueue.main.async { completion(s) }
+        }
+        guard let cli = OrcaCLI.cliURL(appBundleURL: appBundleURL),
+              FileManager.default.isExecutableFile(atPath: cli.path) else { finish(.failed("orca CLI not found in the running app")); return }
         DispatchQueue.global(qos: .userInitiated).async {
             let p = Process()
-            p.executableURL = URL(fileURLWithPath: cli)
-            p.arguments = ["worktree", "activate", "--worktree", "path:" + cwd]
-            p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
-            guard (try? p.run()) != nil else { return }
+            let out = Pipe()
+            p.executableURL = cli
+            p.arguments = OrcaCLI.arguments(cwd: cwd)
+            p.standardOutput = out; p.standardError = FileHandle.nullDevice
+            guard (try? p.run()) != nil else { finish(.failed("could not run the orca CLI")); return }
+            // A hung CLI must not strand the jump: give up after 5s (the read below then ends when it dies).
             DispatchQueue.global().asyncAfter(deadline: .now() + 5) { if p.isRunning { p.terminate() } }
+            let data = out.fileHandleForReading.readDataToEndOfFile()
             p.waitUntilExit()
+            guard p.terminationReason == .exit else { finish(.failed("timed out")); return }
+            finish(OrcaCLI.interpret(exitStatus: p.terminationStatus, stdout: data))
         }
     }
 
@@ -142,8 +153,9 @@ enum TerminalJump {
         guard available(host), let h = host, let pid = h.pid, let bundle = h.bundle else { completion(.notFrontmost); return }
         let activate = {
             bringForward(pid: pid) { v in
-                if v == .landed || v == .landedUnverified, bundle == "com.stablyai.orca", let cwd = h.cwd { selectOrcaWorkspace(cwd) }
-                completion(v)
+                guard v == .landed || v == .landedUnverified, bundle == OrcaCLI.bundleId, let cwd = h.cwd else { completion(v); return }
+                let url = NSRunningApplication(processIdentifier: pid)?.bundleURL
+                selectOrcaWorkspace(cwd, appBundleURL: url) { completion(OrcaCLI.finalVerdict(v, select: $0)) }
             }
         }
         guard let src = script(bundle: bundle, tty: h.tty ?? "") else { activate(); return }

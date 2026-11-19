@@ -1049,7 +1049,7 @@ struct OpenTerminalButton: View {
                 let ok = v == .landed || v == .landedUnverified
                 busy = false
                 offSpace = v == .offSpace
-                failed = v == .notFrontmost
+                failed = v == .notFrontmost || v == .workspaceNotSelected
                 if ok { onOpened() }
                 if !ok { DispatchQueue.main.asyncAfter(deadline: .now() + 4) { if token == mine { failed = false; offSpace = false } } }
             }

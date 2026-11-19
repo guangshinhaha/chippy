@@ -25,6 +25,8 @@ public enum ActivationOutcome {
         case landedUnverified
         /// Frontmost, but every window of the app is on another Space (or minimised).
         case offSpace
+        /// The host app came forward but its own step to select the session's workspace failed (Orca CLI, #129).
+        case workspaceNotSelected
     }
 
     /// `counts` is nil when the window list could not be read. Zero windows is inconclusive, never "landed".
