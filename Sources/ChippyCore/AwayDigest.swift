@@ -48,8 +48,6 @@ public struct DigestRow: Identifiable, Equatable {
     /// Where a tap goes while the thread still has a chip or terminal row; nil for a Recent-only row.
     public let target: WaitingTarget?
     public let host: HostInfo?
-    public let cwd: String
-    public let project: String
     public var id: String { sessionId }
 }
 
@@ -75,17 +73,16 @@ public enum AwayDigest {
         for t in terminal where t.at >= since && t.at <= until && seen.insert(t.sessionId).inserted {
             let l = label(t.cwd, t.project)
             needs.append(DigestRow(sessionId: t.sessionId, status: .needsYou, repo: l.repo, worktree: l.worktree, at: t.at, resolved: resolved(t.cwd),
-                                   target: .terminal(t.sessionId), host: t.host, cwd: t.cwd, project: t.project))
+                                   target: .terminal(t.sessionId), host: t.host))
         }
         for d in done where d.at >= since && d.at <= until && seen.insert(d.sessionId).inserted {
             let l = label(d.cwd, d.project)
             finished.append(DigestRow(sessionId: d.sessionId, status: d.asksYou ? .asksYou : .finished, repo: l.repo, worktree: l.worktree, at: d.at,
-                                      resolved: resolved(d.cwd), target: .done(d.sessionId), host: d.host, cwd: d.cwd, project: d.project))
+                                      resolved: resolved(d.cwd), target: .done(d.sessionId), host: d.host))
         }
         for r in recent where r.at >= since && r.at <= until && seen.insert(r.sessionId).inserted {
-            let l = label(r.cwd, r.project)
-            finished.append(DigestRow(sessionId: r.sessionId, status: .finished, repo: l.repo, worktree: l.worktree, at: r.at,
-                                      resolved: resolved(r.cwd), target: nil, host: r.host, cwd: r.cwd, project: r.project))
+            finished.append(DigestRow(sessionId: r.sessionId, status: .finished, repo: r.label.repo, worktree: r.label.worktree, at: r.at,
+                                      resolved: r.resolved, target: nil, host: r.host))
         }
         let newest = finished.enumerated().sorted { $0.element.at != $1.element.at ? $0.element.at > $1.element.at : $0.offset < $1.offset }.map(\.element)
         let ordered = needs.sorted { $0.at < $1.at } + newest

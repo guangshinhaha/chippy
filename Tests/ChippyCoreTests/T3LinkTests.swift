@@ -87,6 +87,6 @@ final class T3ThreadCarryTests: XCTestCase {
         m.apply(payload(["session_id": "s", "cwd": "/w/p", "hook_event_name": "PostToolUse", "chippy_branch": "b"]))
         m.apply(payload(["session_id": "s", "cwd": "/w/p", "hook_event_name": "Stop", "chippy_branch": "b"]))
         XCTAssertEqual(m.doneItems[0].host?.env["T3CODE_THREAD_ID"], thread)
-        XCTAssertEqual(RecentItem(m.doneItems[0]).host?.env["T3CODE_THREAD_ID"], thread)
+        XCTAssertEqual(RecentItem(m.doneItems[0], label: RepoLabel(repo: "p"), resolved: true).host?.env["T3CODE_THREAD_ID"], thread)
     }
 }

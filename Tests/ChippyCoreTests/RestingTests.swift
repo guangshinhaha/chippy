@@ -200,7 +200,7 @@ final class RestingTests: XCTestCase {
         XCTAssertTrue(m.recent.items.isEmpty)
     }
 
-    /// PDPA: an entry carries only repo, time and host. A reply, prompt or command can't reach it.
+    /// PDPA: an entry carries only repo, time and host. A reply, prompt, command or full path can't reach it (#111).
     func testRecentCarriesNoReplyOrPromptText() {
         let m = model()
         let stop = HookPayload(json: Data(#"{"session_id":"a","hook_event_name":"Stop","cwd":"/x/api","last_assistant_message":"SECRET-REPLY"}"#.utf8))!
@@ -210,7 +210,22 @@ final class RestingTests: XCTestCase {
         let dump = String(describing: m.recent.items)
         XCTAssertFalse(dump.contains("SECRET-REPLY"))
         let labels = Mirror(reflecting: m.recent.items[0]).children.compactMap(\.label)
-        XCTAssertEqual(Set(labels), ["sessionId", "project", "at", "host", "cwd"]) // cwd only resolves the repo label, never shown
+        XCTAssertEqual(Set(labels), ["sessionId", "project", "at", "host", "label", "resolved"], "the resolved label replaces the cwd")
+        XCTAssertEqual(m.recent.items[0].label.repo, "api")
+    }
+
+    /// The host rides along for the Open button, and the hook records the session's cwd on it for every host. Recent drops that
+    /// path unless the host's adapter needs it to find the session.
+    func testRecentKeepsNoFullPathExceptWhereTheHostNeedsIt() {
+        let terminal = HostInfo(pid: 5, bundle: "com.apple.Terminal", tty: "ttys001", cwd: "/Users/x/secret-client/api")
+        let orca = HostInfo(pid: 6, bundle: OrcaCLI.bundleId, tty: nil, cwd: "/Users/x/secret-client/api")
+        let done = { (h: HostInfo) in DoneItem(sessionId: "a", project: "api", branch: nil, files: 0, added: 0, removed: 0, reply: nil, prompt: nil,
+                                               at: self.t0, host: h, cwd: "/Users/x/secret-client/api") }
+        let a = RecentItem(done(terminal), label: RepoLabel(repo: "api"), resolved: true)
+        XCTAssertFalse(String(describing: a).contains("secret-client"))
+        XCTAssertEqual(a.host?.tty, "ttys001", "the Open button still has what it needs")
+        let b = RecentItem(done(orca), label: RepoLabel(repo: "api"), resolved: true)
+        XCTAssertEqual(b.host?.cwd, "/Users/x/secret-client/api", "Orca selects the worktree by path, so its entry keeps it")
     }
 
     // MARK: metrics

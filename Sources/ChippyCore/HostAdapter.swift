@@ -55,9 +55,11 @@ public struct HostAdapter {
     public let bundleId: String
     /// Names of the env vars the hook forwards for this host. Values are checked with `T3Link.validId` rules (letters, digits, `_`, `-`).
     public let forwardedEnv: [String]
+    /// The jump needs the session's cwd (Orca selects a worktree by path). Every other host's `HostInfo` is stored without it.
+    public let keepsCwd: Bool
     public let plan: (HostInfo, JumpContext) -> JumpPlan
-    public init(bundleId: String, forwardedEnv: [String] = [], plan: @escaping (HostInfo, JumpContext) -> JumpPlan) {
-        self.bundleId = bundleId; self.forwardedEnv = forwardedEnv; self.plan = plan
+    public init(bundleId: String, forwardedEnv: [String] = [], keepsCwd: Bool = false, plan: @escaping (HostInfo, JumpContext) -> JumpPlan) {
+        self.bundleId = bundleId; self.forwardedEnv = forwardedEnv; self.keepsCwd = keepsCwd; self.plan = plan
     }
 }
 
@@ -65,7 +67,7 @@ public enum HostAdapters {
     public static let standard: [HostAdapter] = [
         HostAdapter(bundleId: "com.apple.Terminal") { h, _ in TTYScripts.plan(bundle: "com.apple.Terminal", tty: h.tty) },
         HostAdapter(bundleId: "com.googlecode.iterm2") { h, _ in TTYScripts.plan(bundle: "com.googlecode.iterm2", tty: h.tty) },
-        HostAdapter(bundleId: OrcaCLI.bundleId) { h, c in
+        HostAdapter(bundleId: OrcaCLI.bundleId, keepsCwd: true) { h, c in
             guard let cwd = h.cwd else { return .activate }
             guard let cli = OrcaCLI.cliURL(appBundleURL: c.appBundleURL) else { return .exactTargetUnavailable("orca CLI not found in the running app") }
             return .cli(executable: cli, arguments: OrcaCLI.arguments(cwd: cwd))
@@ -81,6 +83,13 @@ public enum HostAdapters {
     public static func adapter(for bundle: String?, in table: [HostAdapter] = standard) -> HostAdapter? {
         guard let bundle else { return nil }
         return table.first { $0.bundleId == bundle }
+    }
+
+    /// The host as it may be kept after its chip is gone (#111): the session's cwd is dropped unless this host's jump needs it.
+    public static func minimal(_ host: HostInfo?, in table: [HostAdapter] = standard) -> HostInfo? {
+        guard var h = host, h.cwd != nil, adapter(for: h.bundle, in: table)?.keepsCwd != true else { return host }
+        h.cwd = nil
+        return h
     }
 
     /// The jump for this host. An unknown app, or no host, only activates.

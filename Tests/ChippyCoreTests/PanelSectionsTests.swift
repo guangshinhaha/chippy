@@ -19,7 +19,7 @@ final class PanelSectionsTests: XCTestCase {
                  reply: reply, prompt: nil, at: now.addingTimeInterval(-ago), cwd: cwd)
     }
     func recent(_ id: String, ago: TimeInterval = 60, cwd: String = "/w/api") -> RecentItem {
-        RecentItem(sessionId: id, project: URL(fileURLWithPath: cwd).lastPathComponent, at: now.addingTimeInterval(-ago), cwd: cwd)
+        RecentItem(sessionId: id, project: URL(fileURLWithPath: cwd).lastPathComponent, at: now.addingTimeInterval(-ago), label: RepoResolver.fallback(cwd: cwd))
     }
     func terminal(_ id: String, cwd: String = "/w/api") -> TerminalItem {
         TerminalItem(sessionId: id, project: URL(fileURLWithPath: cwd).lastPathComponent, at: now.addingTimeInterval(-30), tool: "Bash", cwd: cwd)
