@@ -1273,8 +1273,8 @@ struct PanelRowView: View {
         let mine = token
         TerminalJump.open(row.host) { v in
             busy = false
-            guard v != .landed, v != .landedUnverified else { return }
-            failure = v == .offSpace ? "\(appName ?? "The app") is on another Space" : "Couldn't open \(appName ?? "the app")"
+            guard let text = JumpFeedback.text(for: v, appName: appName ?? "the app") else { return } // landed, or landed unconfirmed
+            failure = text.line
             DispatchQueue.main.asyncAfter(deadline: .now() + 4) { if token == mine { failure = nil } }
         }
     }

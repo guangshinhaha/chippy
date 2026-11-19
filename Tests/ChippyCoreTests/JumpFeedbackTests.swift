@@ -12,6 +12,12 @@ final class JumpFeedbackTests: XCTestCase {
         XCTAssertFalse(t?.help.contains("bring the app forward") ?? true, "the app did come forward")
     }
 
+    func testPanelRowsGetTheSameWordsAsTheButton() {
+        XCTAssertEqual(JumpFeedback.text(for: .workspaceNotSelected, appName: "Orca")?.line, "Orca opened, but its workspace wasn't selected")
+        XCTAssertEqual(JumpFeedback.text(for: .notFrontmost, appName: "Orca")?.line, "Couldn't open Orca")
+        XCTAssertEqual(JumpFeedback.text(for: .offSpace, appName: "Orca")?.line, "Orca is on another Space")
+    }
+
     func testEachFailureHasItsOwnWords() {
         let all: [ActivationOutcome.Verdict] = [.notFrontmost, .offSpace, .workspaceNotSelected]
         let titles = all.compactMap { JumpFeedback.text(for: $0, appName: "X")?.title }
@@ -64,7 +70,7 @@ final class JumpFeedbackTests: XCTestCase {
 
     func testATimedOutProcessIsTerminated() throws { try assertGoneAfterTimeout("exec sleep 20", within: 2) }
 
-    func testAProcessThatIgnoresTermIsStillKilled() throws { try assertGoneAfterTimeout("trap '' TERM; while :; do :; done", within: 4) }
+    func testAProcessThatIgnoresTermIsStillKilled() throws { try assertGoneAfterTimeout("trap '' TERM; sleep 20", within: 4) }
 
     func testAnAnswerWrittenInPiecesJustBeforeExitIsNeverSplitOrLost() {
         for i in 0..<100 {

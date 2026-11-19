@@ -6,6 +6,8 @@ public enum JumpFeedback {
         public let title: String
         public let hint: String
         public let help: String
+        /// One short sentence for places with no button to retitle (a panel row).
+        public let line: String
     }
 
     /// nil when the jump needs no message. `.landed` and `.landedUnverified` are both treated as success: the app is in front,
@@ -17,13 +19,16 @@ public enum JumpFeedback {
             return nil
         case .offSpace:
             return Text(title: "On another Space", hint: "\(appName) is frontmost; switch Space",
-                        help: "\(appName) is frontmost but its window is on another Space. Switch Space (Ctrl-arrow) or enable System Settings > Desktop & Dock > switch to a Space with open windows.")
+                        help: "\(appName) is frontmost but its window is on another Space. Switch Space (Ctrl-arrow) or enable System Settings > Desktop & Dock > switch to a Space with open windows.",
+                        line: "\(appName) is on another Space")
         case .workspaceNotSelected:
             return Text(title: "Not selected", hint: "pick the workspace yourself",
-                        help: "\(appName) came forward, but Chippy couldn't select this session's workspace in it. Pick it from the sidebar.")
+                        help: "\(appName) came forward, but Chippy couldn't select this session's workspace in it. Pick it from the sidebar.",
+                        line: "\(appName) opened, but its workspace wasn't selected")
         case .notFrontmost:
             return Text(title: "Couldn't open", hint: "switch to it yourself",
-                        help: "Chippy couldn't bring the app forward. Switch to it from the Dock or Cmd-Tab.")
+                        help: "Chippy couldn't bring the app forward. Switch to it from the Dock or Cmd-Tab.",
+                        line: "Couldn't open \(appName)")
         }
     }
 }
