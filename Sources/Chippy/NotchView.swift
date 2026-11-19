@@ -411,16 +411,10 @@ struct NotchView: View {
                         }
                     }
                 } else if model.restOpen {
-                    terminalCards
-                    doneCards(limit: 3)
-                    // Recent first, and only when no chip is showing (the chips already say the same), so the card stays short.
-                    if model.doneItems.isEmpty && model.terminalItems.isEmpty {
-                        if model.recent.items.isEmpty { Text("Nothing finished recently.").font(.caption).foregroundStyle(.white.opacity(0.6)) }
-                        else { RecentListView(items: model.recent.items, label: { model.repoLabel(cwd: $0.cwd, project: $0.project).text },
-                                                          mark: { model.identity(cwd: $0.cwd, project: $0.project) }).reveal(0.12) }
+                    // #139: a count header, then Needs you, Working and Done. Rows scroll once taller than the room left under the header.
+                    ScrollWhenTall(maxHeight: NotchMetrics.maxExpandedHeight - NotchMetrics.shapePadding - NotchMetrics.cameraInset - box.metrics.height - NotchMetrics.cardHeaderHeight - 2 * NotchMetrics.cardSpacing) {
+                        PanelSectionsView(model: model).reveal(0.12)
                     }
-                    if model.sessions.isEmpty && model.recent.items.isEmpty { Text("No agent sessions.").font(.caption).foregroundStyle(.white.opacity(0.6)) }
-                    glanceRows
                 } else {
                     terminalCards
                     doneCards(limit: model.tall ? 1 : 3, full: model.tall)
@@ -1164,6 +1158,115 @@ struct RecentListView: View {
         .padding(.horizontal, 10).frame(minHeight: 32)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(repo), finished \(age) ago")
+    }
+}
+
+/// The rest panel (#139): why each row is here, in three sections. Only Needs-you rows have the prominent button;
+/// Working and Done rows open their app on a tap. Never shows a reply, prompt, question or command (PDPA #30).
+struct PanelSectionsView: View {
+    @ObservedObject var model: NotchModel
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 15)) { ctx in
+            let result = model.panelSections(now: ctx.date)
+            VStack(alignment: .leading, spacing: 4) {
+                if result.isEmpty {
+                    Text("Nothing running, nothing waiting.").font(.caption).foregroundStyle(.white.opacity(0.6)).padding(.horizontal, 10)
+                }
+                ForEach(result.sections, id: \.title) { section in
+                    Text(section.title.rawValue.uppercased()).font(.caption2.weight(.bold)).foregroundStyle(.white.opacity(0.5)).tracking(0.6)
+                        .padding(.horizontal, 10).padding(.top, 2).accessibilityAddTraits(.isHeader)
+                    ForEach(section.rows) { row in
+                        PanelRowView(row: row, mark: model.identity(cwd: row.cwd, project: row.project), age: WaitingList.age(since: row.at, now: ctx.date),
+                                     review: { if let id = row.pendingId { model.activate(.pending(id)) } })
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// One row, the same shape in every section: mark, repo (worktree tag), then "why · branch · app · age".
+struct PanelRowView: View {
+    let row: PanelSections.Row
+    let mark: SessionIdentity
+    let age: String
+    let review: () -> Void
+    @State private var hover = false
+    @State private var failed = false
+
+    private var appName: String? {
+        guard let pid = row.host?.pid, let app = NSRunningApplication(processIdentifier: pid), let n = app.localizedName, !n.isEmpty else { return nil }
+        return n
+    }
+    private var canOpen: Bool { TerminalJump.available(row.host) }
+    private var tint: Color {
+        switch row.kind {
+        case .approval: return .orange
+        case .question: return .cyan
+        case .terminal, .asksYou: return .purple
+        case .working: return .green
+        case .finished: return .white.opacity(0.45)
+        }
+    }
+    private var symbol: String {
+        switch row.kind {
+        case .approval: return "hand.raised.fill"
+        case .question: return "questionmark.bubble.fill"
+        case .terminal: return "terminal.fill"
+        case .asksYou: return "text.bubble.fill"
+        case .working: return "circle.dotted"
+        case .finished: return "checkmark.circle"
+        }
+    }
+    /// "Approve Bash? · main · Orca · 2m": why it is here first, then where it lives.
+    private var subtitle: String {
+        (failed ? ["Couldn't open \(appName ?? "the app")"] : [row.detail] + [row.branch, appName].compactMap { $0 } + [age]).joined(separator: " · ")
+    }
+    private var spoken: String {
+        "\(mark.spoken), \(row.label.repo)\(row.label.worktree.map { ", worktree \($0)" } ?? ""), \(subtitle)"
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol).font(.caption).foregroundStyle(tint).frame(width: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                RepoTitle(repo: row.label.repo, worktree: row.label.worktree, mark: mark)
+                Text(subtitle).font(.caption2).foregroundStyle(failed ? Color.red.opacity(0.9) : tint.opacity(row.kind == .finished ? 1 : 0.95)).lineLimit(1).truncationMode(.tail)
+            }
+            .layoutPriority(1)
+            Spacer(minLength: 6)
+            if row.hasButton { button.fixedSize().layoutPriority(2) }
+        }
+        .padding(.horizontal, 10).frame(minHeight: row.hasButton ? WaitingList.needsRowHeight : 34)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(hover && !row.hasButton && canOpen ? 0.1 : 0)))
+        .contentShape(Rectangle())
+        .onHover { hover = $0 }
+        .onTapGesture { if !row.hasButton { openApp() } }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(spoken)
+        .accessibilityAction(named: row.hasButton ? "Open" : "Open \(appName ?? "terminal")") { if row.hasButton { primary() } else { openApp() } }
+    }
+
+    @ViewBuilder private var button: some View {
+        switch row.kind {
+        case .approval, .question:
+            ChipButton(title: row.kind == .question ? "Answer" : "Review", kind: .primary, action: review).accessibilityLabel("\(row.kind == .question ? "Answer" : "Review"), \(spoken)")
+        default:
+            if canOpen { OpenTerminalButton(host: row.host, kind: .primary).accessibilityLabel("Open \(appName ?? "terminal"), \(spoken)") }
+        }
+    }
+
+    private func primary() { if row.kind == .approval || row.kind == .question { review() } else { openApp() } }
+
+    /// A tap on a row without a button opens its app; a failure shows in the row for a few seconds instead of doing nothing.
+    private func openApp() {
+        guard canOpen else { return }
+        TerminalJump.open(row.host) { v in
+            guard v != .landed, v != .landedUnverified else { return }
+            failed = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { failed = false }
+        }
     }
 }
 

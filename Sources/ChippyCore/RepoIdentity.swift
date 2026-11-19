@@ -21,6 +21,11 @@ public enum RepoResolver {
             if !repo.isEmpty { return RepoLabel(repo: repo, worktree: tail) }
         }
         let name = (cwd as NSString).lastPathComponent
+        // A generated folder (a T3 or agent worktree) is not the repo: its parent folder names the repo (#139).
+        if !cwd.isEmpty, PanelSections.isHashLike(name) {
+            let parent = ((cwd as NSString).deletingLastPathComponent as NSString).lastPathComponent
+            if !parent.isEmpty, parent != "/" { return RepoLabel(repo: parent) }
+        }
         if !cwd.isEmpty, !name.isEmpty, name != "/" { return RepoLabel(repo: name) }
         return RepoLabel(repo: project.isEmpty ? "unknown" : project)
     }

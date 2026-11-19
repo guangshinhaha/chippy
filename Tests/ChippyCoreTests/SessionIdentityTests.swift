@@ -43,7 +43,7 @@ final class SessionIdentityTests: XCTestCase {
         XCTAssertEqual(b.identity(repo: "-api").glyph, "A")
         XCTAssertEqual(b.identity(repo: "").glyph, "#")
         XCTAssertEqual(b.identity(repo: "ßtool").glyph, "S")   // uppercased first Character, ASCII only
-        XCTAssertEqual(b.identity(repo: "élan").glyph, "#")
+        XCTAssertEqual(b.identity(repo: "élan").glyph, "É")
         XCTAssertTrue(SessionIdentity.Shape.allCases.count >= 3, "colour is never the only cue")
         XCTAssertFalse(b.identity(repo: "chippy").spoken.isEmpty)
     }
