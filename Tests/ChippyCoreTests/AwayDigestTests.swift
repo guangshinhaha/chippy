@@ -205,20 +205,26 @@ final class AwayDigestTests: XCTestCase {
 
     func testClosingThePanelAfterOpeningMarksSeenAndKeepsChips() {
         var locked = true
+        var t = at(400)
         let m = model(locked: { locked })
+        m.dwellClock = { t }
         m.sweep(now: at(0)); stop(m, "a", at: at(50)); locked = false; m.sweep(now: at(400))
         m.openBadge() // the dot's tap
         XCTAssertTrue(m.restOpen); XCTAssertNotNil(m.awayDigest)
         XCTAssertEqual(m.headerTitle, "While you were away")
+        t = at(402) // read for a couple of seconds
         m.closeDetail()
         XCTAssertNil(m.awayDigest); XCTAssertEqual(m.doneItems.count, 1) // seen, not dismissed
     }
 
     func testDotToggleClosesAndMarksSeen() {
         var locked = true
+        var t = at(400)
         let m = model(locked: { locked })
+        m.dwellClock = { t }
         m.sweep(now: at(0)); stop(m, "a", at: at(50)); locked = false; m.sweep(now: at(400))
         m.openBadge(); XCTAssertTrue(m.restOpen)
+        t = at(402)
         m.openBadge()
         XCTAssertFalse(m.restOpen); XCTAssertNil(m.awaySince)
     }
@@ -389,5 +395,103 @@ final class AwayDigestTests: XCTestCase {
         for i in 0..<8 { stop(m, "s\(i)", cwd: "/x/p\(i)", at: at(10 + Double(i))) }
         locked = false; m.sweep(now: at(400))
         XCTAssertEqual(m.awayDigest?.rows.count, 8); XCTAssertEqual(m.awayDigest?.hidden, 0)
+    }
+
+    // MARK: #120 leftovers
+
+    /// An away return with one finished chip, panel opened on the digest at `opened`; the model clock reads `now`.
+    private func openedDigest(_ now: @escaping () -> Date) -> NotchModel {
+        var locked = true
+        let m = model(locked: { locked })
+        m.dwellClock = now
+        m.sweep(now: at(0)); stop(m, "a", at: at(50)); locked = false; m.sweep(now: at(400))
+        return m
+    }
+
+    func testClosingTheDigestWithinASecondDoesNotMarkItSeen() {
+        var t = at(500)
+        let m = openedDigest { t }
+        m.openBadge()
+        t = at(500.5)
+        m.closeDetail()
+        XCTAssertFalse(m.restOpen)
+        XCTAssertNotNil(m.awayDigest, "closed before it could be read: the dot stays")
+        XCTAssertTrue(m.badgeDot)
+    }
+
+    func testClosingTheDigestAfterASecondMarksItSeen() {
+        var t = at(500)
+        let m = openedDigest { t }
+        m.openBadge()
+        t = at(501)
+        m.closeDetail()
+        XCTAssertNil(m.awayDigest); XCTAssertNil(m.awaySince)
+    }
+
+    func testTheDwellCountsFromWhenThePanelOpenedNotFromEarlier() {
+        var t = at(500)
+        let m = openedDigest { t }
+        t = at(600) // the digest sat unopened for a minute
+        m.openBadge()
+        t = at(600.2)
+        m.toggleOpen() // the notch click also closes it
+        XCTAssertNotNil(m.awayDigest, "a minute of the dot sitting there is not reading time")
+    }
+
+    func testADigestThatArrivesUnderAnOpenPanelCountsFromWhenItArrived() {
+        var t = at(0)
+        var locked = true
+        let m = model(locked: { locked })
+        m.dwellClock = { t }
+        m.sweep(now: at(0))
+        t = at(10); m.toggleOpen() // the user opened the empty panel while still away
+        XCTAssertTrue(m.restOpen)
+        stop(m, "a", at: at(50))
+        locked = false; t = at(400); m.sweep(now: at(400)) // the return lands under the open panel
+        XCTAssertNotNil(m.awayDigest)
+        t = at(400.5)
+        m.closeDetail()
+        XCTAssertNotNil(m.awayDigest, "it had been on screen half a second")
+    }
+
+    func testTwoRefreshesWithNoNewEventsBuildTheDigestOnce() {
+        let m = openedDigest { self.at(500) }
+        let built = m.digestBuilds
+        XCTAssertGreaterThan(built, 0)
+        m.openBadge(); m.sweep(now: at(401)); m.sweep(now: at(402))
+        XCTAssertEqual(m.digestBuilds, built, "opening and sweeping rebuilt nothing")
+    }
+
+    func testANewFinishRebuildsTheDigest() {
+        let m = openedDigest { self.at(500) }
+        let built = m.digestBuilds
+        stop(m, "b", at: at(405)) // after the return: not folded in, but the inputs changed
+        XCTAssertGreaterThan(m.digestBuilds, built)
+        XCTAssertEqual(m.awayDigest?.rows.map(\.sessionId), ["a"])
+    }
+
+    func testReopeningAfterAQuickCloseStartsTheDwellAgain() {
+        var t = at(500)
+        let m = openedDigest { t }
+        m.openBadge(); t = at(500.5); m.closeDetail() // too quick: stays
+        t = at(900); m.openBadge()
+        t = at(900.2); m.closeDetail()
+        XCTAssertNotNil(m.awayDigest, "the second look lasted 0.2 s, not the 400 s since the first")
+    }
+
+    func testAResolvedFlagThatFlipsWithNoLabelChangeRebuildsTheDigest() {
+        var queued: [() -> Void] = []
+        // The git read answers with the very label already shown: no observer is told, but the row is now resolved.
+        let cache = RepoIdentityCache(resolver: { RepoResolver.fallback(cwd: $0) }, background: { queued.append($0) }, deliver: { $0() })
+        var locked = true
+        let m = NotchModel(always: AlwaysStore(url: nil),
+                           log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("chippy-test-\(UUID()).jsonl")),
+                           identities: cache)
+        m.awaySignal = { (locked, 0) }
+        m.sweep(now: at(0)); stop(m, "a", at: at(50)); locked = false; m.sweep(now: at(400))
+        XCTAssertEqual(m.awayDigest?.rows.first?.resolved, false)
+        queued.forEach { $0() }
+        m.sweep(now: at(401)); m.openBadge()
+        XCTAssertEqual(m.awayDigest?.rows.first?.resolved, true, "a cached digest must not keep the old flag")
     }
 }
