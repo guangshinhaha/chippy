@@ -35,6 +35,12 @@ func relay(_ args: [String]) -> Never {
         if let t = h.tty { d["chippy_tty"] = t }
         obj = d
     }
+    // T3 Code sets T3CODE_THREAD_ID for the claude process it spawns: forward it (validated) so "Open T3 Code" can open that thread.
+    if var d = obj as? [String: Any], ["SessionStart", "UserPromptSubmit", "Stop"].contains(d["hook_event_name"] as? String ?? ""),
+       let t = T3Link.validId(ProcessInfo.processInfo.environment["T3CODE_THREAD_ID"]) {
+        d["chippy_t3_thread"] = t
+        obj = d
+    }
     // A question card shows what Claude said just before asking. Local read of the transcript tail; any failure adds nothing.
     if var d = obj as? [String: Any], d["hook_event_name"] as? String == "PermissionRequest", d["tool_name"] as? String == "AskUserQuestion",
        let tp = d["transcript_path"] as? String, let lead = TranscriptTail.leadIn(path: tp) {

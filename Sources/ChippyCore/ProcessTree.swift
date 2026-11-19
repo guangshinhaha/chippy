@@ -7,7 +7,10 @@ public struct HostInfo: Equatable {
     public let bundle: String?
     public let tty: String?   // e.g. "ttys004"
     public var cwd: String? = nil   // the session's working directory, to select its workspace in hosts like Orca
-    public init(pid: Int32?, bundle: String?, tty: String?, cwd: String? = nil) { self.pid = pid; self.bundle = bundle; self.tty = tty; self.cwd = cwd }
+    public var threadId: String? = nil   // T3 Code's id for this session's thread (from T3CODE_THREAD_ID), to open that exact thread
+    public init(pid: Int32?, bundle: String?, tty: String?, cwd: String? = nil, threadId: String? = nil) {
+        self.pid = pid; self.bundle = bundle; self.tty = tty; self.cwd = cwd; self.threadId = threadId
+    }
     /// Something to jump to: a known host app.
     public var hasHost: Bool { pid != nil && bundle != nil }
 }
