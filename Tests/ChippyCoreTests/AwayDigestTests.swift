@@ -469,4 +469,29 @@ final class AwayDigestTests: XCTestCase {
         XCTAssertGreaterThan(m.digestBuilds, built)
         XCTAssertEqual(m.awayDigest?.rows.map(\.sessionId), ["a"])
     }
+
+    func testReopeningAfterAQuickCloseStartsTheDwellAgain() {
+        var t = at(500)
+        let m = openedDigest { t }
+        m.openBadge(); t = at(500.5); m.closeDetail() // too quick: stays
+        t = at(900); m.openBadge()
+        t = at(900.2); m.closeDetail()
+        XCTAssertNotNil(m.awayDigest, "the second look lasted 0.2 s, not the 400 s since the first")
+    }
+
+    func testAResolvedFlagThatFlipsWithNoLabelChangeRebuildsTheDigest() {
+        var queued: [() -> Void] = []
+        // The git read answers with the very label already shown: no observer is told, but the row is now resolved.
+        let cache = RepoIdentityCache(resolver: { RepoResolver.fallback(cwd: $0) }, background: { queued.append($0) }, deliver: { $0() })
+        var locked = true
+        let m = NotchModel(always: AlwaysStore(url: nil),
+                           log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("chippy-test-\(UUID()).jsonl")),
+                           identities: cache)
+        m.awaySignal = { (locked, 0) }
+        m.sweep(now: at(0)); stop(m, "a", at: at(50)); locked = false; m.sweep(now: at(400))
+        XCTAssertEqual(m.awayDigest?.rows.first?.resolved, false)
+        queued.forEach { $0() }
+        m.sweep(now: at(401)); m.openBadge()
+        XCTAssertEqual(m.awayDigest?.rows.first?.resolved, true, "a cached digest must not keep the old flag")
+    }
 }

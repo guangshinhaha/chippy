@@ -72,6 +72,8 @@ public final class NotchModel: ObservableObject {
     /// The digest is rebuilt only when what it is built from changed, not on every refresh (#120).
     private struct DigestKey: Equatable {
         var since: Date?; var until: Date?; var done: [DoneItem]; var terminal: [TerminalItem]; var recent: [RecentItem]; var labelEpoch: Int
+        /// Whether git has answered for each done/terminal cwd: it can flip with no label change, so no `labelEpoch` bump.
+        var resolved: [Bool]
     }
     private var digestCache: (key: DigestKey, value: AwayDigest.Result?)?
     /// How many times the digest was actually built, for tests.
@@ -201,7 +203,8 @@ public final class NotchModel: ObservableObject {
     /// Pure: the digest for a given start, from state already held. nil when nothing is left to report.
     private func digest(since: Date?, until: Date?) -> AwayDigest.Result? {
         guard let since else { return nil }
-        let key = DigestKey(since: since, until: until, done: doneItems, terminal: terminalItems, recent: recent.items, labelEpoch: labelEpoch)
+        let key = DigestKey(since: since, until: until, done: doneItems, terminal: terminalItems, recent: recent.items, labelEpoch: labelEpoch,
+                           resolved: (doneItems.map(\.cwd) + terminalItems.map(\.cwd)).map { identities.isResolved(cwd: $0) })
         if let c = digestCache, c.key == key { return c.value }
         digestBuilds += 1
         let d = AwayDigest.build(since: since, until: until ?? .distantFuture, terminal: terminalItems, done: doneItems, recent: recent.items,
