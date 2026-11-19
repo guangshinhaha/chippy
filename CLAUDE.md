@@ -20,3 +20,4 @@ Chippy rules:
 5. For `risk:low` and above, the verifier is a fresh subagent that hasn't seen the build reasoning. Its verdict counts only at the head commit it ran at.
 6. No Codex or external review. Claude only.
 7. Finish with a comment on the issue: the PR link and one line on what you learned about Chippy. Friction in Chippy goes in a new Chippy issue; friction in shinstack goes to the shinstack repo (router: Friction).
+8. Blocked on a product call while Shin is away: use `/shinstack:consult-shin`, log the pick on the issue, keep going. A PR that carries the pick merges on the normal gate for its tier; it does not wait for Shin to review the pick. Merge, deploy, credentials and irreversible actions never go through it.
