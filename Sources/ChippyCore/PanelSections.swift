@@ -47,6 +47,7 @@ public enum PanelSections {
 
     public static let doneCap = RecentList.cap
     public static let doneTTL = RecentList.ttl
+    public static let workingTTL = RecentList.ttl
 
     /// `pending` is in rank order (see `WaitingList.items`). `label` is the model's resolved label for a cwd.
     public static func build(pending: [PendingRequest], terminal: [TerminalItem], done: [DoneItem], sessions: [SessionRow], recent: [RecentItem],
@@ -72,7 +73,8 @@ public enum PanelSections {
         }
 
         var working: [Row] = []
-        for s in sessions where s.status == .working && claimed.insert(s.id).inserted {
+        // A session that sent nothing for the Done window (Esc or a crash sends no Stop) is not counted as running.
+        for s in sessions where s.status == .working && now.timeIntervalSince(s.updatedAt) <= workingTTL && claimed.insert(s.id).inserted {
             working.append(row(s.id, .working, cwd: s.cwd, project: s.project, at: s.updatedAt, host: s.host, branch: s.branch,
                                detail: LiveGlance.line(for: s, now: now).text, button: false))
         }
@@ -109,10 +111,10 @@ public enum PanelSections {
         return RepoLabel(repo: l.repo)
     }
 
-    /// A generated name no one would choose: its last `-`/`_` part is 8+ hex characters mixing digits and letters
-    /// ("t3-3f9a6c1e-62fae7136250", "agent-a1b2c3d4e5f6"). Words like "deadbeef" or "release-2026" are not.
+    /// A generated name no one would choose: its last `-`/`_` part is 10+ hex characters mixing digits and letters
+    /// ("t3-3f9a6c1e-62fae7136250", "agent-a1b2c3d4e5f6"). Words like "deadbeef", "cafe1234" or "release-2026" are not.
     public static func isHashLike(_ name: String) -> Bool {
-        guard let last = name.split(whereSeparator: { $0 == "-" || $0 == "_" }).last, last.count >= 8 else { return false }
+        guard let last = name.split(whereSeparator: { $0 == "-" || $0 == "_" }).last, last.count >= 10 else { return false }
         let hex = Set("0123456789abcdefABCDEF")
         guard last.allSatisfy({ hex.contains($0) }) else { return false }
         return last.contains(where: \.isNumber) && last.contains(where: \.isLetter)

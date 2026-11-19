@@ -48,6 +48,7 @@ public enum RepoResolver {
                 let root = dir.lastPathComponent
                 if isDir.boolValue { // main checkout (a path-heuristic worktree tag survives when git cannot say otherwise)
                     if fb.worktree != nil, fb.repo == root { return fb }
+                    if PanelSections.isHashLike(root) { return fb } // a generated folder name is never the repo: stay with the fallback so the label cannot flip (#139)
                     return RepoLabel(repo: root)
                 }
                 guard let t = try? String(contentsOf: dot, encoding: .utf8),

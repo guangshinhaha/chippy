@@ -113,6 +113,14 @@ final class PanelSectionsTests: XCTestCase {
         XCTAssertEqual(rows(build(recent: old), .done).map(\.sessionId), ["fresh"])
     }
 
+    func testASessionThatWentSilentForTheDoneWindowIsNotCountedAsWorking() {
+        var ghost = session("g"); ghost.updatedAt = now.addingTimeInterval(-PanelSections.workingTTL - 1)
+        var fresh = session("f"); fresh.updatedAt = now.addingTimeInterval(-60)
+        let r = build(sessions: [ghost, fresh])
+        XCTAssertEqual(rows(r, .working).map(\.sessionId), ["f"])
+        XCTAssertEqual(r.header, "1 working")
+    }
+
     // MARK: one label style
 
     func testRowsCarryTheBranchWhateverSectionTheyAreIn() {
@@ -140,7 +148,7 @@ final class PanelSectionsTests: XCTestCase {
 
     func testHashLikeNames() {
         for n in ["62fae7136250", "t3-3f9a6c1e-62fae7136250", "agent-a1b2c3d4e5f6", "wt-0123456789ab"] { XCTAssertTrue(PanelSections.isHashLike(n), n) }
-        for n in ["chippy", "feature-login", "deadbeef", "release-2026", "orca", "my-app-v2", "abcdefabcdef", ""] { XCTAssertFalse(PanelSections.isHashLike(n), n) }
+        for n in ["chippy", "feature-login", "deadbeef", "cafe1234", "20240dec", "release-2026", "orca", "my-app-v2", "abcdefabcdef", ""] { XCTAssertFalse(PanelSections.isHashLike(n), n) }
     }
 
     // MARK: identity (#115)
@@ -151,6 +159,15 @@ final class PanelSectionsTests: XCTestCase {
         let before = book.identity(repo: RepoResolver.fallback(cwd: cwd).repo, resolved: false)
         let after = book.identity(repo: "chippy", resolved: true)
         XCTAssertEqual(before, after, "the hash folder is not the repo name, so the mark does not flip when git answers")
+    }
+
+    func testAHashNamedCheckoutKeepsTheSameLabelBeforeAndAfterGitAnswers() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("chippy-139-\(UUID().uuidString)")
+        let dir = base.appendingPathComponent("ci/a1b2c3d4e5f6")
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent(".git"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        XCTAssertEqual(RepoResolver.resolve(cwd: dir.path), RepoResolver.fallback(cwd: dir.path))
+        XCTAssertEqual(RepoResolver.resolve(cwd: dir.path).repo, "ci")
     }
 
     func testAnUnresolvedNameThatIsNotAHashStillResolvesToItself() {

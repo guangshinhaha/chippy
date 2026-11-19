@@ -1178,7 +1178,8 @@ struct PanelSectionsView: View {
                         .padding(.horizontal, 10).padding(.top, 2).accessibilityAddTraits(.isHeader)
                     ForEach(section.rows) { row in
                         PanelRowView(row: row, mark: model.identity(cwd: row.cwd, project: row.project), age: WaitingList.age(since: row.at, now: ctx.date),
-                                     review: { if let id = row.pendingId { model.activate(.pending(id)) } })
+                                     review: { if let id = row.pendingId { model.activate(.pending(id)) } },
+                                     handled: { row.kind == .terminal ? model.dismissTerminal(row.sessionId) : model.dismissDone(row.sessionId) })
                     }
                 }
             }
@@ -1192,8 +1193,12 @@ struct PanelRowView: View {
     let mark: SessionIdentity
     let age: String
     let review: () -> Void
+    /// Clears a terminal ask or an asking reply that was dealt with elsewhere; without it the count would stay up.
+    let handled: () -> Void
     @State private var hover = false
-    @State private var failed = false
+    @State private var failure: String?
+    @State private var busy = false
+    @State private var token = 0
 
     private var appName: String? {
         guard let pid = row.host?.pid, let app = NSRunningApplication(processIdentifier: pid), let n = app.localizedName, !n.isEmpty else { return nil }
@@ -1221,7 +1226,7 @@ struct PanelRowView: View {
     }
     /// "Approve Bash? · main · Orca · 2m": why it is here first, then where it lives.
     private var subtitle: String {
-        (failed ? ["Couldn't open \(appName ?? "the app")"] : [row.detail] + [row.branch, appName].compactMap { $0 } + [age]).joined(separator: " · ")
+        (failure.map { [$0] } ?? [row.detail] + [row.branch, appName].compactMap { $0 } + [age]).joined(separator: " · ")
     }
     private var spoken: String {
         "\(mark.spoken), \(row.label.repo)\(row.label.worktree.map { ", worktree \($0)" } ?? ""), \(subtitle)"
@@ -1232,11 +1237,11 @@ struct PanelRowView: View {
             Image(systemName: symbol).font(.caption).foregroundStyle(tint).frame(width: 18)
             VStack(alignment: .leading, spacing: 2) {
                 RepoTitle(repo: row.label.repo, worktree: row.label.worktree, mark: mark)
-                Text(subtitle).font(.caption2).foregroundStyle(failed ? Color.red.opacity(0.9) : tint.opacity(row.kind == .finished ? 1 : 0.95)).lineLimit(1).truncationMode(.tail)
+                Text(subtitle).font(.caption2).foregroundStyle(failure != nil ? Color.red.opacity(0.9) : tint.opacity(row.kind == .finished ? 1 : 0.95)).lineLimit(1).truncationMode(.tail)
             }
             .layoutPriority(1)
             Spacer(minLength: 6)
-            if row.hasButton { button.fixedSize().layoutPriority(2) }
+            if row.hasButton { HStack(spacing: 6) { button; handledButton }.fixedSize().layoutPriority(2) }
         }
         .padding(.horizontal, 10).frame(minHeight: row.hasButton ? WaitingList.needsRowHeight : 34)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(hover && !row.hasButton && canOpen ? 0.1 : 0)))
@@ -1245,15 +1250,22 @@ struct PanelRowView: View {
         .onTapGesture { if !row.hasButton { openApp() } }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(spoken)
-        .accessibilityAction(named: row.hasButton ? "Open" : "Open \(appName ?? "terminal")") { if row.hasButton { primary() } else { openApp() } }
+        .accessibilityAction(named: "Open \(appName ?? "terminal")") { if canOpen || row.kind == .approval || row.kind == .question { primary() } }
+        .accessibilityActions { if row.hasButton && row.kind != .approval && row.kind != .question { Button("Handled", action: handled) } }
+    }
+
+    @ViewBuilder private var handledButton: some View {
+        if row.kind == .terminal || row.kind == .asksYou {
+            ChipButton(title: "Handled", kind: .quiet, action: handled).accessibilityLabel("Handled, \(row.label.repo)")
+        }
     }
 
     @ViewBuilder private var button: some View {
         switch row.kind {
         case .approval, .question:
-            ChipButton(title: row.kind == .question ? "Answer" : "Review", kind: .primary, action: review).accessibilityLabel("\(row.kind == .question ? "Answer" : "Review"), \(spoken)")
+            ChipButton(title: row.kind == .question ? "Answer" : "Review", kind: .primary, action: review).accessibilityLabel("\(row.kind == .question ? "Answer" : "Review"), \(row.label.repo)")
         default:
-            if canOpen { OpenTerminalButton(host: row.host, kind: .primary).accessibilityLabel("Open \(appName ?? "terminal"), \(spoken)") }
+            if canOpen { OpenTerminalButton(host: row.host, kind: .primary).accessibilityLabel("Open \(appName ?? "terminal"), \(row.label.repo)") }
         }
     }
 
@@ -1261,11 +1273,14 @@ struct PanelRowView: View {
 
     /// A tap on a row without a button opens its app; a failure shows in the row for a few seconds instead of doing nothing.
     private func openApp() {
-        guard canOpen else { return }
+        guard canOpen, !busy else { return }
+        busy = true; failure = nil; token += 1
+        let mine = token
         TerminalJump.open(row.host) { v in
+            busy = false
             guard v != .landed, v != .landedUnverified else { return }
-            failed = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { failed = false }
+            failure = v == .offSpace ? "\(appName ?? "The app") is on another Space" : "Couldn't open \(appName ?? "the app")"
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { if token == mine { failure = nil } }
         }
     }
 }

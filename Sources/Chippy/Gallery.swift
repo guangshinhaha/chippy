@@ -155,9 +155,7 @@ enum Gallery {
         writeNotchPNG(model, m, size: sz, to: path, note: "state=\(model.state) header=\(model.headerTitle)")
     }
 
-    /// `Chippy --render-glance out.png` (#90): the open panel with one line per session. The inputs below carry a path, a command
-    /// and an unknown MCP tool on purpose: none of that may appear, only Editing / Running / Searching / Working.
-        /// `Chippy --render-panel out.png`: the open rest panel (#139) with one reply that asks, two working sessions (one in a
+    /// `Chippy --render-panel out.png`: the open rest panel (#139) with one reply that asks, two working sessions (one in a
     /// hash-named worktree) and two done. Sample text only.
     @MainActor
     static func renderPanel(to path: String) {
@@ -185,7 +183,9 @@ enum Gallery {
         writePNG(r, to: path, note: "header=\(res.header) rows=\(res.sections.map { "\($0.title.rawValue):\($0.rows.map { $0.label.text })" })")
     }
 
-@MainActor
+    /// `Chippy --render-glance out.png` (#90): the open panel with one line per session. The inputs below carry a path, a command
+    /// and an unknown MCP tool on purpose: none of that may appear, only Editing / Running / Searching / Working.
+    @MainActor
     static func renderGlance(to path: String) {
         let log = tempLog()
         defer { try? FileManager.default.removeItem(at: log) }
