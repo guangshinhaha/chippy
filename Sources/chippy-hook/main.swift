@@ -33,12 +33,9 @@ func relay(_ args: [String]) -> Never {
         if h.pid > 0 { d["chippy_host_pid"] = Int(h.pid) }
         if let b = h.bundle { d["chippy_host_bundle"] = b }
         if let t = h.tty { d["chippy_tty"] = t }
-        obj = d
-    }
-    // T3 Code sets T3CODE_THREAD_ID for the claude process it spawns: forward it (validated) so "Open T3 Code" can open that thread.
-    if var d = obj as? [String: Any], ["SessionStart", "UserPromptSubmit", "Stop"].contains(d["hook_event_name"] as? String ?? ""),
-       let t = T3Link.validId(ProcessInfo.processInfo.environment["T3CODE_THREAD_ID"]) {
-        d["chippy_t3_thread"] = t
+        // Only the env vars the recognised host's adapter names, values validated (#140): e.g. T3 Code's thread id.
+        let hostEnv = HostAdapters.forwardedEnv(bundle: h.bundle, environment: ProcessInfo.processInfo.environment)
+        if !hostEnv.isEmpty { d["chippy_env"] = hostEnv }
         obj = d
     }
     // A question card shows what Claude said just before asking. Local read of the transcript tail; any failure adds nothing.

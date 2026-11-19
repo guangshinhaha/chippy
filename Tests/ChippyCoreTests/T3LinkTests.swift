@@ -53,10 +53,10 @@ final class T3LinkTests: XCTestCase {
     // MARK: only T3 Code, only with a thread
 
     func testOnlyT3CodeWithAThreadIdGetsALink() {
-        let t3 = HostInfo(pid: 1, bundle: "com.t3tools.t3code", tty: nil, threadId: thread)
+        let t3 = HostInfo(pid: 1, bundle: "com.t3tools.t3code", tty: nil, env: ["T3CODE_THREAD_ID": thread])
         XCTAssertEqual(T3Link.threadId(for: t3), thread)
         XCTAssertNil(T3Link.threadId(for: HostInfo(pid: 1, bundle: "com.t3tools.t3code", tty: nil)))
-        XCTAssertNil(T3Link.threadId(for: HostInfo(pid: 1, bundle: "com.apple.Terminal", tty: "ttys001", threadId: thread)))
+        XCTAssertNil(T3Link.threadId(for: HostInfo(pid: 1, bundle: "com.apple.Terminal", tty: "ttys001", env: ["T3CODE_THREAD_ID": thread])))
         XCTAssertNil(T3Link.threadId(for: nil))
     }
 }
@@ -68,16 +68,16 @@ final class T3ThreadCarryTests: XCTestCase {
     func ev(_ name: String, thread t: Any? = nil) -> HookPayload {
         var o: [String: Any] = ["session_id": "s", "cwd": "/w/p", "hook_event_name": name, "chippy_branch": "b",
                                 "chippy_host_pid": 4242, "chippy_host_bundle": "com.t3tools.t3code"]
-        if let t { o["chippy_t3_thread"] = t }
+        if let t { o["chippy_env"] = ["T3CODE_THREAD_ID": t] }
         return payload(o)
     }
 
-    func testPayloadParsesAValidThreadId() { XCTAssertEqual(ev("Stop", thread: thread).host?.threadId, thread) }
+    func testPayloadParsesAValidThreadId() { XCTAssertEqual(ev("Stop", thread: thread).host?.env["T3CODE_THREAD_ID"], thread) }
 
     func testPayloadDropsMissingOrMalformedThreadId() {
-        XCTAssertNil(ev("Stop").host?.threadId)
-        XCTAssertNil(ev("Stop", thread: "a/../b").host?.threadId)
-        XCTAssertNil(ev("Stop", thread: 42).host?.threadId)
+        XCTAssertNil(ev("Stop").host?.env["T3CODE_THREAD_ID"])
+        XCTAssertNil(ev("Stop", thread: "a/../b").host?.env["T3CODE_THREAD_ID"])
+        XCTAssertNil(ev("Stop", thread: 42).host?.env["T3CODE_THREAD_ID"])
         XCTAssertNotNil(ev("Stop", thread: "a/../b").host, "the host itself is still known")
     }
 
@@ -86,7 +86,7 @@ final class T3ThreadCarryTests: XCTestCase {
         m.apply(ev("UserPromptSubmit", thread: thread))
         m.apply(payload(["session_id": "s", "cwd": "/w/p", "hook_event_name": "PostToolUse", "chippy_branch": "b"]))
         m.apply(payload(["session_id": "s", "cwd": "/w/p", "hook_event_name": "Stop", "chippy_branch": "b"]))
-        XCTAssertEqual(m.doneItems[0].host?.threadId, thread)
-        XCTAssertEqual(RecentItem(m.doneItems[0]).host?.threadId, thread)
+        XCTAssertEqual(m.doneItems[0].host?.env["T3CODE_THREAD_ID"], thread)
+        XCTAssertEqual(RecentItem(m.doneItems[0]).host?.env["T3CODE_THREAD_ID"], thread)
     }
 }
