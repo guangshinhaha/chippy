@@ -123,13 +123,27 @@ enum TerminalJump {
     /// Fail-soft: with no thread id or no readable environment id the app is simply left in front, as before.
     static func openT3Thread(_ host: HostInfo) {
         guard let thread = T3Link.threadId(for: host) else { return }
+        let appURL = host.pid.flatMap { NSRunningApplication(processIdentifier: $0)?.bundleURL }
         let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(T3Link.environmentIdPath)
-        let env = T3Link.environmentId(fileContents: try? String(contentsOf: file, encoding: .utf8))
-        guard let url = T3Link.url(environmentId: env, threadId: thread) else {
-            NSLog("Chippy: T3 thread link not built (environment id unreadable), app left in front")
-            return
+        // The id file is tiny: read at most 256 bytes, off the main thread, so a swapped-in FIFO or huge file cannot freeze the notch.
+        DispatchQueue.global(qos: .userInitiated).async {
+            let raw = (try? FileHandle(forReadingFrom: file)).flatMap { h -> Data? in
+                defer { try? h.close() }
+                return try? h.read(upToCount: 256)
+            }
+            let env = T3Link.environmentId(fileContents: raw.flatMap { String(data: $0, encoding: .utf8) })
+            guard let url = T3Link.url(environmentId: env, threadId: thread) else {
+                NSLog("Chippy: T3 thread link not built (environment id unreadable), app left in front")
+                return
+            }
+            DispatchQueue.main.async {
+                // Hand the link to the running T3 app itself, so a second T3 build cannot take it; log a refusal.
+                guard let appURL else { NSWorkspace.shared.open(url); return }
+                NSWorkspace.shared.open([url], withApplicationAt: appURL, configuration: NSWorkspace.OpenConfiguration()) { _, err in
+                    if let err { NSLog("Chippy: T3 thread link was not opened: %@", String(describing: err)) }
+                }
+            }
         }
-        NSWorkspace.shared.open(url)
     }
 
     /// Orca: after it is frontmost, ask its CLI (from the running app's own bundle) to select the session's workspace
