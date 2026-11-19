@@ -16,32 +16,43 @@ public enum HostProcess {
         p.terminationHandler = { _ in exited.signal() }
         guard (try? p.run()) != nil else { return .failed("could not run the host CLI") }
 
-        // Collect what the CLI writes as it writes it; the answer is a line of JSON, so a cap keeps a runaway one small.
-        let lock = NSLock()
+        // One reader, this thread: poll the pipe in short slices and check for exit between them. Nothing else touches the fd,
+        // so no chunk can be split, lost or read twice. Non-blocking, so a child holding the pipe open cannot park us.
+        let fd = out.fileHandleForReading.fileDescriptor
+        _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
         var data = Data()
-        let reader = out.fileHandleForReading
-        reader.readabilityHandler = { h in
-            let chunk = h.availableData
-            lock.lock(); if data.count < 65_536 { data.append(chunk) }; lock.unlock()
+        var buf = [UInt8](repeating: 0, count: 4096)
+        var eof = false
+        /// Reads what is there right now. Returns after the pipe is empty (or at EOF).
+        func drain() {
+            while !eof {
+                let n = read(fd, &buf, buf.count)
+                if n > 0 { if data.count < 65_536 { data.append(contentsOf: buf[0..<n]) } }
+                else if n == 0 { eof = true }
+                else if errno != EINTR { return } // EAGAIN: nothing more right now
+            }
         }
-        let timedOut = exited.wait(timeout: .now() + timeout) == .timedOut
+        let deadline = Date().addingTimeInterval(timeout)
+        var timedOut = false
+        while true {
+            if exited.wait(timeout: .now()) == .success { break }
+            let left = deadline.timeIntervalSinceNow
+            if left <= 0 { timedOut = true; break }
+            if eof { // every writer closed: nothing to poll, just wait for the exit
+                if exited.wait(timeout: .now() + left) == .success { break }
+                timedOut = true; break
+            }
+            var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+            _ = poll(&pfd, 1, Int32(min(left, 0.05) * 1000))
+            drain()
+        }
         if timedOut {
             p.terminate()
             if exited.wait(timeout: .now() + 1) == .timedOut { kill(p.processIdentifier, SIGKILL); _ = exited.wait(timeout: .now() + 1) }
+            return .failed("timed out")
         }
-        reader.readabilityHandler = nil
-        if timedOut { return .failed("timed out") }
-        // Whatever the process wrote before it exited may not have been delivered yet: take it without waiting for EOF.
-        let fd = reader.fileDescriptor
-        _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
-        var buf = [UInt8](repeating: 0, count: 4096)
-        while true {
-            let n = read(fd, &buf, buf.count)
-            if n <= 0 { break }
-            lock.lock(); if data.count < 65_536 { data.append(contentsOf: buf[0..<n]) }; lock.unlock()
-        }
-        lock.lock(); let answer = data; lock.unlock()
+        drain() // what it wrote just before it exited
         guard p.terminationReason == .exit else { return .failed("exit \(p.terminationStatus)") }
-        return OrcaCLI.interpret(exitStatus: p.terminationStatus, stdout: answer)
+        return OrcaCLI.interpret(exitStatus: p.terminationStatus, stdout: data)
     }
 }

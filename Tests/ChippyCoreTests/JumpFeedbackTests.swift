@@ -49,6 +49,12 @@ final class JumpFeedbackTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(t0), 6)
     }
 
+    func testAnAnswerWrittenInPiecesJustBeforeExitIsNeverSplitOrLost() {
+        for i in 0..<100 {
+            XCTAssertEqual(HostProcess.run(sh, ["-c", #"printf '{"ok":'; printf 'true}'"#], timeout: 5), .selected, "run \(i)")
+        }
+    }
+
     func testExitCodeAndUnreadableAnswerStillMapThroughInterpret() {
         XCTAssertEqual(HostProcess.run(sh, ["-c", "exit 3"], timeout: 5), .failed("exit 3"))
         XCTAssertEqual(HostProcess.run(sh, ["-c", "echo not-json"], timeout: 5), .unconfirmed)
