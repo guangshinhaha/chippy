@@ -21,6 +21,15 @@ public enum OrcaCLI {
         case unconfirmed
         /// No CLI, it did not run, timed out, exited non-zero, or answered `ok: false`. The reason is for the log only.
         case failed(String)
+
+        /// The same answer in the shared step vocabulary.
+        public var step: JumpPlan.StepResult {
+            switch self {
+            case .selected: return .done
+            case .unconfirmed: return .unconfirmed
+            case .failed(let why): return .failed(why)
+            }
+        }
     }
 
     public static func interpret(exitStatus: Int32, stdout: Data) -> Select {
@@ -30,14 +39,8 @@ public enum OrcaCLI {
         return ok ? .selected : .failed("ok:false")
     }
 
-    /// What the jump reports once the workspace select has been tried. App-level failures pass through untouched;
-    /// a failed select is never "landed".
+    /// What the jump reports once the workspace select has been tried: the one shared verdict path.
     public static func finalVerdict(_ app: ActivationOutcome.Verdict, select: Select) -> ActivationOutcome.Verdict {
-        guard app == .landed || app == .landedUnverified else { return app }
-        switch select {
-        case .selected: return app
-        case .unconfirmed: return .landedUnverified
-        case .failed: return .workspaceNotSelected
-        }
+        JumpPlan.finalVerdict(app, step: select.step)
     }
 }

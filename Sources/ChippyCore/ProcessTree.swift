@@ -7,9 +7,10 @@ public struct HostInfo: Equatable {
     public let bundle: String?
     public let tty: String?   // e.g. "ttys004"
     public var cwd: String? = nil   // the session's working directory, to select its workspace in hosts like Orca
-    public var threadId: String? = nil   // T3 Code's id for this session's thread (from T3CODE_THREAD_ID), to open that exact thread
-    public init(pid: Int32?, bundle: String?, tty: String?, cwd: String? = nil, threadId: String? = nil) {
-        self.pid = pid; self.bundle = bundle; self.tty = tty; self.cwd = cwd; self.threadId = threadId
+    /// Env vars the hook forwarded for this host, only the names its `HostAdapter` lists (#140). A new host adds names, not fields.
+    public var env: [String: String] = [:]
+    public init(pid: Int32?, bundle: String?, tty: String?, cwd: String? = nil, env: [String: String] = [:]) {
+        self.pid = pid; self.bundle = bundle; self.tty = tty; self.cwd = cwd; self.env = env
     }
     /// Something to jump to: a known host app.
     public var hasHost: Bool { pid != nil && bundle != nil }

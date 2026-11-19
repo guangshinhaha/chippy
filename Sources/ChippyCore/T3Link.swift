@@ -6,6 +6,9 @@ import Foundation
 public enum T3Link {
     public static let bundleId = "com.t3tools.t3code"
 
+    /// The env var T3 sets for the `claude` process it spawns.
+    public static let threadEnvName = "T3CODE_THREAD_ID"
+
     /// Where T3 keeps its environment id, relative to the home folder.
     public static let environmentIdPath = ".t3/userdata/environment-id"
 
@@ -28,6 +31,6 @@ public enum T3Link {
     /// The thread to open for this host: only T3 Code, and only when the relay saw a thread id.
     public static func threadId(for host: HostInfo?) -> String? {
         guard let h = host, h.bundle == bundleId else { return nil }
-        return validId(h.threadId)
+        return validId(h.env[threadEnvName])
     }
 }

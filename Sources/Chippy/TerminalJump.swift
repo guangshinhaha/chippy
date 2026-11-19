@@ -11,51 +11,6 @@ enum TerminalJump {
         return app.bundleIdentifier == h.bundle
     }
 
-    /// Only plain tty names reach the script text.
-    static func validTTY(_ s: String?) -> String? {
-        guard let s, s.range(of: "^ttys[0-9]{1,5}\\z", options: .regularExpression) != nil else { return nil }
-        return s
-    }
-
-    /// AppleScript that selects the tab/session on `tty`; nil for apps without a reliable scripting path.
-    static func script(bundle: String, tty: String) -> String? {
-        guard let dev = validTTY(tty) else { return nil }
-        switch bundle {
-        case "com.apple.Terminal":
-            return """
-            tell application id "com.apple.Terminal"
-              repeat with w in windows
-                repeat with t in tabs of w
-                  if tty of t is "/dev/\(dev)" then
-                    set selected of t to true
-                    set index of w to 1
-                    return
-                  end if
-                end repeat
-              end repeat
-            end tell
-            """
-        case "com.googlecode.iterm2":
-            return """
-            tell application id "com.googlecode.iterm2"
-              repeat with w in windows
-                repeat with t in tabs of w
-                  repeat with s in sessions of t
-                    if tty of s is "/dev/\(dev)" then
-                      select w
-                      select t
-                      select s
-                      return
-                    end if
-                  end repeat
-                end repeat
-              end repeat
-            end tell
-            """
-        default: return nil
-        }
-    }
-
     /// Brings `pid`'s app forward and reports whether it ended up frontmost.
     /// Plain `activate` can be a no-op (app hidden, windows minimised, or focus not yielded to it), so:
     /// unhide, yield activation to the target (macOS 14+), activate, then check; if still not frontmost,
@@ -119,50 +74,31 @@ enum TerminalJump {
         }
     }
 
-    /// T3 Code: after it is frontmost, open this session's own thread via `t3code://threads/<env>/<thread>` (#138).
-    /// Fail-soft: with no thread id or no readable environment id the app is simply left in front, as before.
-    static func openT3Thread(_ host: HostInfo) {
-        guard let thread = T3Link.threadId(for: host) else { return }
-        let appURL = host.pid.flatMap { NSRunningApplication(processIdentifier: $0)?.bundleURL }
-        let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(T3Link.environmentIdPath)
-        // The id file is tiny: read at most 256 bytes, off the main thread, so a swapped-in FIFO or huge file cannot freeze the notch.
-        DispatchQueue.global(qos: .userInitiated).async {
-            let raw = (try? FileHandle(forReadingFrom: file)).flatMap { h -> Data? in
-                defer { try? h.close() }
-                return try? h.read(upToCount: 256)
-            }
-            let env = T3Link.environmentId(fileContents: raw.flatMap { String(data: $0, encoding: .utf8) })
-            guard let url = T3Link.url(environmentId: env, threadId: thread) else {
-                NSLog("Chippy: T3 thread link not built (environment id unreadable), app left in front")
-                return
-            }
-            DispatchQueue.main.async {
-                // Hand the link to the running T3 app itself, so a second T3 build cannot take it; log a refusal.
-                guard let appURL else { NSWorkspace.shared.open(url); return }
-                NSWorkspace.shared.open([url], withApplicationAt: appURL, configuration: NSWorkspace.OpenConfiguration()) { _, err in
-                    if let err { NSLog("Chippy: T3 thread link was not opened: %@", String(describing: err)) }
-                }
-            }
+    /// Opens a link in the host app itself (not whichever app owns the scheme), so a second build cannot take it.
+    /// `completion` runs on the main queue with what LaunchServices answered.
+    static func openURL(_ url: URL, in appURL: URL?, completion: @escaping (JumpPlan.StepResult) -> Void) {
+        guard let appURL else { completion(.failed("host app bundle not found")); return }
+        NSWorkspace.shared.open([url], withApplicationAt: appURL, configuration: NSWorkspace.OpenConfiguration()) { _, err in
+            DispatchQueue.main.async { completion(err.map { .failed(String(describing: $0)) } ?? .done) }
         }
     }
 
-    /// Orca: after it is frontmost, ask its CLI (from the running app's own bundle) to select the session's workspace
-    /// (it has no AppleScript). Reports what the CLI answered; `completion` runs on the main queue.
-    static func selectOrcaWorkspace(_ cwd: String, appBundleURL: URL?, completion: @escaping (OrcaCLI.Select) -> Void) {
+    /// Runs a host's CLI (from the running app's own bundle) as the exact-target step and reports what it answered.
+    /// Reads the answer with `OrcaCLI.interpret` (exit code plus an `ok` flag). `completion` runs on the main queue.
+    static func runCLI(_ cli: URL, arguments: [String], completion: @escaping (JumpPlan.StepResult) -> Void) {
         func finish(_ s: OrcaCLI.Select) {
-            if case .failed(let why) = s { NSLog("Chippy: Orca workspace select failed (%@)", why) }
-            if s == .unconfirmed { NSLog("Chippy: Orca workspace select gave no readable answer, judged by exit code only") }
-            DispatchQueue.main.async { completion(s) }
+            if case .failed(let why) = s { NSLog("Chippy: host CLI step failed (%@)", why) }
+            if s == .unconfirmed { NSLog("Chippy: host CLI step gave no readable answer, judged by exit code only") }
+            DispatchQueue.main.async { completion(s.step) }
         }
-        guard let cli = OrcaCLI.cliURL(appBundleURL: appBundleURL),
-              FileManager.default.isExecutableFile(atPath: cli.path) else { finish(.failed("orca CLI not found in the running app")); return }
+        guard FileManager.default.isExecutableFile(atPath: cli.path) else { finish(.failed("host CLI not found in the running app")); return }
         DispatchQueue.global(qos: .userInitiated).async {
             let p = Process()
             let out = Pipe()
             p.executableURL = cli
-            p.arguments = OrcaCLI.arguments(cwd: cwd)
+            p.arguments = arguments
             p.standardOutput = out; p.standardError = FileHandle.nullDevice
-            guard (try? p.run()) != nil else { finish(.failed("could not run the orca CLI")); return }
+            guard (try? p.run()) != nil else { finish(.failed("could not run the host CLI")); return }
             // A hung CLI must not strand the jump: give up after 5s (the read below then ends when it dies).
             DispatchQueue.global().asyncAfter(deadline: .now() + 5) { if p.isRunning { p.terminate() } }
             let data = out.fileHandleForReading.readDataToEndOfFile()
@@ -172,21 +108,49 @@ enum TerminalJump {
         }
     }
 
+    /// Reads a small file under the home folder: at most 256 bytes, so a swapped-in FIFO or huge file cannot freeze anything.
+    /// Call off the main thread.
+    static func readHomeFile(_ relative: String) -> String? {
+        let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(relative)
+        guard let h = try? FileHandle(forReadingFrom: file) else { return nil }
+        defer { try? h.close() }
+        return (try? h.read(upToCount: 256)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
     /// `.landed` when the host app is frontmost with a window on the visible Space (polled for up to ~3s);
     /// `.offSpace` when it is frontmost but its windows stayed on another Space (no reopen is attempted);
-    /// `.notFrontmost` when it could not be brought forward. Known limit: we cannot
-    /// tell which of the app's windows is the session's, only that one is visible.
+    /// `.notFrontmost` when it could not be brought forward; `.workspaceNotSelected` when the app came forward but
+    /// the host's own exact-target step failed. Known limit: we cannot tell which of the app's windows is the session's,
+    /// only that one is visible.
+    ///
+    /// What is exact per host is not decided here: `HostAdapters.plan` says (activate only, a tty script, a CLI, or a link)
+    /// and this runs it.
     static func open(_ host: HostInfo?, completion: @escaping (ActivationOutcome.Verdict) -> Void = { _ in }) {
-        guard available(host), let h = host, let pid = h.pid, let bundle = h.bundle else { completion(.notFrontmost); return }
+        guard available(host), let h = host, let pid = h.pid else { completion(.notFrontmost); return }
+        let appURL = NSRunningApplication(processIdentifier: pid)?.bundleURL
+        // The plan reads a small file for some hosts, so it is built off the main thread.
+        DispatchQueue.global(qos: .userInitiated).async {
+            let plan = HostAdapters.plan(for: h, context: JumpContext(appBundleURL: appURL, readHomeFile: readHomeFile))
+            DispatchQueue.main.async { run(plan, pid: pid, appURL: appURL, completion: completion) }
+        }
+    }
+
+    private static func run(_ plan: JumpPlan, pid: Int32, appURL: URL?, completion: @escaping (ActivationOutcome.Verdict) -> Void) {
         let activate = {
             bringForward(pid: pid) { v in
-                if (v == .landed || v == .landedUnverified), bundle == T3Link.bundleId { openT3Thread(h) }
-                guard v == .landed || v == .landedUnverified, bundle == OrcaCLI.bundleId, let cwd = h.cwd else { completion(v); return }
-                let url = NSRunningApplication(processIdentifier: pid)?.bundleURL
-                selectOrcaWorkspace(cwd, appBundleURL: url) { completion(OrcaCLI.finalVerdict(v, select: $0)) }
+                guard v == .landed || v == .landedUnverified else { completion(v); return }
+                func step(_ r: JumpPlan.StepResult) { completion(JumpPlan.finalVerdict(v, step: r)) }
+                switch plan {
+                case .activate, .appleScript: completion(v)
+                case .cli(let exe, let args): runCLI(exe, arguments: args, completion: step)
+                case .openURL(let url): openURL(url, in: appURL, completion: step)
+                case .exactTargetUnavailable(let why):
+                    NSLog("Chippy: exact target not built (%@), app left in front", why)
+                    step(.failed(why))
+                }
             }
         }
-        guard let src = script(bundle: bundle, tty: h.tty ?? "") else { activate(); return }
+        guard case .appleScript(let src) = plan else { activate(); return }
         // osascript off the main thread: the first run may sit on the Automation permission prompt.
         DispatchQueue.global(qos: .userInitiated).async {
             let p = Process()
