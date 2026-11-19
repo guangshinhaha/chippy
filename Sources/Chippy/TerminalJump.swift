@@ -79,7 +79,9 @@ enum TerminalJump {
     static func openURL(_ url: URL, in appURL: URL?, completion: @escaping (JumpPlan.StepResult) -> Void) {
         guard let appURL else { completion(.failed("host app bundle not found")); return }
         NSWorkspace.shared.open([url], withApplicationAt: appURL, configuration: NSWorkspace.OpenConfiguration()) { _, err in
-            DispatchQueue.main.async { completion(err.map { .failed(String(describing: $0)) } ?? .done) }
+            DispatchQueue.main.async {
+                completion(err.map { e in let n = e as NSError; return .failed(JumpPlan.reason(errorDomain: n.domain, code: n.code)) } ?? .done)
+            }
         }
     }
 
@@ -87,7 +89,6 @@ enum TerminalJump {
     /// Reads the answer with `OrcaCLI.interpret` (exit code plus an `ok` flag). `completion` runs on the main queue.
     static func runCLI(_ cli: URL, arguments: [String], completion: @escaping (JumpPlan.StepResult) -> Void) {
         func finish(_ s: OrcaCLI.Select) {
-            if case .failed(let why) = s { NSLog("Chippy: host CLI step failed (%@)", why) }
             if s == .unconfirmed { NSLog("Chippy: host CLI step gave no readable answer, judged by exit code only") }
             DispatchQueue.main.async { completion(s.step) }
         }
@@ -139,14 +140,16 @@ enum TerminalJump {
         let activate = {
             bringForward(pid: pid) { v in
                 guard v == .landed || v == .landedUnverified else { completion(v); return }
-                func step(_ r: JumpPlan.StepResult) { completion(JumpPlan.finalVerdict(v, step: r)) }
+                // One place logs every failed exact-target step; each reason is a fixed string or an error domain and code, never an id.
+                func step(_ r: JumpPlan.StepResult) {
+                    if case .failed(let why) = r { NSLog("Chippy: exact-target step failed (%@), app left in front", why) }
+                    completion(JumpPlan.finalVerdict(v, step: r))
+                }
                 switch plan {
                 case .activate, .appleScript: completion(v)
                 case .cli(let exe, let args): runCLI(exe, arguments: args, completion: step)
                 case .openURL(let url): openURL(url, in: appURL, completion: step)
-                case .exactTargetUnavailable(let why):
-                    NSLog("Chippy: exact target not built (%@), app left in front", why)
-                    step(.failed(why))
+                case .exactTargetUnavailable(let why): step(.failed(why))
                 }
             }
         }

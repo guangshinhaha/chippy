@@ -22,6 +22,10 @@ public enum JumpPlan: Equatable {
         case failed(String)
     }
 
+    /// A log-safe reason for a step an OS error stopped: its domain and code only. The error's own description can carry
+    /// the URL, which holds thread and environment ids.
+    public static func reason(errorDomain: String, code: Int) -> String { "\(errorDomain) \(code)" }
+
     /// What the jump reports once the exact-target step has been tried. One path for every host: app-level failures pass
     /// through untouched, and a failed step is never "landed".
     public static func finalVerdict(_ app: ActivationOutcome.Verdict, step: StepResult) -> ActivationOutcome.Verdict {
