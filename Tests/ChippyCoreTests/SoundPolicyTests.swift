@@ -55,6 +55,32 @@ final class SoundPolicyTests: XCTestCase {
         XCTAssertFalse(SoundPolicy.isHostFrontmost(host: nil, frontmostPid: 3, frontmostBundle: "com.a"))
     }
 
+    // MARK: T3 Code (#143)
+    // Observed on a real T3 session: the hook sends pid 84876 and bundle com.t3tools.t3code (the one Foreground app);
+    // T3's helpers are UIElements with bundle com.t3tools.t3code.helper and never go frontmost.
+
+    private let t3Host = HostInfo(pid: 84876, bundle: T3Link.bundleId, tty: nil)
+
+    func testSoundsAreMutedWhileT3IsFrontmost() {
+        let frontmost = SoundPolicy.isHostFrontmost(host: t3Host, frontmostPid: 84876, frontmostBundle: T3Link.bundleId)
+        XCTAssertTrue(frontmost)
+        for kind in [SoundKind.needsYou, .done] {
+            XCTAssertFalse(SoundPolicy.shouldPlay(kind: kind, enabled: true, hostFrontmost: frontmost, quiet: false, lastPlayed: nil, now: Date()))
+        }
+    }
+
+    func testSoundsPlayWhenAnotherAppIsFrontmostOverT3() {
+        let frontmost = SoundPolicy.isHostFrontmost(host: t3Host, frontmostPid: 59321, frontmostBundle: "com.apple.iphonesimulator")
+        XCTAssertFalse(frontmost)
+        for kind in [SoundKind.needsYou, .done] {
+            XCTAssertTrue(SoundPolicy.shouldPlay(kind: kind, enabled: true, hostFrontmost: frontmost, quiet: false, lastPlayed: nil, now: Date()))
+        }
+    }
+
+    func testARestartedT3StillMutesByBundle() {
+        XCTAssertTrue(SoundPolicy.isHostFrontmost(host: t3Host, frontmostPid: 90001, frontmostBundle: T3Link.bundleId, pidIsRunningApp: false))
+    }
+
     // MARK: model hook
 
     private func ev(_ e: String, session: String = "s1") -> HookPayload {
