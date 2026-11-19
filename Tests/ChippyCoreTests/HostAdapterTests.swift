@@ -141,4 +141,19 @@ final class HostAdapterTests: XCTestCase {
         XCTAssertEqual(HostAdapters.plan(for: h, context: ctx(), in: table), .openURL(URL(string: "stub://open/s-1")!))
         XCTAssertEqual(HostAdapters.plan(for: host(t3), context: ctx(), in: table), .activate, "hosts outside the table fall back to activate")
     }
+
+    // MARK: logs never carry ids (#142)
+
+    func testErrorReasonNamesDomainAndCodeOnly() {
+        XCTAssertEqual(JumpPlan.reason(errorDomain: "NSOSStatusErrorDomain", code: -10814), "NSOSStatusErrorDomain -10814")
+    }
+
+    func testEveryPlanReasonIsFreeOfThreadAndEnvironmentIds() {
+        // The reasons a plan can carry are fixed strings; none is built from a value the session supplied.
+        let h = host(t3, env: ["T3CODE_THREAD_ID": thread])
+        for files in [[String: String](), [T3Link.environmentIdPath: "bad id!"]] {
+            guard case .exactTargetUnavailable(let why) = HostAdapters.plan(for: h, context: ctx(files: files)) else { return XCTFail() }
+            XCTAssertFalse(why.contains(thread)); XCTAssertFalse(why.contains(env))
+        }
+    }
 }
