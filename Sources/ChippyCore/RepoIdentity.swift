@@ -21,6 +21,11 @@ public enum RepoResolver {
             if !repo.isEmpty { return RepoLabel(repo: repo, worktree: tail) }
         }
         let name = (cwd as NSString).lastPathComponent
+        // A generated folder (a T3 or agent worktree) is not the repo: its parent folder names the repo (#139).
+        if !cwd.isEmpty, PanelSections.isHashLike(name) {
+            let parent = ((cwd as NSString).deletingLastPathComponent as NSString).lastPathComponent
+            if !parent.isEmpty, parent != "/" { return RepoLabel(repo: parent) }
+        }
         if !cwd.isEmpty, !name.isEmpty, name != "/" { return RepoLabel(repo: name) }
         return RepoLabel(repo: project.isEmpty ? "unknown" : project)
     }
@@ -43,6 +48,7 @@ public enum RepoResolver {
                 let root = dir.lastPathComponent
                 if isDir.boolValue { // main checkout (a path-heuristic worktree tag survives when git cannot say otherwise)
                     if fb.worktree != nil, fb.repo == root { return fb }
+                    if PanelSections.isHashLike(root) { return fb } // a generated folder name is never the repo: stay with the fallback so the label cannot flip (#139)
                     return RepoLabel(repo: root)
                 }
                 guard let t = try? String(contentsOf: dot, encoding: .utf8),

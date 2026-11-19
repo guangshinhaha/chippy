@@ -104,11 +104,11 @@ final class HeaderTitleTests: XCTestCase {
         XCTAssertEqual(m.headerTitle, "Finished")
     }
 
-    func testRestOpenWithNoChipsSaysRecent() {
+    func testRestOpenWithNothingGoingOnSaysAllQuiet() {
         let m = model()
         m.toggleOpen()
         XCTAssertTrue(m.restOpen)
-        XCTAssertEqual(m.headerTitle, "Recent")
+        XCTAssertEqual(m.headerTitle, "All quiet")
     }
 
     func testRestOpenWithTerminalChipFollowsTheChip() {
@@ -116,6 +116,6 @@ final class HeaderTitleTests: XCTestCase {
         m.toggleOpen()                                   // panel opened from rest
         terminalChip(m, sid: "t")                        // a passive chip joins the open panel
         XCTAssertTrue(m.restOpen)
-        XCTAssertEqual(m.headerTitle, "Asked in terminal")
+        XCTAssertEqual(m.headerTitle, "1 needs you", "the open panel counts what needs you; it no longer names a chip")
     }
 }

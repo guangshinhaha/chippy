@@ -155,6 +155,34 @@ enum Gallery {
         writeNotchPNG(model, m, size: sz, to: path, note: "state=\(model.state) header=\(model.headerTitle)")
     }
 
+    /// `Chippy --render-panel out.png`: the open rest panel (#139) with one reply that asks, two working sessions (one in a
+    /// hash-named worktree) and two done. Sample text only.
+    @MainActor
+    static func renderPanel(to path: String) {
+        let log = tempLog()
+        defer { try? FileManager.default.removeItem(at: log) }
+        let model = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: log))
+        func ev(_ e: String, _ sid: String, _ cwd: String, extra: String = "") -> HookPayload {
+            HookPayload(json: Data(#"{"session_id":"\#(sid)","hook_event_name":"\#(e)","cwd":"\#(cwd)","chippy_branch":"main"\#(extra)}"#.utf8))!
+        }
+        let now = Date()
+        for (i, repo) in ["docs-site", "billing-api"].enumerated() {
+            model.apply(ev("Stop", "r\(i)", "/demo/\(repo)"), now: now.addingTimeInterval(Double(i - 5) * 240))
+            model.dismissDone("r\(i)")
+        }
+        model.toggleOpen()
+        model.apply(ev("UserPromptSubmit", "w1", "/demo/api-server"), now: now.addingTimeInterval(-30))
+        model.apply(ev("PreToolUse", "w2", "/Users/x/.t3/worktrees/chippy/t3-3f9a6c1e-62fae7136250", extra: #","tool_name":"Edit","tool_input":{"file_path":"/x/a.swift"}"#), now: now.addingTimeInterval(-5))
+        model.apply(ev("Stop", "q", "/demo/web-app", extra: #","last_assistant_message":"I changed the schema. Shall I run the migration now?""#), now: now.addingTimeInterval(-60))
+        let m = NotchMetrics.sample14
+        let h: CGFloat = 400
+        let sz = m.size(for: .expanded, contentHeight: h)
+        let b = box(m); b.contentHeight = h
+        let r = ImageRenderer(content: NotchView(model: model, box: b).frame(width: sz.width, height: sz.height).background(Color(white: 0.25)))
+        let res = model.panelSections()
+        writePNG(r, to: path, note: "header=\(res.header) rows=\(res.sections.map { "\($0.title.rawValue):\($0.rows.map { $0.label.text })" })")
+    }
+
     /// `Chippy --render-glance out.png` (#90): the open panel with one line per session. The inputs below carry a path, a command
     /// and an unknown MCP tool on purpose: none of that may appear, only Editing / Running / Searching / Working.
     @MainActor

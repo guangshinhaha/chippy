@@ -76,6 +76,11 @@ if let i = args.firstIndex(of: "--render-glance"), i + 1 < args.count {
     exit(0)
 }
 
+if let i = args.firstIndex(of: "--render-panel"), i + 1 < args.count {
+    MainActor.assumeIsolated { Gallery.renderPanel(to: args[i + 1]) }
+    exit(0)
+}
+
 if let i = args.firstIndex(of: "--render-mixed-header"), i + 1 < args.count {
     MainActor.assumeIsolated { Gallery.renderMixedHeader(to: args[i + 1]) }
     exit(0)

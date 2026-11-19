@@ -362,10 +362,16 @@ public final class NotchModel: ObservableObject {
         }
         if shownDone != nil { return pending.isEmpty ? "Done" : "Finished" }
         if restOpen, awayDigest != nil { return "While you were away" }
-        if restOpen && doneItems.isEmpty && terminalItems.isEmpty { return "Recent" }
+        if restOpen { return panelSections().header } // #139: a count, not a section name
         if !terminalItems.isEmpty { return "Asked in terminal" }
         if !doneItems.isEmpty { return ChippyState.done.title }
         return state.title
+    }
+
+    /// The rest panel's header and sections (#139), built from state already held. Read at draw time, like `glanceSessions`.
+    public func panelSections(now: Date = Date()) -> PanelSections.Result {
+        PanelSections.build(pending: rankedPending, terminal: terminalItems, done: doneItems, sessions: sessions, recent: recent.items,
+                            label: { [identities] cwd, project in identities.label(cwd: cwd, project: project) }, now: now)
     }
 
     /// Open the waiting list (badge tap, or the header while several wait).

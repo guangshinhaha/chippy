@@ -14,7 +14,7 @@ public struct SessionIdentity: Equatable {
     /// Index into the app's palette, 0..<colourCount.
     public let colour: Int
     public let shape: Shape
-    /// First character of the uppercased repo, only when it is an ASCII letter or digit; "#" otherwise.
+    /// First letter or digit of the uppercased repo; "#" when there is none.
     public let glyph: String
 
     /// "teal diamond R", for VoiceOver and tests.
@@ -22,11 +22,11 @@ public struct SessionIdentity: Equatable {
     /// "teal diamond": colour and shape only, for places that already say the repo name.
     public var spokenShort: String { "\(Self.colourNames[colour]) \(shape.name)" }
 
-    /// The glyph for a repo name: leading separators are skipped, then the first Character of the uppercased remainder is
-    /// used only if it is an ASCII letter or digit ("ßtool" gives "S"; "élan" and "" give "#").
+    /// The glyph for a repo name: leading separators and symbols are skipped, then the first Character of the uppercased
+    /// remainder is used when it is a letter or digit ("ßtool" gives "S", "élan" gives "É"; "" and "🚀" give "#").
     static func glyph(for repo: String) -> String {
         guard let first = repo.first(where: { $0.isLetter || $0.isNumber }), let c = String(first).uppercased().first,
-              c.isASCII, c.isLetter || c.isNumber else { return "#" }
+              c.isLetter || c.isNumber else { return "#" }
         return String(c)
     }
 
