@@ -119,6 +119,19 @@ enum TerminalJump {
         }
     }
 
+    /// T3 Code: after it is frontmost, open this session's own thread via `t3code://threads/<env>/<thread>` (#138).
+    /// Fail-soft: with no thread id or no readable environment id the app is simply left in front, as before.
+    static func openT3Thread(_ host: HostInfo) {
+        guard let thread = T3Link.threadId(for: host) else { return }
+        let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(T3Link.environmentIdPath)
+        let env = T3Link.environmentId(fileContents: try? String(contentsOf: file, encoding: .utf8))
+        guard let url = T3Link.url(environmentId: env, threadId: thread) else {
+            NSLog("Chippy: T3 thread link not built (environment id unreadable), app left in front")
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
     /// Orca: after it is frontmost, ask its CLI (from the running app's own bundle) to select the session's workspace
     /// (it has no AppleScript). Reports what the CLI answered; `completion` runs on the main queue.
     static func selectOrcaWorkspace(_ cwd: String, appBundleURL: URL?, completion: @escaping (OrcaCLI.Select) -> Void) {
@@ -153,6 +166,7 @@ enum TerminalJump {
         guard available(host), let h = host, let pid = h.pid, let bundle = h.bundle else { completion(.notFrontmost); return }
         let activate = {
             bringForward(pid: pid) { v in
+                if (v == .landed || v == .landedUnverified), bundle == T3Link.bundleId { openT3Thread(h) }
                 guard v == .landed || v == .landedUnverified, bundle == OrcaCLI.bundleId, let cwd = h.cwd else { completion(v); return }
                 let url = NSRunningApplication(processIdentifier: pid)?.bundleURL
                 selectOrcaWorkspace(cwd, appBundleURL: url) { completion(OrcaCLI.finalVerdict(v, select: $0)) }
