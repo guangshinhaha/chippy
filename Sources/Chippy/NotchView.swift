@@ -1020,8 +1020,7 @@ struct OpenTerminalButton: View {
     var title: String? = nil
     var kind: ChipButton.Kind = .neutral
     var onOpened: () -> Void = {}
-    @State private var failed = false
-    @State private var offSpace = false
+    @State private var feedback: JumpFeedback.Text?
     @State private var busy = false
     @State private var token = 0
 
@@ -1033,21 +1032,18 @@ struct OpenTerminalButton: View {
     }
 
     var body: some View {
-        ChipButton(title: offSpace ? "On another Space" : failed ? "Couldn't open" : (title ?? "Open \(appName)"),
-                   hint: offSpace ? "\(appName) is frontmost; switch Space" : failed ? "switch to it yourself" : nil, kind: (offSpace || failed) ? .neutral : kind) {
+        ChipButton(title: feedback?.title ?? title ?? "Open \(appName)", hint: feedback?.hint, kind: feedback != nil ? .neutral : kind) {
             guard !busy else { return }
-            busy = true; failed = false; offSpace = false; token += 1
+            busy = true; feedback = nil; token += 1
             let mine = token
             TerminalJump.open(host) { v in
-                let ok = v == .landed || v == .landedUnverified
                 busy = false
-                offSpace = v == .offSpace
-                failed = v == .notFrontmost || v == .workspaceNotSelected
-                if ok { onOpened() }
-                if !ok { DispatchQueue.main.asyncAfter(deadline: .now() + 4) { if token == mine { failed = false; offSpace = false } } }
+                feedback = JumpFeedback.text(for: v, appName: appName)
+                if feedback == nil { onOpened() } // landed, or landed but unconfirmed: both count as opened (see JumpFeedback)
+                else { DispatchQueue.main.asyncAfter(deadline: .now() + 4) { if token == mine { feedback = nil } } }
             }
         }
-        .help(offSpace ? "\(appName) is frontmost but its window is on another Space. Switch Space (Ctrl-arrow) or enable System Settings > Desktop & Dock > switch to a Space with open windows." : failed ? "Chippy couldn't bring the app forward. Switch to it from the Dock or Cmd-Tab." : "")
+        .help(feedback?.help ?? "")
     }
 }
 

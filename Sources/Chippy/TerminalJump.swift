@@ -93,20 +93,7 @@ enum TerminalJump {
             DispatchQueue.main.async { completion(s.step) }
         }
         guard FileManager.default.isExecutableFile(atPath: cli.path) else { finish(.failed("host CLI not found in the running app")); return }
-        DispatchQueue.global(qos: .userInitiated).async {
-            let p = Process()
-            let out = Pipe()
-            p.executableURL = cli
-            p.arguments = arguments
-            p.standardOutput = out; p.standardError = FileHandle.nullDevice
-            guard (try? p.run()) != nil else { finish(.failed("could not run the host CLI")); return }
-            // A hung CLI must not strand the jump: give up after 5s (the read below then ends when it dies).
-            DispatchQueue.global().asyncAfter(deadline: .now() + 5) { if p.isRunning { p.terminate() } }
-            let data = out.fileHandleForReading.readDataToEndOfFile()
-            p.waitUntilExit()
-            guard p.terminationReason == .exit else { finish(.failed("timed out")); return }
-            finish(OrcaCLI.interpret(exitStatus: p.terminationStatus, stdout: data))
-        }
+        DispatchQueue.global(qos: .userInitiated).async { finish(HostProcess.run(cli, arguments)) } // ends on exit, capped at 5s (#136)
     }
 
     /// Reads a small file under the home folder: at most 256 bytes, so a swapped-in FIFO or huge file cannot freeze anything.
