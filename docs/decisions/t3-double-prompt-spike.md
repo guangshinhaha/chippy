@@ -6,7 +6,7 @@ Checked 2026-11-20 by Shin, live, on a T3 thread set to ask before running comma
 
 ## 1. After a notch answer, does T3's dialog close?
 
-**Yes, for both Allow and Deny.** The hook returns the decision to Claude Code, and T3 drops its own dialog because the request is no longer pending. The notch answer wins; fail-open still holds (Chippy not running means T3's dialog is the only prompt). *Go: nothing to build.*
+**Yes, for both Allow and Deny.** The hook returns the decision to Claude Code. Why T3 drops its dialog was not traced (not needed for the decision). The notch answer wins; fail-open still holds (Chippy not running means T3's dialog is the only prompt). *Go: nothing to build.*
 
 ## 2. If it stays, can a hook or setting avoid the double prompt?
 
