@@ -26,15 +26,15 @@ final class SoundChoiceTests: XCTestCase {
     }
 
     func testAKindReadsOnlyItsOwnSetting() {
-        let defaults = UserDefaults(suiteName: "chippy-test-\(UUID())")!
+        let (_, defaults) = scratchDefaults()
         defaults.set("Glass", forKey: SoundChoice.key(.needsYou))
         XCTAssertEqual(SoundChoice.name(for: .needsYou, defaults: defaults, installed: installed), "Glass")
         XCTAssertEqual(SoundChoice.name(for: .done, defaults: defaults, installed: installed), "Tink")
     }
 
     func testTheChoiceSurvivesARelaunch() {
-        let suite = "chippy-test-\(UUID())"
-        UserDefaults(suiteName: suite)!.set("Basso", forKey: SoundChoice.key(.done))
+        let (suite, first) = scratchDefaults()
+        first.set("Basso", forKey: SoundChoice.key(.done))
         let again = UserDefaults(suiteName: suite)! // a new handle, as after a relaunch
         XCTAssertEqual(SoundChoice.name(for: .done, defaults: again, installed: installed), "Basso")
     }

@@ -17,7 +17,7 @@ final class AwakeModeTests: XCTestCase {
     }
     func testMissingKeysMigrateToOff() {
         // UserDefaults.bool returns false for missing keys.
-        let d = UserDefaults(suiteName: "chippy.test.\(UUID().uuidString)")!
+        let (_, d) = scratchDefaults("chippy.test")
         XCTAssertEqual(AwakePolicy.migrate(enabled: d.bool(forKey: "keepAwake.enabled"),
                                            lidClosed: d.bool(forKey: "keepAwake.lidClosed")), .off)
     }
