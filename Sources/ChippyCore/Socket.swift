@@ -85,6 +85,8 @@ public final class Connection {
     public let fd: Int32
     private var closed = false
     private let lock = NSLock()
+    /// The most `respond` may spend writing a reply (#178). It runs on the main thread and holds `lock`, which `peerGone` and `sweep` wait on, so a hook that is alive but stopped (Ctrl-Z) can stall Chippy for this long and no longer.
+    static let replyDeadline: TimeInterval = 1
     init(fd: Int32) { self.fd = fd }
 
     /// A connection to nowhere, for the static gallery render (no relay on the other end).
@@ -98,7 +100,7 @@ public final class Connection {
         lock.lock(); defer { lock.unlock() }
         guard !closed else { return }
         closed = true
-        if let reply { _ = writeLine(fd: fd, reply) } // the peer is gone or stuck; nothing more to do but close
+        if let reply { _ = writeLine(fd: fd, reply, within: Connection.replyDeadline) } // false: the peer is gone or stuck; nothing more to do but close
         close(fd)
     }
 
