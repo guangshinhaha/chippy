@@ -9,6 +9,17 @@ public struct RepoLabel: Equatable {
 
     /// "repo" or "repo / worktree" (plain text for VoiceOver and tests).
     public var text: String { worktree.map { "\(repo) / \($0)" } ?? repo }
+
+    /// The worktree tag as shown (#209): the input when it fits in `maxChars` Characters, else a middle-truncated string of
+    /// exactly `maxChars` Characters around "…". Counts grapheme clusters, so an emoji is never split. Lets the view size
+    /// the tag to its content (`fixedSize`) while the cap bounds how wide it can get.
+    public static func worktreeTag(_ s: String, maxChars: Int = 16) -> String {
+        let chars = Array(s)
+        guard chars.count > maxChars else { return s }
+        guard maxChars > 1 else { return maxChars == 1 ? "…" : "" }
+        let keep = maxChars - 1
+        return String(chars.prefix((keep + 1) / 2)) + "…" + String(chars.suffix(keep / 2))
+    }
 }
 
 public enum RepoResolver {

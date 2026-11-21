@@ -1433,11 +1433,29 @@ struct RepoTitle: View {
             if let mark { IdentityMark(identity: mark, size: 14) }
             Text(repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle).layoutPriority(1)
             if let worktree {
-                Text(worktree).font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1).truncationMode(.middle)
-                    .padding(.horizontal, 5).padding(.vertical, 1).background(Capsule().fill(Color.white.opacity(0.12)))
-                    .frame(maxWidth: 110, alignment: .leading).layoutPriority(0)
+                // Content width (#209): 16 Characters from the core helper, and never wider than 110pt (wide glyphs middle-
+                // truncate). A short tag no longer claims the cap.
+                WidthCap(110) {
+                    Text(RepoLabel.worktreeTag(worktree)).font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1).truncationMode(.middle)
+                        .padding(.horizontal, 5).padding(.vertical, 1).background(Capsule().fill(Color.white.opacity(0.12)))
+                }
+                .fixedSize(horizontal: true, vertical: false)
             }
         }
+    }
+}
+
+/// Hugs its content up to `cap` points wide (#209). Unlike `.frame(maxWidth:)`, which is flexible and claims the whole cap in an
+/// HStack, this proposes at most `cap` to its child and reports the child's own size, so a short child stays short.
+struct WidthCap: Layout {
+    let cap: CGFloat
+    init(_ cap: CGFloat) { self.cap = cap }
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let child = subviews.first else { return .zero }
+        return child.sizeThatFits(ProposedViewSize(width: min(proposal.width ?? cap, cap), height: proposal.height))
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
     }
 }
 
@@ -1454,7 +1472,9 @@ struct GlanceRow: View {
             IdentityMark(identity: mark, size: 12)
             Text(label.repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle).layoutPriority(1)
             if let wt = label.worktree {
-                Text(wt).font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1).truncationMode(.middle).frame(maxWidth: 90, alignment: .leading)
+                // Content width, 16 Characters and at most 90pt (#209).
+                WidthCap(90) { Text(RepoLabel.worktreeTag(wt)).font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1).truncationMode(.middle) }
+                    .fixedSize(horizontal: true, vertical: false)
             }
             Spacer(minLength: 6)
             Text(text).font(.caption2).foregroundStyle(.white.opacity(live ? 0.75 : 0.5)).lineLimit(1)
