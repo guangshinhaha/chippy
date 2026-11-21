@@ -317,7 +317,8 @@ struct NotchView: View {
                     if let m = chip.mark { IdentityMark(identity: m, size: 12) }
                     Text(chip.text).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.tail)
                     if model.doneItems.count + model.terminalItems.count > 1 {
-                        Text("+\(model.doneItems.count + model.terminalItems.count - 1)").font(.caption2).foregroundStyle(.white.opacity(0.6))
+                        Text("+" + CountLabel.short(model.doneItems.count + model.terminalItems.count - 1)).font(.caption2).foregroundStyle(.white.opacity(0.6))
+                            .accessibilityLabel("\(model.doneItems.count + model.terminalItems.count - 1) more")
                     }
                     Spacer(minLength: 0)
                 }
@@ -339,7 +340,8 @@ struct NotchView: View {
                         .font(.caption.bold()).foregroundStyle(.white)
                         .lineLimit(1).truncationMode(.tail)
                     if model.doneItems.count + model.terminalItems.count > 1 {
-                        Text("+\(model.doneItems.count + model.terminalItems.count - 1)").font(.caption2).foregroundStyle(.white.opacity(0.6))
+                        Text("+" + CountLabel.short(model.doneItems.count + model.terminalItems.count - 1)).font(.caption2).foregroundStyle(.white.opacity(0.6))
+                            .accessibilityLabel("\(model.doneItems.count + model.terminalItems.count - 1) more")
                     }
                     Spacer(minLength: 0)
                 }
@@ -359,7 +361,8 @@ struct NotchView: View {
                     }
                     Spacer(minLength: 0)
                     if model.waitingItems.count > 1 && !model.listOpen {
-                        ChipButton(title: "All \(model.waitingItems.count)", kind: .neutral) { model.openList() }
+                        ChipButton(title: "All " + CountLabel.short(model.waitingItems.count), kind: .neutral) { model.openList() }
+                            .accessibilityLabel("All, \(model.waitingItems.count) waiting")
                             .accessibilityHint("Opens the list of everything waiting")
                     }
                     Button(action: box.openMenu) {
