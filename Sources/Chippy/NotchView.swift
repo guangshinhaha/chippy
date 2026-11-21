@@ -24,7 +24,7 @@ struct Reveal: ViewModifier {
             .opacity(on ? 1 : 0)
             .scaleEffect(reduce || on ? 1 : 0.96, anchor: .top)
             .blur(radius: reduce || on ? 0 : 4)
-            .onAppear { withAnimation(reduce ? .linear(duration: 0.01) : .easeOut(duration: 0.24).delay(delay)) { on = true } }
+            .onAppear { withAnimation(Motion.or(Motion.enter.delay(delay), reduce: reduce)) { on = true } }
     }
 }
 
@@ -142,9 +142,9 @@ struct CountBadge: View {
     /// transaction that carries a different animation.
     private func updatePulse() {
         if needsYou && !reduceMotion {
-            withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { pulse = true }
+            withAnimation(Motion.pulse) { pulse = true }
         } else {
-            withTransaction(Transaction(animation: .linear(duration: 0.01))) { pulse = false }
+            withTransaction(Transaction(animation: Motion.instant)) { pulse = false }
         }
     }
 }
@@ -174,7 +174,7 @@ struct NotchView: View {
             ZStack(alignment: .top) {
                 content
                     .id(model.density)
-                    .transition(.asymmetric(insertion: .identity, removal: .opacity.animation(.easeOut(duration: reduceMotion ? 0.01 : 0.1))))
+                    .transition(.asymmetric(insertion: .identity, removal: .opacity.animation(reduceMotion ? Motion.instantEase : Motion.exit)))
             }
             .frame(width: size.width, height: size.height, alignment: .top)
             .animation(nil, value: size)
@@ -187,7 +187,7 @@ struct NotchView: View {
         .animation(motion, value: radius)
         .animation(motion, value: model.density)
         .scaleEffect(pressed && model.density == .collapsed && !reduceMotion ? 0.97 : 1, anchor: .top)
-        .animation(.easeOut(duration: 0.12), value: pressed)
+        .animation(Motion.press, value: pressed)
         .contentShape(Rectangle())
         .onTapGesture { model.toggleOpen() }
         .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in pressed = true }.onEnded { _ in pressed = false })
@@ -228,7 +228,7 @@ struct NotchView: View {
 
     /// One spring for the shape (slight settle, no bounce); a near-instant change when the user asked for reduced motion.
     private var motion: Animation {
-        reduceMotion ? .linear(duration: 0.01) : .spring(response: 0.38, dampingFraction: 0.82)
+        Motion.or(Motion.shape, reduce: reduceMotion)
     }
 
     /// Glance chip: who finished (repo · branch), so several threads can be told apart, and that repo's identity mark.
@@ -503,6 +503,8 @@ struct PlanCard: View {
     let decide: (Decision) -> Void
     @State private var expanded: Bool
     @State private var bodyHeight: CGFloat = 0
+    /// Reduce Motion: "Show more" swaps in place, no animated expand.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Chrome around the rows (header, captions, buttons) is about 250pt; the rest of the panel is the rows' budget.
     static let maxBodyHeight: CGFloat = NotchMetrics.maxExpandedHeight - 250
 
@@ -563,7 +565,7 @@ struct PlanCard: View {
             if plan.canExpand {
                 ChipButton(title: expanded ? "Show less" : "Show more", kind: .quiet) {
                     expand(!expanded) // reading is engagement: pins so the card cannot fold away mid-read; the hotkey needs it
-                    withAnimation(.easeOut(duration: 0.18)) { expanded.toggle() }
+                    withAnimation(reduceMotion ? nil : Motion.expand) { expanded.toggle() }
                 }
             }
         }
@@ -600,6 +602,8 @@ struct ChipButton: View {
 struct ChipStyle: ButtonStyle {
     let kind: ChipButton.Kind
     let hover: Bool
+    /// Reduce Motion drops the press scale (movement); the fill colour still animates.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var fill: Color {
         switch kind {
@@ -624,9 +628,9 @@ struct ChipStyle: ButtonStyle {
             .padding(.horizontal, 12).frame(minHeight: 28)
             .background(Capsule().fill(fill))
             .padding(4).contentShape(Rectangle()).padding(-4)
-            .scaleEffect(configuration.isPressed ? 0.96 : 1)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
-            .animation(.easeOut(duration: 0.12), value: hover)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
+            .animation(Motion.press, value: configuration.isPressed)
+            .animation(Motion.hover, value: hover)
     }
 }
 
@@ -706,7 +710,7 @@ struct QuestionCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10).padding(.vertical, 5)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: on ? 0.26 : 0.18)))
-                .animation(.easeOut(duration: reduceMotion ? 0.01 : 0.12), value: on)
+                .animation(reduceMotion ? Motion.instantEase : Motion.hover, value: on)
                 .contentShape(Rectangle())
                 .onTapGesture { pick(i) }
                 .accessibilityAddTraits(on ? .isSelected : [])
@@ -1350,7 +1354,7 @@ struct WaitingListView: View {
                     if layout.needsScrolls {
                         ScrollViewReader { proxy in
                             ScrollView { needsRows(layout) }.frame(height: layout.needsHeight)
-                                .onChange(of: model.listSelection) { if let t = $0, layout.needs.contains(where: { $0.target == t }) { withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(t) } } }
+                                .onChange(of: model.listSelection) { if let t = $0, layout.needs.contains(where: { $0.target == t }) { withAnimation(Motion.hover) { proxy.scrollTo(t) } } }
                         }
                     } else { needsRows(layout) }
                 }
@@ -1363,7 +1367,7 @@ struct WaitingListView: View {
                     } else if layout.expanded {
                         ScrollViewReader { proxy in
                             ScrollView { finishedRows(layout) }.frame(height: layout.finishedHeight)
-                                .onChange(of: model.listSelection) { if let t = $0, layout.finished.contains(where: { $0.target == t }) { withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(t) } } }
+                                .onChange(of: model.listSelection) { if let t = $0, layout.finished.contains(where: { $0.target == t }) { withAnimation(Motion.hover) { proxy.scrollTo(t) } } }
                         }
                     } else { finishedRows(layout) }
                     if layout.hasToggle { moreRow(layout) }
@@ -1520,8 +1524,8 @@ struct NeedsRow: View {
         .contentShape(Rectangle())
         .onHover { hover = $0 }
         .onTapGesture(perform: open)
-        .animation(.easeOut(duration: 0.12), value: selected)
-        .animation(.easeOut(duration: 0.12), value: hover)
+        .animation(Motion.hover, value: selected)
+        .animation(Motion.hover, value: hover)
         .accessibilityElement(children: .contain) // the labelled buttons stay reachable inside the row
         .accessibilityLabel("\(subject), \(item.label), \(age)")
         .accessibilityAction(named: item.kind == .terminal ? "Open in list" : actionTitle, open)
@@ -1561,8 +1565,8 @@ struct FinishedRow: View {
         .contentShape(Rectangle())
         .onHover { hover = $0 }
         .onTapGesture(perform: open)
-        .animation(.easeOut(duration: 0.12), value: selected)
-        .animation(.easeOut(duration: 0.12), value: hover)
+        .animation(Motion.hover, value: selected)
+        .animation(Motion.hover, value: hover)
         // One button for the row; Dismiss is its own action, not a nested element inside a button.
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(mark.map { "\($0.spoken), " } ?? "")\(item.repo)\(item.worktree.map { ", worktree \($0)" } ?? ""), \(item.asksYou ? "asks you, " : "")\(item.snippet ?? "finished"), \(age)")
