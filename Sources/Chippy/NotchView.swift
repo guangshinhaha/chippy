@@ -479,7 +479,7 @@ struct ApprovalCard: View {
                 .lineLimit(12) // backstop only: preview() already bounds rows and keeps head, tail and a hidden-count marker
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(1).truncationMode(.head)
+            Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(1).truncationMode(.head).help(req.cwd)
             TourCaption(sessionId: req.sessionId, step: .approval)
             HStack(spacing: 8) {
                 ChipButton(title: "Allow", hint: "\(ShortcutKeys.prefix)Y", kind: .primary) { decide(.allow) }
@@ -553,7 +553,7 @@ struct PlanCard: View {
                 if plan.stepCount > 0 { Text(CountLabel.counted(plan.stepCount, "step")).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.5)) }
                 if let f = plan.fileName { Text(f).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(1).truncationMode(.middle) }
             }
-            Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(1).truncationMode(.head)
+            Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(1).truncationMode(.head).help(req.cwd)
             HStack(spacing: 8) {
                 ChipButton(title: plan.truncated ? "Approve (partly shown)" : "Approve", kind: .primary) { decide(.allow) }
                     .help(plan.truncated ? "Approve the part shown (click only: the plan continues in the terminal)"
@@ -1098,6 +1098,7 @@ struct AwayDigestView: View {
                     ChipButton(title: "Dismiss", kind: .neutral) { model.dismissAwayDigest() }
                         .accessibilityHint("Moves the finished threads to Recent")
                 }
+                .accessibilityAddTraits(.isHeader)
                 ForEach(digest.rows) { row in rowView(row, now: ctx.date) }
                 if digest.hidden > 0 { Text("+\(digest.hidden) more").font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.55)).padding(.leading, 10) }
             }
