@@ -122,8 +122,12 @@ func install(_ args: [String]) -> Never {
         catch { print("error: \(error)"); exit(1) }
     }
 
-    let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("chippy-settings-new.json")
-    try? newData.write(to: tmp)
+    // The proposed settings are a full copy of the user's file: unique name, 0600, and removed on every exit from here on.
+    // `exit` skips `defer`, so every exit below goes through `finish`.
+    let tmp: URL
+    do { tmp = try SettingsInstaller.writeProposal(newData, in: SettingsInstaller.proposalDirectory()) }
+    catch { print("error: could not write the proposed settings to the temp folder: \(error)"); exit(1) }
+    func finish(_ code: Int32) -> Never { try? FileManager.default.removeItem(at: tmp); exit(code) }
     let diff = Process()
     diff.executableURL = URL(fileURLWithPath: "/usr/bin/diff")
     diff.arguments = ["-u", "--label", settingsPath, "--label", "\(settingsPath) (new)",
@@ -135,24 +139,24 @@ func install(_ args: [String]) -> Never {
     }
     if !yes {
         print("\nWrite these changes? [y/N] ", terminator: "")
-        guard let a = readLine(), a.lowercased() == "y" else { print("Aborted. Nothing written."); exit(1) }
+        guard let a = readLine(), a.lowercased() == "y" else { print("Aborted. Nothing written."); finish(1) }
     }
     // The file may have changed while the user read the diff: don't clobber edits made meanwhile.
     if ((try? Data(contentsOf: url)) ?? Data()) != oldData {
-        print("error: \(settingsPath) changed while waiting, aborting. Run install again."); exit(1)
+        print("error: \(settingsPath) changed while waiting, aborting. Run install again."); finish(1)
     }
     if FileManager.default.fileExists(atPath: settingsPath) {
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
         let backup = "\(settingsPath).chippy-backup-\(stamp)"
         do { try FileManager.default.copyItem(atPath: settingsPath, toPath: backup) }
-        catch { print("error: backup failed (\(error)), not writing"); exit(1) }
+        catch { print("error: backup failed (\(error)), not writing"); finish(1) }
         print("Backup: \(backup)")
     } else {
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
     }
-    do { try newData.write(to: url, options: .atomic) } catch { print("error: \(error)"); exit(1) }
+    do { try newData.write(to: url, options: .atomic) } catch { print("error: \(error)"); finish(1) }
     print("Installed. Hook command: \(SettingsInstaller.command(for: me, approvalTimeout: timeout, questionTimeout: questionTimeout))")
-    exit(0)
+    finish(0)
 }
 
 /// `chippy-hook demo approval|queue|question|done`: sends synthetic events so you can see the notch react. Sessions are fake (demo-a/demo-b) and are ended after approvals; the done demo leaves its row until you dismiss.

@@ -132,3 +132,27 @@ public enum SettingsInstaller {
         return d
     }
 }
+
+extension SettingsInstaller {
+    /// Where the proposal goes: `$TMPDIR` when it names a folder, else the system temp folder.
+    /// Foundation's `temporaryDirectory` ignores `$TMPDIR` on macOS, so it is read here.
+    public static func proposalDirectory(environment: [String: String] = ProcessInfo.processInfo.environment) -> URL {
+        var isDir: ObjCBool = false
+        if let t = environment["TMPDIR"], !t.isEmpty, FileManager.default.fileExists(atPath: t, isDirectory: &isDir), isDir.boolValue {
+            return URL(fileURLWithPath: t, isDirectory: true)
+        }
+        return FileManager.default.temporaryDirectory
+    }
+
+    /// Writes the proposed settings to a new `chippy-settings-<uuid>.json` in `dir`, owner-only from creation, for `diff`.
+    /// The caller removes it on every exit (#182): the file is a full copy of the user's Claude settings.
+    public static func writeProposal(_ data: Data, in dir: URL) throws -> URL {
+        let url = dir.appendingPathComponent("chippy-settings-\(UUID().uuidString).json")
+        let fd = open(url.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+        guard fd >= 0 else { throw CocoaError(.fileWriteUnknown) }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        do { try handle.write(contentsOf: data) }
+        catch { try? FileManager.default.removeItem(at: url); throw error }
+        return url
+    }
+}
