@@ -1433,9 +1433,10 @@ struct RepoTitle: View {
             if let mark { IdentityMark(identity: mark, size: 14) }
             Text(repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle).layoutPriority(1)
             if let worktree {
-                Text(worktree).font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1).truncationMode(.middle)
+                // Content width, capped at 16 Characters by the core helper (#209): a short tag no longer claims a fixed 110pt.
+                Text(RepoLabel.worktreeTag(worktree)).font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
                     .padding(.horizontal, 5).padding(.vertical, 1).background(Capsule().fill(Color.white.opacity(0.12)))
-                    .frame(maxWidth: 110, alignment: .leading).layoutPriority(0)
             }
         }
     }
@@ -1454,7 +1455,8 @@ struct GlanceRow: View {
             IdentityMark(identity: mark, size: 12)
             Text(label.repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle).layoutPriority(1)
             if let wt = label.worktree {
-                Text(wt).font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1).truncationMode(.middle).frame(maxWidth: 90, alignment: .leading)
+                Text(RepoLabel.worktreeTag(wt)).font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false) // content width, capped at 16 Characters (#209)
             }
             Spacer(minLength: 6)
             Text(text).font(.caption2).foregroundStyle(.white.opacity(live ? 0.75 : 0.5)).lineLimit(1)

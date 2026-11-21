@@ -192,4 +192,52 @@ final class RepoIdentityTests: XCTestCase {
         _ = cache.label(cwd: "/w/y")
         XCTAssertEqual(a, 1); XCTAssertEqual(b, 1)
     }
+
+    // MARK: worktree tag (#209)
+
+    func testWorktreeTagKeepsAShortName() {
+        XCTAssertEqual(RepoLabel.worktreeTag("fix"), "fix")
+    }
+
+    func testWorktreeTagMiddleTruncatesALongBranchToExactlySixteen() {
+        let long = "feature/very-long-branch-name-here"
+        XCTAssertEqual(long.count, 34)
+        let name33 = String(long.dropLast())
+        XCTAssertEqual(name33.count, 33)
+        let t = RepoLabel.worktreeTag(name33)
+        XCTAssertEqual(t.count, 16)
+        XCTAssertTrue(t.contains("…"))
+        XCTAssertEqual(t, "feature/…ame-her")
+        XCTAssertEqual(RepoLabel.worktreeTag(long).count, 16)
+    }
+
+    func testWorktreeTagEmptyStaysEmpty() {
+        XCTAssertEqual(RepoLabel.worktreeTag(""), "")
+    }
+
+    func testWorktreeTagExactlySixteenIsUnchanged() {
+        let s = "abcdefghijklmnop"
+        XCTAssertEqual(s.count, 16)
+        XCTAssertEqual(RepoLabel.worktreeTag(s), s)
+        XCTAssertEqual(RepoLabel.worktreeTag(s + "q").count, 16)
+    }
+
+    func testWorktreeTagCountsEmojiAsOneCharacterAndNeverSplitsThem() {
+        let family = "👨‍👩‍👧‍👦"
+        let s = String(repeating: family, count: 10) + "-fix-🇸🇬-🇸🇬-🇸🇬"
+        let t = RepoLabel.worktreeTag(s)
+        XCTAssertEqual(t.count, 16)
+        XCTAssertTrue(t.contains("…"))
+        XCTAssertTrue(t.hasPrefix(String(repeating: family, count: 8)))
+        XCTAssertTrue(t.hasSuffix("🇸🇬-🇸🇬"))
+        XCTAssertEqual(RepoLabel.worktreeTag("🚀fix"), "🚀fix")
+    }
+
+    func testWorktreeTagTinyCapsDoNotCrash() {
+        XCTAssertEqual(RepoLabel.worktreeTag("branch", maxChars: 2), "b…")
+        XCTAssertEqual(RepoLabel.worktreeTag("branch", maxChars: 1), "…")
+        XCTAssertEqual(RepoLabel.worktreeTag("branch", maxChars: 0), "")
+        XCTAssertEqual(RepoLabel.worktreeTag("branch", maxChars: -3), "")
+        XCTAssertEqual(RepoLabel.worktreeTag("b", maxChars: 1), "b")
+    }
 }
