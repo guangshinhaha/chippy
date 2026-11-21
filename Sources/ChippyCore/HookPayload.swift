@@ -92,3 +92,17 @@ public enum DiffCounts {
 public enum HostFields {
     public static let events: Set<String> = ["SessionStart", "UserPromptSubmit", "Stop", "PermissionRequest"]
 }
+
+/// What the relay sends Chippy (#177).
+public enum RelayPayload {
+    /// The whole line shares this one deadline, so a frozen app cannot hold the agent longer.
+    public static let sendDeadline: TimeInterval = 1
+
+    /// The payload without `tool_response` (file contents, command output): Chippy never reads it, and it can be megabytes.
+    /// Everything else, `tool_input` included, is kept as it is.
+    public static func trim(_ payload: [String: Any]) -> [String: Any] {
+        var out = payload
+        out["tool_response"] = nil
+        return out
+    }
+}

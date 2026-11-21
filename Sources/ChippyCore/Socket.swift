@@ -43,11 +43,21 @@ public func readLine(fd: Int32) -> Data? {
 }
 
 /// Writes `data` plus a newline. True only when every byte went out; false on error or a send timeout (SO_SNDTIMEO).
-public func writeLine(fd: Int32, _ data: Data) -> Bool {
+/// With `within`, the whole line shares one deadline (#177): before each `write` the send timeout is set to the time left
+/// (at least 1 ms, since 0 means "no timeout"), and it returns false once the deadline has passed.
+public func writeLine(fd: Int32, _ data: Data, within seconds: TimeInterval? = nil) -> Bool {
     var out = data; out.append(10)
+    let deadline = seconds.map { DispatchTime.now().uptimeNanoseconds + UInt64(max($0, 0) * 1e9) }
     return out.withUnsafeBytes { raw in
         var off = 0
         while off < raw.count {
+            if let deadline {
+                let now = DispatchTime.now().uptimeNanoseconds
+                guard now < deadline else { return false }
+                let us = max(Int((deadline - now) / 1000), 1000)
+                var snd = timeval(tv_sec: us / 1_000_000, tv_usec: Int32(us % 1_000_000))
+                setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &snd, socklen_t(MemoryLayout<timeval>.size))
+            }
             let n = write(fd, raw.baseAddress! + off, raw.count - off)
             if n <= 0 { return false }
             off += n

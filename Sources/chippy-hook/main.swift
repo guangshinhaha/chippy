@@ -23,6 +23,8 @@ func relay(_ args: [String]) -> Never {
     guard var obj = try? JSONSerialization.jsonObject(with: input) else {
         debug("unparseable payload, exit \(ms())"); exit(0)
     }
+    // Chippy never reads tool_response (file contents, command output): drop it before anything is sent (#177).
+    if let d = obj as? [String: Any] { obj = RelayPayload.trim(d) }
     // Connect first: with Chippy closed the relay must cost nothing (no AppKit / LaunchServices lookup).
     guard let fd = SocketClient.connect() else {
         debug("Chippy.app not running, exit in \(ms())"); exit(0) // fail-open: agent never blocked
@@ -52,9 +54,8 @@ func relay(_ args: [String]) -> Never {
     guard let line = try? JSONSerialization.data(withJSONObject: obj) else {
         debug("unparseable payload, exit \(ms())"); exit(0)
     }
-    var snd = timeval(tv_sec: 1, tv_usec: 0) // a frozen app must not block the agent on a big payload
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &snd, socklen_t(MemoryLayout<timeval>.size))
-    guard writeLine(fd: fd, line) else { // Chippy never got it, so no reply is coming: show the terminal prompt now (#175)
+    // One total deadline for the whole line: a frozen app must not block the agent on a big payload (#177).
+    guard writeLine(fd: fd, line, within: RelayPayload.sendDeadline) else { // Chippy never got it, so no reply is coming: show the terminal prompt now (#175)
         debug("write to Chippy failed after \(ms()), falling back to terminal"); close(fd); exit(0)
     }
     let dict = obj as? [String: Any]
