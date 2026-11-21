@@ -140,7 +140,7 @@ final class AwayDigestTests: XCTestCase {
 
     private func model(locked: @escaping () -> Bool = { false }, idle: @escaping () -> TimeInterval = { 0 }) -> NotchModel {
         let m = NotchModel(always: AlwaysStore(url: nil),
-                           log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("chippy-test-\(UUID()).jsonl")))
+                           log: EventLog(url: scratchURL("chippy-test-\(UUID()).jsonl")))
         m.awaySignal = { (locked(), idle()) }
         return m
     }
@@ -485,7 +485,7 @@ final class AwayDigestTests: XCTestCase {
         let cache = RepoIdentityCache(resolver: { RepoResolver.fallback(cwd: $0) }, background: { queued.append($0) }, deliver: { $0() })
         var locked = true
         let m = NotchModel(always: AlwaysStore(url: nil),
-                           log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("chippy-test-\(UUID()).jsonl")),
+                           log: EventLog(url: scratchURL("chippy-test-\(UUID()).jsonl")),
                            identities: cache)
         m.awaySignal = { (locked, 0) }
         m.sweep(now: at(0)); stop(m, "a", at: at(50)); locked = false; m.sweep(now: at(400))

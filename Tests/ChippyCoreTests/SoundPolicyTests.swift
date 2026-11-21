@@ -89,8 +89,8 @@ final class SoundPolicyTests: XCTestCase {
     }
 
     private func model() -> NotchModel {
-        NotchModel(always: AlwaysStore(url: FileManager.default.temporaryDirectory.appendingPathComponent("always-\(UUID()).json")),
-                   log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("ev-\(UUID()).jsonl")))
+        NotchModel(always: AlwaysStore(url: scratchURL("always-\(UUID()).json")),
+                   log: EventLog(url: scratchURL("ev-\(UUID()).jsonl")))
     }
 
     func testModelEmitsDoneOnStopOnly() {
@@ -181,12 +181,12 @@ final class SoundPolicyTests: XCTestCase {
     }
 
     func testAutoAllowedApprovalIsSilent() {
-        let store = AlwaysStore(url: FileManager.default.temporaryDirectory.appendingPathComponent("always-\(UUID()).json"))
+        let store = AlwaysStore(url: scratchURL("always-\(UUID()).json"))
         let p = HookPayload(json: try! JSONSerialization.data(withJSONObject: [
             "session_id": "s1", "cwd": "/w/api", "hook_event_name": "PermissionRequest",
             "tool_name": "Bash", "tool_input": ["command": "ls"]]))!
         store.insert(PendingRequest(payload: p))
-        let m = NotchModel(always: store, log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("ev-\(UUID()).jsonl")))
+        let m = NotchModel(always: store, log: EventLog(url: scratchURL("ev-\(UUID()).jsonl")))
         var n = 0
         m.onSound = { _, _, _, _ in n += 1 }
         approval(m, tool: "Bash", input: ["command": "ls"])

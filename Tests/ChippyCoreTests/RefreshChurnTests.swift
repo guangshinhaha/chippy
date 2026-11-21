@@ -7,7 +7,7 @@ import XCTest
 /// state / tall / density / chips must not emit on them (that stalled the main thread for tens of ms with several sessions).
 final class RefreshChurnTests: XCTestCase {
     private func model() -> NotchModel {
-        NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("churn-\(UUID()).jsonl")))
+        NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: scratchURL("churn-\(UUID()).jsonl")))
     }
     private func ev(_ e: String, _ sid: String, _ extra: String = "") -> HookPayload {
         HookPayload(json: Data(#"{"session_id":"\#(sid)","hook_event_name":"\#(e)","cwd":"/x/\#(sid)"\#(extra)}"#.utf8))!

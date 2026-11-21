@@ -6,7 +6,7 @@ final class RepoIdentityTests: XCTestCase {
     private var root: URL!
 
     override func setUpWithError() throws {
-        root = FileManager.default.temporaryDirectory.appendingPathComponent("chippy-repoid-\(UUID())").resolvingSymlinksInPath()
+        root = scratchURL("chippy-repoid-\(UUID())").resolvingSymlinksInPath()
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     }
     override func tearDown() { try? FileManager.default.removeItem(at: root) }

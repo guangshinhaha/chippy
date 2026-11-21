@@ -28,7 +28,7 @@ final class FreeTextReplyTests: XCTestCase {
     }
     private var logURL = FileManager.default.temporaryDirectory
     private func model(on: Bool = true) -> NotchModel {
-        logURL = FileManager.default.temporaryDirectory.appendingPathComponent("ev-\(UUID()).jsonl")
+        logURL = scratchURL("ev-\(UUID()).jsonl")
         let m = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: logURL))
         m.freeTextReplyEnabled = on
         return m

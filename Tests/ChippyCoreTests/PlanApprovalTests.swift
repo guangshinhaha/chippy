@@ -69,6 +69,7 @@ final class PlanProposalStructureTests: XCTestCase {
 
 /// Socket-pair fixture shared by the plan tests (no borrowed XCTestCase instance).
 struct PlanFixture {
+    let scratch: (String) -> URL
     func pair() -> (Connection, Int32) {
         var fds: [Int32] = [0, 0]
         precondition(socketpair(AF_UNIX, SOCK_STREAM, 0, &fds) == 0)
@@ -81,7 +82,7 @@ struct PlanFixture {
     }
     func model(planCard: Bool = true, clock: @escaping () -> TimeInterval = { Date().timeIntervalSinceReferenceDate }) -> NotchModel {
         let m = NotchModel(always: AlwaysStore(url: nil),
-                           log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("ev-\(UUID()).jsonl")), clock: clock)
+                           log: EventLog(url: scratch("ev-\(UUID()).jsonl")), clock: clock)
         m.planCardEnabled = planCard
         return m
     }
@@ -93,7 +94,7 @@ struct PlanFixture {
 
 final class PlanApprovalTests: XCTestCase {
     let input: [String: Any] = ["plan": "# P\n1. a\n2. b", "planFilePath": "/Users/me/.claude/plans/x.md"]
-    let h = PlanFixture()
+    lazy var h = PlanFixture(scratch: scratchURL)
 
     func req(_ tool: String = "ExitPlanMode", _ input: [String: Any]? = nil) -> HookPayload {
         HookPayload(json: try! JSONSerialization.data(withJSONObject: [
@@ -194,7 +195,7 @@ final class PlanApprovalTests: XCTestCase {
     }
     func testAlwaysIsRefusedAndNeverStored() {
         let store = AlwaysStore(url: nil)
-        let m = NotchModel(always: store, log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("ev-\(UUID()).jsonl")))
+        let m = NotchModel(always: store, log: EventLog(url: scratchURL("ev-\(UUID()).jsonl")))
         m.planCardEnabled = true
         let (c, f) = h.pair()
         m.receiveApproval(req(), c)

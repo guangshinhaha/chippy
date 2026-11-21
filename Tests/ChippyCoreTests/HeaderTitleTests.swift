@@ -6,7 +6,7 @@ import XCTest
 /// Precedence: list > pending card > jumped-to done detail > Recent > terminal chips > done chips > state.
 final class HeaderTitleTests: XCTestCase {
     private func model() -> NotchModel {
-        let log = FileManager.default.temporaryDirectory.appendingPathComponent("ht-\(UUID()).jsonl")
+        let log = scratchURL("ht-\(UUID()).jsonl")
         addTeardownBlock { try? FileManager.default.removeItem(at: log) }
         return NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: log))
     }

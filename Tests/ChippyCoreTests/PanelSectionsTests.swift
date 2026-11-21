@@ -162,7 +162,7 @@ final class PanelSectionsTests: XCTestCase {
     }
 
     func testAHashNamedCheckoutKeepsTheSameLabelBeforeAndAfterGitAnswers() throws {
-        let base = FileManager.default.temporaryDirectory.appendingPathComponent("chippy-139-\(UUID().uuidString)")
+        let base = scratchURL("chippy-139-\(UUID().uuidString)")
         let dir = base.appendingPathComponent("ci/a1b2c3d4e5f6")
         try FileManager.default.createDirectory(at: dir.appendingPathComponent(".git"), withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: base) }

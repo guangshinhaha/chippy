@@ -16,7 +16,7 @@ final class ReviewFollowupTests: XCTestCase {
     // 1. Always on a demo card is never remembered; on a real one it is.
     func testAlwaysIsNotPersistedForDemoSessions() {
         let store = AlwaysStore(url: nil)
-        let m = NotchModel(always: store, log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("chippy-t-\(UUID()).jsonl")))
+        let m = NotchModel(always: store, log: EventLog(url: scratchURL("chippy-t-\(UUID()).jsonl")))
         m.receiveApproval(payload("demo-tour"), pair())
         let demo = m.pending[0]
         m.resolve(demo.id, .always)

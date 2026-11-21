@@ -15,3 +15,13 @@ extension XCTestCase {
         return (suite, d)
     }
 }
+
+extension XCTestCase {
+    /// A path in the temp directory that is removed when the test ends (#174). A name with a `/` removes its top folder.
+    func scratchURL(_ name: String) -> URL {
+        let tmp = FileManager.default.temporaryDirectory
+        let root = tmp.appendingPathComponent(name.components(separatedBy: "/")[0])
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        return tmp.appendingPathComponent(name)
+    }
+}

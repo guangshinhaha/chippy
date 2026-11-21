@@ -87,7 +87,7 @@ final class PeekTests: XCTestCase {
     private func model() -> NotchModel {
         t = 0
         return NotchModel(always: AlwaysStore(url: nil),
-                          log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("chippy-test-\(UUID()).jsonl")),
+                          log: EventLog(url: scratchURL("chippy-test-\(UUID()).jsonl")),
                           clock: { [unowned self] in self.t })
     }
     private func ev(_ e: String, _ sid: String = "a", extra: String = "") -> HookPayload {

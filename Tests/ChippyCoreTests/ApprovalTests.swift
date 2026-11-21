@@ -23,8 +23,8 @@ final class ApprovalTests: XCTestCase {
     }
 
     func model() -> NotchModel {
-        NotchModel(always: AlwaysStore(url: FileManager.default.temporaryDirectory.appendingPathComponent("always-\(UUID()).json")),
-                   log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("ev-\(UUID()).jsonl")))
+        NotchModel(always: AlwaysStore(url: scratchURL("always-\(UUID()).json")),
+                   log: EventLog(url: scratchURL("ev-\(UUID()).jsonl")))
     }
 
     func testAskIsShownVerbatimAndStateIsNeedsYou() {
@@ -78,10 +78,10 @@ final class ApprovalTests: XCTestCase {
     }
 
     func testAlwaysSurvivesRestart() {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("always-\(UUID()).json")
-        let m1 = NotchModel(always: AlwaysStore(url: url), log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("ev-\(UUID()).jsonl"))); let (c, _) = pair()
+        let url = scratchURL("always-\(UUID()).json")
+        let m1 = NotchModel(always: AlwaysStore(url: url), log: EventLog(url: scratchURL("ev-\(UUID()).jsonl"))); let (c, _) = pair()
         m1.receiveApproval(payload(), c); m1.resolve(m1.pending[0].id, .always)
-        let m2 = NotchModel(always: AlwaysStore(url: url), log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("ev-\(UUID()).jsonl"))); let (c2, f2) = pair()
+        let m2 = NotchModel(always: AlwaysStore(url: url), log: EventLog(url: scratchURL("ev-\(UUID()).jsonl"))); let (c2, f2) = pair()
         m2.receiveApproval(payload(), c2)
         XCTAssertEqual(reply(f2)?["behavior"] as? String, "allow")
     }
@@ -227,8 +227,8 @@ final class ApprovalTests: XCTestCase {
     }
 
     func testAlwaysFileHoldsNoRawCommandText() throws {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("always-\(UUID()).json")
-        let m = NotchModel(always: AlwaysStore(url: url), log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("ev-\(UUID()).jsonl")))
+        let url = scratchURL("always-\(UUID()).json")
+        let m = NotchModel(always: AlwaysStore(url: url), log: EventLog(url: scratchURL("ev-\(UUID()).jsonl")))
         let (c, _) = pair(); m.receiveApproval(payload(cmd: "curl -H token=SECRET123 x"), c)
         m.resolve(m.pending[0].id, .always)
         let text = try String(contentsOf: url, encoding: .utf8)
