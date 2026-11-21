@@ -31,6 +31,7 @@ final class KeepAwake {
 
     private static let marker = ChippyPaths.supportDir.appendingPathComponent("disablesleep-on")
     private static let pmset = "/usr/bin/pmset"
+    private static let tick: TimeInterval = 5
     private static let kMode = "keepAwake.mode", kUntil = "keepAwake.until", kDuration = "keepAwake.duration"
     private static let kOldEnabled = "keepAwake.enabled", kOldLid = "keepAwake.lidClosed"
 
@@ -74,15 +75,26 @@ final class KeepAwake {
         disabler.onIdle = { [weak self] in self?.evaluate() }
         if AwakePolicy.shouldClearOnLaunch(markerExists: disabler.markerExists) { disabler.set(false) }
         sub = model.$state.removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] _ in self?.evaluate() }
-        timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+        evaluate() // starts the timer only if a persisted mode is on and still live (syncTimer)
+    }
+
+    /// The 5s re-check runs only while a mode is on (#180): it ends a deadline, lets the debounce release, and re-reads the battery
+    /// for lid-closed mode. With the mode off there is nothing to re-check, so no timer and no IOKit battery read. Every path that
+    /// changes the mode (pick, duration, setup, expiry, launch) ends in `evaluate`, so this is the single place the timer starts and stops.
+    /// Sessions changing need no tick: the `model.$state` sink calls `evaluate` for agentsLid too.
+    private func syncTimer(effective: AwakeMode) {
+        guard AwakePolicy.needsTimer(effective: effective, clearPending: disabler.needsClear) else { timer?.invalidate(); timer = nil; return }
+        guard timer == nil else { return }
+        let t = Timer.scheduledTimer(withTimeInterval: Self.tick, repeats: true) { [weak self] _ in
             DispatchQueue.main.async { self?.evaluate() }
         }
-        evaluate()
+        t.tolerance = Self.tick * 0.2
+        timer = t
     }
 
     /// Release everything. Called from applicationWillTerminate.
     func stop() {
-        timer?.invalidate(); sub = nil
+        timer?.invalidate(); timer = nil; sub = nil
         releaseAssertion()
         disabler.clearBlocking { Self.runPmset($0) }
     }
@@ -205,11 +217,12 @@ final class KeepAwake {
         let hold = eff != .off && AwakePolicy.shouldHold(state: model.state, lastWorking: lastWorking, now: now)
         if hold { takeAssertion() } else { releaseAssertion() }
 
-        let (pct, onAC) = Self.battery()
+        let (pct, onAC) = AwakePolicy.needsBattery(effective: eff) ? Self.battery() : (nil, true)
         let want = AwakePolicy.lidDecision(hold: hold, lidModeEnabled: eff == .agentsLid, percent: pct, onAC: onAC)
         lowBattery = want == .lowBattery
         // One pmset call at a time; a request made while one is in flight is dropped and redone from onIdle.
         if want == .on { disabler.set(true) } else { disabler.set(false) }
+        syncTimer(effective: eff) // after the call: a clear still owed (needsClear) keeps the timer so a failed one is retried
         refreshMenu()
     }
 
