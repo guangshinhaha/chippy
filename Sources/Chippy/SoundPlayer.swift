@@ -71,13 +71,34 @@ final class SoundPlayer {
         guard SoundPolicy.shouldPlay(kind: kind, enabled: enabled, hostFrontmost: frontmost, quiet: quiet.isQuiet,
                                      lastPlayed: cooldowns.lastPlayed(kind, session: sessionId), now: now) else { return }
         // The named sound is a shared instance and play() on a playing one is a no-op: play a copy.
-        guard let s = (NSSound(named: kind == .needsYou ? "Pop" : "Tink")?.copy() as? NSSound) else {
+        // A saved sound that is on disk but will not load falls back to the default, so a pick never makes a kind silent.
+        guard play(soundName(kind)) || play(SoundChoice.defaultName(kind)) else { return }
+        cooldowns.record(kind, session: sessionId, at: now)
+    }
+
+    /// macOS system sounds on this Mac (#163), read fresh so a sound the user adds shows up.
+    static func installedSounds() -> [String] {
+        SoundChoice.installedNames(fromFiles: (try? FileManager.default.contentsOfDirectory(atPath: "/System/Library/Sounds")) ?? [])
+    }
+
+    /// The name that plays for this kind: the saved pick, or the default when it is unset or no longer installed.
+    func soundName(_ kind: SoundKind) -> String {
+        SoundChoice.name(for: kind, defaults: defaults, installed: Self.installedSounds())
+    }
+
+    func setSound(_ name: String, for kind: SoundKind) { defaults.set(name, forKey: SoundChoice.key(kind)) }
+
+    /// Play one named sound now, ignoring the mute rules: used by the picker so the user hears what they choose.
+    @discardableResult
+    func play(_ name: String) -> Bool {
+        // The named sound is a shared instance and play() on a playing one is a no-op: play a copy.
+        guard let s = (NSSound(named: name)?.copy() as? NSSound) else {
             if !warnedMissing { warnedMissing = true; NSLog("Chippy: built-in sound missing") }
-            return
+            return false
         }
         playing.removeAll { !$0.isPlaying }
         playing.append(s)
         _ = s.play()
-        cooldowns.record(kind, session: sessionId, at: now)
+        return true
     }
 }

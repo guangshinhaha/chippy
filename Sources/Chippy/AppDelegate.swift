@@ -186,6 +186,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let soundItem = NSMenuItem(title: "Play sounds", action: #selector(toggleSounds(_:)), keyEquivalent: "")
         soundItem.target = self; soundItem.state = sounds.enabled ? .on : .off
         menu.addItem(soundItem)
+        for (title, kind) in [("Sound: needs you", SoundKind.needsYou), ("Sound: finished", SoundKind.done)] {
+            let sub = NSMenu(); sub.delegate = self
+            let parent = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            parent.submenu = sub; parent.tag = kind == .needsYou ? 0 : 1; parent.representedObject = "sound"
+            menu.addItem(parent)
+        }
         let focusItem = NSMenuItem(title: "Quiet during Focus (best effort, needs Full Disk Access)", action: #selector(toggleFocusQuiet(_:)), keyEquivalent: "")
         focusItem.target = self; focusItem.state = sounds.focusQuietEnabled ? .on : .off
         menu.addItem(focusItem)
@@ -328,7 +334,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// A sound submenu is filled here, before it is shown (the reliable hook for a submenu), with only its own list.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        if let parent = menu.supermenu?.items.first(where: { $0.submenu === menu }), parent.representedObject as? String == "sound" {
+            fillSoundMenu(menu, kind: parent.tag == 0 ? .needsYou : .done)
+        }
+    }
+
     func menuWillOpen(_ menu: NSMenu) {
+        if let parent = menu.supermenu?.items.first(where: { $0.submenu === menu }), parent.representedObject as? String == "sound" { return }
         focusHintItem.isHidden = !sounds.focusUnreadable // a hint in the menu only, never a nag
         let stale = hookStaleness()
         repairItem.isHidden = stale.isEmpty
@@ -380,6 +394,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleSounds(_ sender: NSMenuItem) {
         sounds.enabled.toggle()
         sender.state = sounds.enabled ? .on : .off
+    }
+
+    /// Fill a sound submenu when it opens: every installed system sound, the current one ticked (#163).
+    private func fillSoundMenu(_ menu: NSMenu, kind: SoundKind) {
+        menu.removeAllItems()
+        let current = sounds.soundName(kind)
+        for name in SoundPlayer.installedSounds() {
+            let mi = NSMenuItem(title: name, action: #selector(pickSound(_:)), keyEquivalent: "")
+            mi.target = self; mi.tag = kind == .needsYou ? 0 : 1
+            mi.state = name == current ? .on : .off
+            menu.addItem(mi)
+        }
+    }
+
+    @objc private func pickSound(_ sender: NSMenuItem) {
+        let kind: SoundKind = sender.tag == 0 ? .needsYou : .done
+        sounds.setSound(sender.title, for: kind)
+        sounds.play(sender.title) // a preview, whatever the mute rules say
     }
 
     @objc private func openFullDiskAccess() {
