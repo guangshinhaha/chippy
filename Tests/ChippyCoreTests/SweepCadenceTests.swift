@@ -182,7 +182,7 @@ final class SweepCadenceTests: XCTestCase {
         XCTAssertTrue(m.sweepInputs.panelOpen)
     }
 
-    func testEveryStateThatSweepActsOnReportsAtLeastOneInput() {
+    func testAPendingRequestKeepsTheFastCadence() {
         // Sweep's work, and the input that keeps it at 0.5s: hang-up and wait-over (pending), fold (pending, folded), peek expiry (peeking),
         // chip expiry (hasChips), quiet ending (quietFolded, pending), open-panel freshness (panelOpen). Away poll, sleep and Recent prune are
         // 5s-grained already (awayPollInterval, a 5 minute idle clock, a 30 minute TTL), so they need no input.
@@ -231,15 +231,39 @@ final class SweepCadenceTests: XCTestCase {
     // MARK: keep-awake timer policy
 
     func testKeepAwakeTimerRunsOnlyWhileAModeIsOn() {
-        XCTAssertFalse(AwakePolicy.needsTimer(effective: .off))
-        XCTAssertTrue(AwakePolicy.needsTimer(effective: .agents))
-        XCTAssertTrue(AwakePolicy.needsTimer(effective: .agentsLid))
+        XCTAssertFalse(AwakePolicy.needsTimer(effective: .off, clearPending: false))
+        XCTAssertTrue(AwakePolicy.needsTimer(effective: .agents, clearPending: false))
+        XCTAssertTrue(AwakePolicy.needsTimer(effective: .agentsLid, clearPending: false))
+    }
+
+    /// The reviewer's case: mode off, but `pmset disablesleep 0` failed, so the 5s tick is the only retry. It must keep running.
+    func testKeepAwakeTimerKeepsRunningWhileAClearIsStillOwed() {
+        XCTAssertTrue(AwakePolicy.needsTimer(effective: .off, clearPending: true))
+    }
+
+    /// Through the real SleepDisabler: a failed clear leaves `needsClear` true (timer stays), a successful one ends it.
+    func testFailedClearKeepsTimerAndSuccessfulClearStopsIt() {
+        let marker = scratchURL("disabler-marker")
+        var succeed = false
+        var finish: ((Bool) -> Void)?
+        var clock = t0
+        let d = SleepDisabler(marker: marker, now: { clock }, pump: { _ in }) { _, done in finish = done }
+        d.set(true); finish?(true)
+        XCTAssertTrue(AwakePolicy.needsTimer(effective: .off, clearPending: d.needsClear)) // mode went off, setting still held
+        d.set(false); finish?(succeed) // clear fails
+        XCTAssertTrue(d.needsClear)
+        XCTAssertTrue(AwakePolicy.needsTimer(effective: .off, clearPending: d.needsClear))
+        clock = clock.addingTimeInterval(SleepDisabler.retryFloor + 1)
+        succeed = true
+        d.set(false); finish?(succeed) // the retry the timer exists for
+        XCTAssertFalse(d.needsClear)
+        XCTAssertFalse(AwakePolicy.needsTimer(effective: .off, clearPending: d.needsClear))
     }
 
     func testKeepAwakeTimerStopsWhenTheModeExpiresAndAtLaunchWithAnExpiredMode() {
         let until = t0.addingTimeInterval(60)
         func needs(_ mode: AwakeMode, at now: Date, setup: Bool = true) -> Bool {
-            AwakePolicy.needsTimer(effective: AwakePolicy.effectiveMode(mode: mode, until: until, now: now, setupInstalled: setup))
+            AwakePolicy.needsTimer(effective: AwakePolicy.effectiveMode(mode: mode, until: until, now: now, setupInstalled: setup), clearPending: false)
         }
         XCTAssertTrue(needs(.agents, at: t0))
         XCTAssertFalse(needs(.agents, at: until)) // expiry

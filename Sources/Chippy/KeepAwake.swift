@@ -83,7 +83,7 @@ final class KeepAwake {
     /// changes the mode (pick, duration, setup, expiry, launch) ends in `evaluate`, so this is the single place the timer starts and stops.
     /// Sessions changing need no tick: the `model.$state` sink calls `evaluate` for agentsLid too.
     private func syncTimer(effective: AwakeMode) {
-        guard AwakePolicy.needsTimer(effective: effective) else { timer?.invalidate(); timer = nil; return }
+        guard AwakePolicy.needsTimer(effective: effective, clearPending: disabler.needsClear) else { timer?.invalidate(); timer = nil; return }
         guard timer == nil else { return }
         let t = Timer.scheduledTimer(withTimeInterval: Self.tick, repeats: true) { [weak self] _ in
             DispatchQueue.main.async { self?.evaluate() }
@@ -220,9 +220,9 @@ final class KeepAwake {
         let (pct, onAC) = AwakePolicy.needsBattery(effective: eff) ? Self.battery() : (nil, true)
         let want = AwakePolicy.lidDecision(hold: hold, lidModeEnabled: eff == .agentsLid, percent: pct, onAC: onAC)
         lowBattery = want == .lowBattery
-        syncTimer(effective: eff)
         // One pmset call at a time; a request made while one is in flight is dropped and redone from onIdle.
         if want == .on { disabler.set(true) } else { disabler.set(false) }
+        syncTimer(effective: eff) // after the call: a clear still owed (needsClear) keeps the timer so a failed one is retried
         refreshMenu()
     }
 
