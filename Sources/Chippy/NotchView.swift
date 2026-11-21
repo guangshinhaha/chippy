@@ -13,7 +13,7 @@ struct StateIcon: View {
 }
 
 /// Incoming content: fades in with a small scale from the top, a beat after the shape starts growing (#214: no blur).
-/// Reduce Motion: a near-instant fade, no scale.
+/// Reduce Motion: a short fade, no scale.
 struct Reveal: ViewModifier {
     let delay: Double
     @Environment(\.accessibilityReduceMotion) private var reduce
@@ -23,7 +23,7 @@ struct Reveal: ViewModifier {
         content
             .opacity(on ? 1 : 0)
             .scaleEffect(reduce || on ? 1 : 0.96, anchor: .top)
-            .onAppear { withAnimation(Motion.or(Motion.enter.delay(delay), reduce: reduce)) { on = true } }
+            .onAppear { withAnimation(Motion.fade(Motion.enter.delay(delay), reduce: reduce)) { on = true } }
     }
 }
 
@@ -54,7 +54,7 @@ struct TimeoutNote: View {
             let left = Int(NeedsMeFold.timeLeft(createdAt: createdAt, timeout: timeout, now: ctx.date).rounded(.up))
             if left > 0 {
                 Text("times out in \(left)s").font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.55))
-                    .accessibilityLabel("Times out to the terminal in \(left) seconds")
+                    .accessibilityLabel("Times out to the terminal in \(CountLabel.counted(left, "second"))")
             }
         }
     }
@@ -88,7 +88,7 @@ struct CountBadge: View {
             .reveal(0.08)
             .frame(minWidth: min(24, max(maxWidth, 16)), maxWidth: max(maxWidth, 16), minHeight: 24)
             .contentShape(Rectangle())
-            .onTapGesture(perform: onTap)
+            .pressFeedback().onTapGesture(perform: onTap)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(dotLabel)
             .accessibilityHint("Opens the list of everything waiting")
@@ -111,13 +111,13 @@ struct CountBadge: View {
         let fraction = deadline.map { NeedsMeFold.fractionLeft(createdAt: $0.start, timeout: $0.end.timeIntervalSince($0.start), now: now) } ?? 1
         let showMark = mark != nil && maxWidth >= 34
         let label = needsYou
-            ? "\(text) waiting, needs you" + (showMark ? mark.map { ", next from \(markRepo ?? "one repo"), \($0.spokenShort)" } ?? "" : "") + (left.map { ", times out to the terminal in \(Int($0.rounded(.up))) seconds" } ?? "")
+            ? "\(text) waiting, needs you" + (showMark ? mark.map { ", next from \(markRepo ?? "one repo"), \($0.spokenShort)" } ?? "" : "") + (left.map { ", times out to the terminal in \(CountLabel.counted(Int($0.rounded(.up)), "second"))" } ?? "")
             : "\(text) finished waiting"
         let pulsing = needsYou && pulse && !reduceMotion
         return HStack(spacing: 3) {
             if showMark, let mark { IdentityMark(identity: mark, size: 11) }
             Text(text).font(.system(size: 10, weight: .bold, design: .rounded).monospacedDigit()).foregroundStyle(needsYou ? .white : .black)
-                .lineLimit(1).minimumScaleFactor(0.6)
+                .lineLimit(1).minimumScaleFactor(0.8) // 10pt x 0.8 = 8pt floor (C41)
         }
             .padding(.horizontal, 4).frame(minWidth: 16, maxWidth: max(maxWidth, 16), minHeight: 16)
             .background(Capsule().fill(needsYou ? Color.orange : .white.opacity(0.92)))
@@ -130,7 +130,7 @@ struct CountBadge: View {
             // A real, larger tap target (24pt), never wider than the wing / tab the badge lives in.
             .frame(minWidth: min(24, max(maxWidth, 16)), maxWidth: max(maxWidth, 16), minHeight: 24)
             .contentShape(Rectangle())
-            .onTapGesture(perform: onTap)
+            .pressFeedback().onTapGesture(perform: onTap)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(label)
             .accessibilityHint("Opens the list of everything waiting")
@@ -173,7 +173,7 @@ struct NotchView: View {
             ZStack(alignment: .top) {
                 content
                     .id(model.density)
-                    .transition(.asymmetric(insertion: .identity, removal: .opacity.animation(reduceMotion ? Motion.instantEase : Motion.exit)))
+                    .transition(.asymmetric(insertion: .identity, removal: .opacity.animation(Motion.fade(Motion.exit, reduce: reduceMotion))))
             }
             .frame(width: size.width, height: size.height, alignment: .top)
             .animation(nil, value: size)
@@ -256,7 +256,7 @@ struct NotchView: View {
                 GlanceRow(label: model.repoLabel(cwd: row.cwd, project: row.project), mark: model.identity(cwd: row.cwd, project: row.project), text: line.text, live: line.live)
             }
             if ordered.count > Self.sessionRowCap {
-                Text("\(ordered.count - Self.sessionRowCap) more sessions").font(.caption2).foregroundStyle(.white.opacity(0.6))
+                Text("\(CountLabel.counted(ordered.count - Self.sessionRowCap, "more session"))").font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.6))
             }
         }
     }
@@ -266,7 +266,7 @@ struct NotchView: View {
         ForEach(model.terminalItems.reversed().prefix(Self.terminalCardCap)) { t in TerminalCard(item: t, repo: model.repoLabel(cwd: t.cwd, project: t.project).text, mark: model.identity(cwd: t.cwd, project: t.project)) { model.dismissTerminal(t.sessionId) }.reveal(0.12) }
         let hidden = model.terminalItems.count - Self.terminalCardCap
         if hidden > 0 {
-            Text("\(hidden) more asked in terminal").font(.caption2).foregroundStyle(.white.opacity(0.6)).reveal(0.12)
+            Text("\(hidden) more asked in terminal").font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.6)).reveal(0.12)
         }
     }
 
@@ -314,9 +314,9 @@ struct NotchView: View {
                 HStack(spacing: 6) {
                     Color.clear.frame(width: NotchMetrics.glanceIcon + 12)
                     if let m = chip.mark { IdentityMark(identity: m, size: 12) }
-                    Text(chip.text).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.tail)
+                    Text(chip.text).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.tail).help(chip.text)
                     if model.doneItems.count + model.terminalItems.count > 1 {
-                        Text("+" + CountLabel.short(model.doneItems.count + model.terminalItems.count - 1)).font(.caption2).foregroundStyle(.white.opacity(0.6))
+                        Text("+" + CountLabel.short(model.doneItems.count + model.terminalItems.count - 1)).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.6))
                             .accessibilityLabel("\(model.doneItems.count + model.terminalItems.count - 1) more")
                     }
                     Spacer(minLength: 0)
@@ -337,9 +337,9 @@ struct NotchView: View {
                     if let m = chip.mark { IdentityMark(identity: m, size: 12) }
                     Text(chip.text)
                         .font(.caption.bold()).foregroundStyle(.white)
-                        .lineLimit(1).truncationMode(.tail)
+                        .lineLimit(1).truncationMode(.tail).help(chip.text)
                     if model.doneItems.count + model.terminalItems.count > 1 {
-                        Text("+" + CountLabel.short(model.doneItems.count + model.terminalItems.count - 1)).font(.caption2).foregroundStyle(.white.opacity(0.6))
+                        Text("+" + CountLabel.short(model.doneItems.count + model.terminalItems.count - 1)).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.6))
                             .accessibilityLabel("\(model.doneItems.count + model.terminalItems.count - 1) more")
                     }
                     Spacer(minLength: 0)
@@ -368,7 +368,7 @@ struct NotchView: View {
                         Image(systemName: "gearshape.fill").font(.callout).foregroundStyle(.white.opacity(0.7))
                             .frame(width: 28, height: 28).contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(PressStyle())
                     .help("Chippy menu")
                     .accessibilityLabel("Chippy menu")
                 }
@@ -479,7 +479,7 @@ struct ApprovalCard: View {
                 .lineLimit(12) // backstop only: preview() already bounds rows and keeps head, tail and a hidden-count marker
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(1).truncationMode(.head)
+            Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(1).truncationMode(.head).help(req.cwd)
             TourCaption(sessionId: req.sessionId, step: .approval)
             HStack(spacing: 8) {
                 ChipButton(title: "Allow", hint: "\(ShortcutKeys.prefix)Y", kind: .primary) { decide(.allow) }
@@ -533,13 +533,13 @@ struct PlanCard: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if plan.truncated || v.hidden > 0 {
-                    let more = v.hidden > 0 ? "\(v.hidden) more line\(v.hidden == 1 ? "" : "s")" : nil
+                    let more = v.hidden > 0 ? "\(CountLabel.counted(v.hidden, "more line"))" : nil
                     let tail = plan.truncated ? "plan continues in the terminal" : nil
-                    Text(ApprovalIntent.marker([more, tail].compactMap { $0 }.joined(separator: " · "))).font(.caption2).foregroundStyle(.white.opacity(0.6))
+                    Text(ApprovalIntent.marker([more, tail].compactMap { $0 }.joined(separator: " · "))).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.6))
                 }
                 let removed = plan.hiddenRemoved(expanded: expanded)
                 if removed > 0 {
-                    Text("\(removed) hidden character\(removed == 1 ? "" : "s") removed").font(.caption2).foregroundStyle(.orange.opacity(0.85))
+                    Text("\(CountLabel.counted(removed, "hidden character")) removed").font(.caption2.monospacedDigit()).foregroundStyle(.orange.opacity(0.85))
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -550,10 +550,10 @@ struct PlanCard: View {
             }
             .onPreferenceChange(QuestionBodyHeight.self) { bodyHeight = $0 }
             HStack(spacing: 6) {
-                if plan.stepCount > 0 { Text("\(plan.stepCount) step\(plan.stepCount == 1 ? "" : "s")").font(.caption2).foregroundStyle(.white.opacity(0.5)) }
-                if let f = plan.fileName { Text(f).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(1).truncationMode(.middle) }
+                if plan.stepCount > 0 { Text(CountLabel.counted(plan.stepCount, "step")).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.5)) }
+                if let f = plan.fileName { Text(f).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(1).truncationMode(.middle).help(f) }
             }
-            Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(1).truncationMode(.head)
+            Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(1).truncationMode(.head).help(req.cwd)
             HStack(spacing: 8) {
                 ChipButton(title: plan.truncated ? "Approve (partly shown)" : "Approve", kind: .primary) { decide(.allow) }
                     .help(plan.truncated ? "Approve the part shown (click only: the plan continues in the terminal)"
@@ -589,14 +589,71 @@ struct ChipButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 5) {
-                Text(title)
-                if let hint { Text(hint).font(.caption2).opacity(0.75) }
+                Text(title).monospacedDigit() // "All 12" keeps its width as the count changes
+                if let hint { Text(hint).font(.caption2).opacity(0.85) } // quiet 0.6 x 0.85 = 0.51 (C39)
             }
         }
             .buttonStyle(ChipStyle(kind: kind, hover: hover && !disabled, disabled: disabled))
             .disabled(disabled)
             .keyboardShortcut(isDefault ? .defaultAction : nil)
             .onHover { hover = $0 }
+    }
+}
+
+/// Press feedback for plain icon and text buttons (#C19): scale on press, a dim instead under Reduce Motion.
+/// Driven by `isPressed`, so keyboard selection (which never presses) does not animate (#208).
+struct PressStyle: ButtonStyle {
+    var scale: CGFloat = 0.96
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed && !reduceMotion ? scale : 1)
+            .opacity(configuration.isPressed && reduceMotion ? 0.6 : 1)
+            .animation(Motion.press, value: configuration.isPressed)
+    }
+}
+
+/// The same feedback for a row that opens on `onTapGesture`. The pointer-down state comes from a zero-distance drag
+/// that runs alongside the tap, so only a real press shows it; arrow/Return selection never does (#208).
+/// `dimOnly` dims instead of scaling, for rows that hold their own buttons: a scaled row would move those buttons under
+/// a stationary pointer. `enabled: false` adds nothing (a row with no row-level tap).
+struct PressFeedback: ViewModifier {
+    var scale: CGFloat = 0.98
+    var dimOnly = false
+    var enabled = true
+    /// `@GestureState` resets itself when the gesture is cancelled, so a row cannot stay shrunk.
+    @GestureState private var pressed = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        if enabled {
+            let dims = dimOnly || reduceMotion
+            content
+                .simultaneousGesture(DragGesture(minimumDistance: 0).updating($pressed) { _, state, _ in state = true })
+                .scaleEffect(pressed && !dims ? scale : 1)
+                .opacity(pressed && dims ? (dimOnly ? 0.8 : 0.6) : 1)
+                .animation(Motion.press, value: pressed)
+        } else {
+            content
+        }
+    }
+}
+
+extension View {
+    func pressFeedback(scale: CGFloat = 0.98, dimOnly: Bool = false, enabled: Bool = true) -> some View {
+        modifier(PressFeedback(scale: scale, dimOnly: dimOnly, enabled: enabled))
+    }
+
+    /// A 24pt-tall, 24pt-wide hit frame around a view drawn `drawn`pt tall (C27). The extra height is given back with a
+    /// negative padding, so the layout, and so every settled row height, stays as drawn. Attach the tap or Button after it.
+    /// `below` grows the target downward only, for a control directly under a row it must not cover.
+    func hitTarget24(drawn: CGFloat, below: Bool = false) -> some View {
+        let inset = max(0, (24 - drawn) / 2)
+        if below {
+            return AnyView(padding(.bottom, inset * 2).frame(minWidth: 24, minHeight: 24, alignment: .top).contentShape(Rectangle()).padding(.bottom, -inset * 2))
+        }
+        return AnyView(padding(.vertical, inset).frame(minWidth: 24, minHeight: 24).contentShape(Rectangle()).padding(.vertical, -inset))
     }
 }
 
@@ -669,7 +726,6 @@ struct QuestionCard: View {
     @FocusState private var fieldFocused: Bool
     /// Typed text per question text; replaces the selection for that question. Memory only (the model keeps the drafts).
     @State private var texts: [String: String]
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var step: Int
     /// Why Return did nothing on the field (empty, too long, one line), shown under it on the step where it happened.
     @State private var hint: String?
@@ -697,11 +753,11 @@ struct QuestionCard: View {
                 Text(lead).font(.caption2).foregroundStyle(.white.opacity(0.55))
                     .lineLimit(leadExpanded ? nil : 4)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                    .onTapGesture { leadExpanded.toggle() }
+                    .hitTarget24(drawn: 13) // one caption2 line, at least
+                    .pressFeedback().onTapGesture { leadExpanded.toggle() }
             }
             Text(count > 1 ? "\(q.header.isEmpty ? "Question" : q.header) · \(step + 1) of \(count)" : (q.header.isEmpty ? "Claude asks" : q.header))
-                .font(.caption2).foregroundStyle(.white.opacity(0.6))
+                .font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.6))
             Text(q.question).font(.caption.bold()).foregroundStyle(.white).lineLimit(3)
             ForEach(Array(q.options.enumerated()), id: \.offset) { i, o in
                 let on = q.multiSelect && answers[q.question]?.contains(o.label) == true
@@ -717,11 +773,11 @@ struct QuestionCard: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10).padding(.vertical, 5)
+                .padding(.horizontal, 10).padding(.vertical, 5).frame(minHeight: 24) // a one-line option was 22pt: 24pt target (C27)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: on ? 0.26 : 0.18)))
-                .animation(reduceMotion ? Motion.instantEase : Motion.hover, value: on)
+                .animation(nil, value: on) // hotkey-driven: instant (#208)
                 .contentShape(Rectangle())
-                .onTapGesture { pick(i) }
+                .pressFeedback().onTapGesture { pick(i) } // press only: `on` stays instant (#208)
                 .accessibilityAddTraits(on ? .isSelected : [])
             }
             if freeText, !q.multiSelect { replyField(q) }
@@ -887,8 +943,8 @@ struct DoneCard: View {
                 .id(reply)
             TourCaption(sessionId: item.sessionId, step: .done)
             HStack {
-                Text(item.files == 0 ? "No file edits" : "\(item.files) file\(item.files == 1 ? "" : "s") · +\(item.added) −\(item.removed)")
-                    .font(.caption2).foregroundStyle(.white.opacity(0.6))
+                Text(item.files == 0 ? "No file edits" : "\(CountLabel.counted(item.files, "file")) · +\(item.added) −\(item.removed)")
+                    .font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.6))
                 Spacer()
                 if TerminalJump.available(item.host) {
                     OpenTerminalButton(host: item.host, onOpened: dismiss)
@@ -937,7 +993,7 @@ struct SummaryView: View {
             case .paragraph(let r), .heading(let r): text(r).foregroundColor(.white.opacity(0.85))
             case .ordered(let n, let r):
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("\(n).").font(.caption).foregroundColor(.white.opacity(0.5))
+                    Text("\(n).").font(.caption.monospacedDigit()).foregroundColor(.white.opacity(0.5))
                     text(r).foregroundColor(.white.opacity(0.85))
                 }
             case .bullet(let r):
@@ -984,8 +1040,8 @@ struct SummaryView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold)).rotationEffect(.degrees(open ? 90 : 0))
                         Text(open ? "Hide details" : "Show details").font(.caption2)
-                    }.foregroundStyle(.white.opacity(0.6)).contentShape(Rectangle())
-                }.buttonStyle(.plain)
+                    }.foregroundStyle(.white.opacity(0.6)).hitTarget24(drawn: 13) // 24pt target, layout unchanged (C27)
+                }.buttonStyle(PressStyle())
                 .accessibilityLabel(open ? "Hide details" : "Show details")
                 if open {
                     // Measured, not ViewThatFits + maxHeight: that flexible frame claims the full 240pt it is offered,
@@ -1070,15 +1126,20 @@ struct NotchShape: Shape {
     }
 
     func path(in rect: CGRect) -> Path {
+        // Cubic corners with longer handles than a circular arc (0.5523) ease curvature in and out like a continuous corner.
+        // Endpoints stay `radius` from the corner, so the silhouette never leaves the rect.
+        let handle = radius * 0.68
         var p = Path()
         p.move(to: CGPoint(x: rect.minX, y: rect.minY))
         p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
         p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - radius))
-        p.addQuadCurve(to: CGPoint(x: rect.maxX - radius, y: rect.maxY),
-                       control: CGPoint(x: rect.maxX, y: rect.maxY))
+        p.addCurve(to: CGPoint(x: rect.maxX - radius, y: rect.maxY),
+                   control1: CGPoint(x: rect.maxX, y: rect.maxY - radius + handle),
+                   control2: CGPoint(x: rect.maxX - radius + handle, y: rect.maxY))
         p.addLine(to: CGPoint(x: rect.minX + radius, y: rect.maxY))
-        p.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.maxY - radius),
-                       control: CGPoint(x: rect.minX, y: rect.maxY))
+        p.addCurve(to: CGPoint(x: rect.minX, y: rect.maxY - radius),
+                   control1: CGPoint(x: rect.minX + radius - handle, y: rect.maxY),
+                   control2: CGPoint(x: rect.minX, y: rect.maxY - radius + handle))
         p.closeSubpath()
         return p
     }
@@ -1094,13 +1155,14 @@ struct AwayDigestView: View {
         TimelineView(.periodic(from: .now, by: 15)) { ctx in
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text("WHILE YOU WERE AWAY (\(digest.total))").font(.caption2.weight(.bold)).foregroundStyle(.white.opacity(0.5)).tracking(0.6)
+                    Text("WHILE YOU WERE AWAY (\(digest.total))").font(.caption2.weight(.bold).monospacedDigit()).foregroundStyle(.white.opacity(0.5)).tracking(0.6)
                     Spacer(minLength: 0)
                     ChipButton(title: "Dismiss", kind: .neutral) { model.dismissAwayDigest() }
                         .accessibilityHint("Moves the finished threads to Recent")
                 }
+                .accessibilityAddTraits(.isHeader)
                 ForEach(digest.rows) { row in rowView(row, now: ctx.date) }
-                if digest.hidden > 0 { Text("+\(digest.hidden) more").font(.caption2).foregroundStyle(.white.opacity(0.55)).padding(.leading, 10) }
+                if digest.hidden > 0 { Text("+\(digest.hidden) more").font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.55)).padding(.leading, 10) }
             }
         }
     }
@@ -1116,7 +1178,7 @@ struct AwayDigestView: View {
             Image(systemName: r.status == .needsYou ? "exclamationmark.circle.fill" : "checkmark.circle")
                 .font(.caption).foregroundStyle(r.status == .needsYou ? Color.orange : .white.opacity(0.5)).frame(width: 18)
             IdentityMark(identity: model.identity(row: r), size: 14)
-            Text(name).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle)
+            Text(name).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle).help(name)
             Text(status(r)).font(.caption2).foregroundStyle(.white.opacity(0.65)).lineLimit(1)
             Spacer(minLength: 8)
             Text(age).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.55))
@@ -1127,7 +1189,7 @@ struct AwayDigestView: View {
         .accessibilityHint(r.target != nil ? "Opens it" : "")
         return HStack(spacing: 4) {
             if let t = r.target {
-                Button { model.activate(t) } label: { content.contentShape(Rectangle()) }.buttonStyle(.plain)
+                Button { model.activate(t) } label: { content.contentShape(Rectangle()) }.buttonStyle(PressStyle(scale: 0.98))
             } else {
                 content
                 if TerminalJump.available(r.host) { OpenTerminalButton(host: r.host) }
@@ -1158,7 +1220,7 @@ struct RecentListView: View {
         return HStack(spacing: 10) {
             Image(systemName: "checkmark.circle").font(.caption).foregroundStyle(.white.opacity(0.5)).frame(width: 18)
             if let m = mark(item) { IdentityMark(identity: m, size: 14) }
-            Text(repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle)
+            Text(repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle).help(repo)
             Spacer(minLength: 8)
             Text(age).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.55))
             if TerminalJump.available(item.host) { OpenTerminalButton(host: item.host) }
@@ -1245,7 +1307,7 @@ struct PanelRowView: View {
             Image(systemName: symbol).font(.caption).foregroundStyle(tint).frame(width: 18)
             VStack(alignment: .leading, spacing: 2) {
                 RepoTitle(repo: row.label.repo, worktree: row.label.worktree, mark: mark)
-                Text(subtitle).font(.caption2).foregroundStyle(failure != nil ? Color.red.opacity(0.9) : (row.kind == .finished ? Color.white.opacity(0.6) : tint.opacity(0.95))).lineLimit(1).truncationMode(.tail)
+                Text(subtitle).font(.caption2.monospacedDigit()).foregroundStyle(failure != nil ? Color.red.opacity(0.9) : (row.kind == .finished ? Color.white.opacity(0.6) : tint.opacity(0.95))).lineLimit(1).truncationMode(.tail).help(subtitle)
             }
             .layoutPriority(1)
             Spacer(minLength: 6)
@@ -1255,6 +1317,7 @@ struct PanelRowView: View {
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(hover && !row.hasButton && canOpen ? 0.1 : 0)))
         .contentShape(Rectangle())
         .onHover { hover = $0 }
+        .pressFeedback(enabled: !row.hasButton) // a row with its own buttons has no row tap
         .onTapGesture { if !row.hasButton { openApp() } }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(spoken)
@@ -1310,11 +1373,11 @@ struct WaitingListView: View {
 
     private func section(_ title: String, count: Int, clearAll: (() -> Void)? = nil) -> some View {
         HStack {
-            Text("\(title) (\(count))").font(.caption2.weight(.bold)).foregroundStyle(.white.opacity(0.5)).tracking(0.6)
+            Text("\(title) (\(count))").font(.caption2.weight(.bold).monospacedDigit()).foregroundStyle(.white.opacity(0.5)).tracking(0.6)
             Spacer(minLength: 0)
             if let clearAll {
                 Button(action: clearAll) { Text("Clear all").font(.caption2).foregroundStyle(.white.opacity(0.6)).padding(.horizontal, 6).frame(minHeight: 24).contentShape(Rectangle()) } // 24pt target; the 22pt header frame keeps its height
-                    .buttonStyle(.plain).help("Move every finished thread to Recent").accessibilityLabel("Clear all finished")
+                    .buttonStyle(PressStyle()).help("Move every finished thread to Recent").accessibilityLabel("Clear all finished")
             }
         }
         .padding(.horizontal, 10).frame(height: WaitingList.sectionHeaderHeight)
@@ -1346,10 +1409,11 @@ struct WaitingListView: View {
     private func moreRow(_ layout: WaitingLayout) -> some View {
         let selected = model.listSelection == .moreToggle
         let text = layout.expanded ? "Show fewer" : "+\(layout.hiddenFinished) more"
-        return Text(text).font(.caption2).foregroundStyle(.white.opacity(selected ? 0.9 : 0.55))
+        return Text(text).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(selected ? 0.9 : 0.55))
             .padding(.horizontal, 10).frame(maxWidth: .infinity, minHeight: WaitingList.moreRowHeight, maxHeight: WaitingList.moreRowHeight, alignment: .leading)
             .background(rowBackground(selected: selected, hover: false))
-            .contentShape(Rectangle()).onTapGesture { model.toggleFinished() }
+            .hitTarget24(drawn: WaitingList.moreRowHeight, below: true) // drawn 18pt (settled row height), 24pt target (C27)
+            .pressFeedback().onTapGesture { model.toggleFinished() }
             .accessibilityLabel(layout.expanded ? "Show fewer finished" : "\(layout.hiddenFinished) more finished, show all")
             .accessibilityAddTraits(.isButton)
             .accessibilityAction(.default) { model.toggleFinished() }
@@ -1441,12 +1505,12 @@ struct RepoTitle: View {
     var body: some View {
         HStack(spacing: 5) {
             if let mark { IdentityMark(identity: mark, size: 14) }
-            Text(repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle).layoutPriority(1)
+            Text(repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle).help(repo).layoutPriority(1)
             if let worktree {
                 // Content width (#209): 16 Characters from the core helper, and never wider than 110pt (wide glyphs middle-
                 // truncate). A short tag no longer claims the cap.
                 WidthCap(110) {
-                    Text(RepoLabel.worktreeTag(worktree)).font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1).truncationMode(.middle)
+                    Text(RepoLabel.worktreeTag(worktree)).font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1).truncationMode(.middle).help(worktree)
                         .padding(.horizontal, 5).padding(.vertical, 1).background(Capsule().fill(Color.white.opacity(0.12)))
                 }
                 .fixedSize(horizontal: true, vertical: false)
@@ -1480,10 +1544,10 @@ struct GlanceRow: View {
     var body: some View {
         HStack(spacing: 6) {
             IdentityMark(identity: mark, size: 12)
-            Text(label.repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle).layoutPriority(1)
+            Text(label.repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle).help(label.repo).layoutPriority(1)
             if let wt = label.worktree {
                 // Content width, 16 Characters and at most 90pt (#209).
-                WidthCap(90) { Text(RepoLabel.worktreeTag(wt)).font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1).truncationMode(.middle) }
+                WidthCap(90) { Text(RepoLabel.worktreeTag(wt)).font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1).truncationMode(.middle).help(wt) }
                     .fixedSize(horizontal: true, vertical: false)
             }
             Spacer(minLength: 6)
@@ -1532,7 +1596,7 @@ struct NeedsRow: View {
             Image(systemName: symbol).font(.caption).foregroundStyle(tint).frame(width: 18)
             VStack(alignment: .leading, spacing: 2) {
                 RepoTitle(repo: item.repo, worktree: item.worktree, mark: mark)
-                Text("\(item.label) · \(age)").font(.caption2).foregroundStyle(tint.opacity(0.95)).lineLimit(1).truncationMode(.tail)
+                Text("\(item.label) · \(age)").font(.caption2.monospacedDigit()).foregroundStyle(tint.opacity(0.95)).lineLimit(1).truncationMode(.tail).help("\(item.label) · \(age)")
             }
             .layoutPriority(1) // the names give way last-but-one; the buttons keep their size
             Spacer(minLength: 6)
@@ -1554,6 +1618,7 @@ struct NeedsRow: View {
         .background(rowBackground(selected: selected, hover: hover))
         .contentShape(Rectangle())
         .onHover { hover = $0 }
+        .pressFeedback(dimOnly: true) // holds its own buttons: dim, never scale
         .onTapGesture(perform: open)
         .animation(nil, value: selected) // keyboard-driven: instant (#208)
         .animation(Motion.hover, value: hover)
@@ -1582,7 +1647,7 @@ struct FinishedRow: View {
             RepoTitle(repo: item.repo, worktree: item.worktree, mark: mark).layoutPriority(1)
             if item.asksYou { Text("asks you").font(.caption2).foregroundStyle(Color.orange).lineLimit(1).fixedSize() }
             // The repo label wins space first, but the snippet (or "finished") keeps a floor so the row never reads as empty.
-            Text(item.snippet ?? "finished").font(.caption2).foregroundStyle(.white.opacity(0.5)).lineLimit(1).truncationMode(.tail)
+            Text(item.snippet ?? "finished").font(.caption2).foregroundStyle(.white.opacity(0.5)).lineLimit(1).truncationMode(.tail).help(item.snippet ?? "finished")
                 .frame(minWidth: 36, alignment: .leading)
             Spacer(minLength: 6)
             Text(age).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.5))
@@ -1590,12 +1655,13 @@ struct FinishedRow: View {
                 Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.white.opacity(0.7)).frame(width: 24, height: 24).contentShape(Rectangle())
             }
             .padding(.horizontal, -2) // 24 x 24 target, same 20pt layout width: the age and snippet do not move
-            .buttonStyle(.plain).opacity(hover || selected ? 1 : 0).allowsHitTesting(hover || selected).help("Dismiss (moves to Recent)").accessibilityLabel("Dismiss")
+            .buttonStyle(PressStyle()).opacity(hover || selected ? 1 : 0).allowsHitTesting(hover || selected).help("Dismiss (moves to Recent)").accessibilityLabel("Dismiss")
         }
         .padding(.horizontal, 10)
         .background(rowBackground(selected: selected, hover: hover))
         .contentShape(Rectangle())
         .onHover { hover = $0 }
+        .pressFeedback(dimOnly: true) // holds its own buttons: dim, never scale
         .onTapGesture(perform: open)
         .animation(nil, value: selected) // keyboard-driven: instant (#208)
         .animation(Motion.hover, value: hover)

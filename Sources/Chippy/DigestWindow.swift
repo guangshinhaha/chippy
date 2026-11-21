@@ -32,7 +32,7 @@ struct DigestWindowView: View {
     var body: some View {
         let rows = DigestWindowRows.rows(from: model.awayDigest)
         VStack(alignment: .leading, spacing: 0) {
-            Text(DigestWindowRows.title(model.awayDigest)).font(.headline).padding([.horizontal, .top], 16).padding(.bottom, 8)
+            Text(DigestWindowRows.title(model.awayDigest)).font(.headline.monospacedDigit()).padding([.horizontal, .top], 16).padding(.bottom, 8)
             if rows.isEmpty {
                 Text("No agent finished or asked for you while you were away, or you already dealt with it.")
                     .font(.callout).foregroundStyle(.secondary).padding(16)
@@ -52,7 +52,7 @@ struct DigestWindowView: View {
             Image(systemName: r.needsYou ? "exclamationmark.circle.fill" : "checkmark.circle")
                 .foregroundStyle(r.needsYou ? Color.orange : .secondary).frame(width: 18)
             IdentityMark(identity: model.marks.identity(repo: r.repo, resolved: r.resolved), size: 14)
-            Text(r.name).bold().lineLimit(1).truncationMode(.middle)
+            Text(r.name).bold().lineLimit(1).truncationMode(.middle).help(r.name)
             Text(r.ended ? "\(r.statusText) · ended" : r.statusText).foregroundStyle(.secondary).lineLimit(1)
             Spacer(minLength: 8)
             Text(age).font(.caption.monospacedDigit()).foregroundStyle(.secondary)

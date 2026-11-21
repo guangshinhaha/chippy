@@ -27,4 +27,14 @@ final class CountLabelTests: XCTestCase {
     func testIntMaxDoesNotCrash() {
         XCTAssertEqual(CountLabel.short(Int.max), "99+")
     }
+
+    func testCountedSingularOnlyAtOne() {
+        XCTAssertEqual(CountLabel.counted(0, "session"), "0 sessions")
+        XCTAssertEqual(CountLabel.counted(1, "session"), "1 session")
+        XCTAssertEqual(CountLabel.counted(2, "session"), "2 sessions")
+        XCTAssertEqual(CountLabel.counted(1, "second"), "1 second")
+        XCTAssertEqual(CountLabel.counted(1, "more line"), "1 more line")
+        XCTAssertEqual(CountLabel.counted(3, "hidden character"), "3 hidden characters")
+        XCTAssertEqual(CountLabel.counted(2, "entry", plural: "entries"), "2 entries")
+    }
 }
