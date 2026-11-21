@@ -1,0 +1,28 @@
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode 26.4.1 (same compiler as the dev Mac)
+        run: sudo xcode-select -s /Applications/Xcode_26.4.1.app
+      - name: Toolchain
+        run: |
+          swift --version
+          xcodebuild -version
+      - name: Build and test
+        run: scripts/test.sh
