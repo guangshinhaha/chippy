@@ -117,7 +117,7 @@ struct CountBadge: View {
         return HStack(spacing: 3) {
             if showMark, let mark { IdentityMark(identity: mark, size: 11) }
             Text(text).font(.system(size: 10, weight: .bold, design: .rounded).monospacedDigit()).foregroundStyle(needsYou ? .white : .black)
-                .lineLimit(1).minimumScaleFactor(0.6)
+                .lineLimit(1).minimumScaleFactor(0.8) // 10pt x 0.8 = 8pt floor (C41)
         }
             .padding(.horizontal, 4).frame(minWidth: 16, maxWidth: max(maxWidth, 16), minHeight: 16)
             .background(Capsule().fill(needsYou ? Color.orange : .white.opacity(0.92)))
@@ -590,7 +590,7 @@ struct ChipButton: View {
         Button(action: action) {
             HStack(spacing: 5) {
                 Text(title)
-                if let hint { Text(hint).font(.caption2).opacity(0.75) }
+                if let hint { Text(hint).font(.caption2).opacity(0.85) } // quiet 0.6 x 0.85 = 0.51 (C39)
             }
         }
             .buttonStyle(ChipStyle(kind: kind, hover: hover && !disabled, disabled: disabled))
