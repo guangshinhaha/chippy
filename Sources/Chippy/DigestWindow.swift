@@ -52,7 +52,7 @@ struct DigestWindowView: View {
             Image(systemName: r.needsYou ? "exclamationmark.circle.fill" : "checkmark.circle")
                 .foregroundStyle(r.needsYou ? Color.orange : .secondary).frame(width: 18)
             IdentityMark(identity: model.marks.identity(repo: r.repo, resolved: r.resolved), size: 14)
-            Text(r.name).bold().lineLimit(1).truncationMode(.middle)
+            Text(r.name).bold().lineLimit(1).truncationMode(.middle).help(r.name)
             Text(r.ended ? "\(r.statusText) · ended" : r.statusText).foregroundStyle(.secondary).lineLimit(1)
             Spacer(minLength: 8)
             Text(age).font(.caption.monospacedDigit()).foregroundStyle(.secondary)

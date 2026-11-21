@@ -314,7 +314,7 @@ struct NotchView: View {
                 HStack(spacing: 6) {
                     Color.clear.frame(width: NotchMetrics.glanceIcon + 12)
                     if let m = chip.mark { IdentityMark(identity: m, size: 12) }
-                    Text(chip.text).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.tail)
+                    Text(chip.text).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.tail).help(chip.text)
                     if model.doneItems.count + model.terminalItems.count > 1 {
                         Text("+" + CountLabel.short(model.doneItems.count + model.terminalItems.count - 1)).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.6))
                             .accessibilityLabel("\(model.doneItems.count + model.terminalItems.count - 1) more")
@@ -337,7 +337,7 @@ struct NotchView: View {
                     if let m = chip.mark { IdentityMark(identity: m, size: 12) }
                     Text(chip.text)
                         .font(.caption.bold()).foregroundStyle(.white)
-                        .lineLimit(1).truncationMode(.tail)
+                        .lineLimit(1).truncationMode(.tail).help(chip.text)
                     if model.doneItems.count + model.terminalItems.count > 1 {
                         Text("+" + CountLabel.short(model.doneItems.count + model.terminalItems.count - 1)).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.6))
                             .accessibilityLabel("\(model.doneItems.count + model.terminalItems.count - 1) more")
@@ -551,7 +551,7 @@ struct PlanCard: View {
             .onPreferenceChange(QuestionBodyHeight.self) { bodyHeight = $0 }
             HStack(spacing: 6) {
                 if plan.stepCount > 0 { Text(CountLabel.counted(plan.stepCount, "step")).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.5)) }
-                if let f = plan.fileName { Text(f).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(1).truncationMode(.middle) }
+                if let f = plan.fileName { Text(f).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(1).truncationMode(.middle).help(f) }
             }
             Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(1).truncationMode(.head).help(req.cwd)
             HStack(spacing: 8) {
@@ -1155,7 +1155,7 @@ struct AwayDigestView: View {
             Image(systemName: r.status == .needsYou ? "exclamationmark.circle.fill" : "checkmark.circle")
                 .font(.caption).foregroundStyle(r.status == .needsYou ? Color.orange : .white.opacity(0.5)).frame(width: 18)
             IdentityMark(identity: model.identity(row: r), size: 14)
-            Text(name).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle)
+            Text(name).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle).help(name)
             Text(status(r)).font(.caption2).foregroundStyle(.white.opacity(0.65)).lineLimit(1)
             Spacer(minLength: 8)
             Text(age).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.55))
@@ -1197,7 +1197,7 @@ struct RecentListView: View {
         return HStack(spacing: 10) {
             Image(systemName: "checkmark.circle").font(.caption).foregroundStyle(.white.opacity(0.5)).frame(width: 18)
             if let m = mark(item) { IdentityMark(identity: m, size: 14) }
-            Text(repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle)
+            Text(repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle).help(repo)
             Spacer(minLength: 8)
             Text(age).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.55))
             if TerminalJump.available(item.host) { OpenTerminalButton(host: item.host) }
@@ -1284,7 +1284,7 @@ struct PanelRowView: View {
             Image(systemName: symbol).font(.caption).foregroundStyle(tint).frame(width: 18)
             VStack(alignment: .leading, spacing: 2) {
                 RepoTitle(repo: row.label.repo, worktree: row.label.worktree, mark: mark)
-                Text(subtitle).font(.caption2).foregroundStyle(failure != nil ? Color.red.opacity(0.9) : (row.kind == .finished ? Color.white.opacity(0.6) : tint.opacity(0.95))).lineLimit(1).truncationMode(.tail)
+                Text(subtitle).font(.caption2).foregroundStyle(failure != nil ? Color.red.opacity(0.9) : (row.kind == .finished ? Color.white.opacity(0.6) : tint.opacity(0.95))).lineLimit(1).truncationMode(.tail).help(subtitle)
             }
             .layoutPriority(1)
             Spacer(minLength: 6)
@@ -1481,12 +1481,12 @@ struct RepoTitle: View {
     var body: some View {
         HStack(spacing: 5) {
             if let mark { IdentityMark(identity: mark, size: 14) }
-            Text(repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle).layoutPriority(1)
+            Text(repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle).help(repo).layoutPriority(1)
             if let worktree {
                 // Content width (#209): 16 Characters from the core helper, and never wider than 110pt (wide glyphs middle-
                 // truncate). A short tag no longer claims the cap.
                 WidthCap(110) {
-                    Text(RepoLabel.worktreeTag(worktree)).font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1).truncationMode(.middle)
+                    Text(RepoLabel.worktreeTag(worktree)).font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1).truncationMode(.middle).help(worktree)
                         .padding(.horizontal, 5).padding(.vertical, 1).background(Capsule().fill(Color.white.opacity(0.12)))
                 }
                 .fixedSize(horizontal: true, vertical: false)
@@ -1520,10 +1520,10 @@ struct GlanceRow: View {
     var body: some View {
         HStack(spacing: 6) {
             IdentityMark(identity: mark, size: 12)
-            Text(label.repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle).layoutPriority(1)
+            Text(label.repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle).help(label.repo).layoutPriority(1)
             if let wt = label.worktree {
                 // Content width, 16 Characters and at most 90pt (#209).
-                WidthCap(90) { Text(RepoLabel.worktreeTag(wt)).font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1).truncationMode(.middle) }
+                WidthCap(90) { Text(RepoLabel.worktreeTag(wt)).font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1).truncationMode(.middle).help(wt) }
                     .fixedSize(horizontal: true, vertical: false)
             }
             Spacer(minLength: 6)
@@ -1572,7 +1572,7 @@ struct NeedsRow: View {
             Image(systemName: symbol).font(.caption).foregroundStyle(tint).frame(width: 18)
             VStack(alignment: .leading, spacing: 2) {
                 RepoTitle(repo: item.repo, worktree: item.worktree, mark: mark)
-                Text("\(item.label) · \(age)").font(.caption2).foregroundStyle(tint.opacity(0.95)).lineLimit(1).truncationMode(.tail)
+                Text("\(item.label) · \(age)").font(.caption2).foregroundStyle(tint.opacity(0.95)).lineLimit(1).truncationMode(.tail).help("\(item.label) · \(age)")
             }
             .layoutPriority(1) // the names give way last-but-one; the buttons keep their size
             Spacer(minLength: 6)
@@ -1623,7 +1623,7 @@ struct FinishedRow: View {
             RepoTitle(repo: item.repo, worktree: item.worktree, mark: mark).layoutPriority(1)
             if item.asksYou { Text("asks you").font(.caption2).foregroundStyle(Color.orange).lineLimit(1).fixedSize() }
             // The repo label wins space first, but the snippet (or "finished") keeps a floor so the row never reads as empty.
-            Text(item.snippet ?? "finished").font(.caption2).foregroundStyle(.white.opacity(0.5)).lineLimit(1).truncationMode(.tail)
+            Text(item.snippet ?? "finished").font(.caption2).foregroundStyle(.white.opacity(0.5)).lineLimit(1).truncationMode(.tail).help(item.snippet ?? "finished")
                 .frame(minWidth: 36, alignment: .leading)
             Spacer(minLength: 6)
             Text(age).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.5))
