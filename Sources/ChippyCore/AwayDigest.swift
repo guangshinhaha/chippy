@@ -50,6 +50,8 @@ public struct DigestRow: Identifiable, Equatable {
     /// Where a tap goes while the thread still has a chip or terminal row; nil for a Recent-only row.
     public let target: WaitingTarget?
     public let host: HostInfo?
+    /// From the persisted activity log after a restart (#168): the thread's chip is gone, so there is nothing to open.
+    public var ended = false
     public var id: String { sessionId }
 }
 
@@ -67,9 +69,15 @@ public enum AwayDigest {
         public var total: Int { rows.count + hidden }
     }
 
+    /// The digest from the activity log alone, for a `since...until` range (#168).
+    public static func build(logged: [ActivityEvent], since: Date, until: Date = .distantFuture) -> Result {
+        build(since: since, until: until, terminal: [], done: [], recent: [], cap: .max, logged: logged)
+    }
+
     public static func build(since: Date, until: Date = .distantFuture, terminal: [TerminalItem], done: [DoneItem], recent: [RecentItem],
                              label: (_ cwd: String, _ project: String) -> RepoLabel = { RepoLabel(repo: $1.isEmpty ? "unknown" : $1) },
-                             resolved: (_ cwd: String) -> Bool = { _ in true }, cap: Int = maxRows) -> Result {
+                             resolved: (_ cwd: String) -> Bool = { _ in true }, cap: Int = maxRows,
+                             logged: [ActivityEvent] = [], hash: (String) -> String = { $0 }) -> Result {
         var seen = Set<String>()
         var needs: [DigestRow] = [], finished: [DigestRow] = []
         for t in terminal where t.at >= since && t.at <= until && seen.insert(t.sessionId).inserted {
@@ -85,6 +93,22 @@ public enum AwayDigest {
         for r in recent where r.at >= since && r.at <= until && seen.insert(r.sessionId).inserted {
             finished.append(DigestRow(sessionId: r.sessionId, status: .finished, repo: r.label.repo, worktree: r.label.worktree, at: r.at,
                                       resolved: r.resolved, target: nil, host: r.host))
+        }
+        // Rows from the activity log (#168): only sessions the in-memory state no longer holds, one row per session (its latest event).
+        if !logged.isEmpty {
+            let held = Set(seen.map(hash))
+            var latest: [String: (event: ActivityEvent, at: Date)] = [:]
+            for e in logged {
+                guard let d = e.date, d >= since, d <= until, !held.contains(e.sid) else { continue }
+                if let l = latest[e.sid], l.at > d { continue }
+                latest[e.sid] = (e, d)
+            }
+            for (sid, l) in latest.sorted(by: { $0.key < $1.key }) {
+                let status: DigestRow.Status = l.event.status == .needsYou ? .needsYou : (l.event.status == .asksYou ? .asksYou : .finished)
+                let row = DigestRow(sessionId: sid, status: status, repo: l.event.repo, worktree: l.event.worktree, at: l.at, resolved: true,
+                                    target: nil, host: nil, ended: true)
+                if status == .needsYou { needs.append(row) } else { finished.append(row) }
+            }
         }
         let newest = finished.enumerated().sorted { $0.element.at != $1.element.at ? $0.element.at > $1.element.at : $0.offset < $1.offset }.map(\.element)
         let ordered = needs.sorted { $0.at < $1.at } + newest

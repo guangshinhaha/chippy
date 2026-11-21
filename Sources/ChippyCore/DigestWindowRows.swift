@@ -13,6 +13,8 @@ public struct DigestWindowRow: Identifiable, Equatable {
     public let target: WaitingTarget?
     public let resolved: Bool
     public let repo: String
+    /// Rebuilt from the saved log after a restart: its thread is gone, so no Open button (#168).
+    public let ended: Bool
 }
 
 public enum DigestWindowRows {
@@ -24,7 +26,7 @@ public enum DigestWindowRows {
     public static func rows(from digest: AwayDigest.Result?) -> [DigestWindowRow] {
         (digest?.rows ?? []).map { r in
             DigestWindowRow(id: r.sessionId, name: r.worktree.map { "\(r.repo) / \($0)" } ?? r.repo, statusText: statusText(r.status),
-                            needsYou: r.status == .needsYou, at: r.at, target: r.target, resolved: r.resolved, repo: r.repo)
+                            needsYou: r.status == .needsYou, at: r.at, target: r.target, resolved: r.resolved, repo: r.repo, ended: r.ended)
         }
     }
 

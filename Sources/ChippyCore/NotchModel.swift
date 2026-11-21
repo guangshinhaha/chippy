@@ -78,11 +78,23 @@ public final class NotchModel: ObservableObject {
     private var digestCache: (key: DigestKey, value: AwayDigest.Result?)?
     /// How many times the digest was actually built, for tests.
     private(set) var digestBuilds = 0
-    /// Start of the last away period that left something to report. The only thing kept for the digest (the rows are
-    /// rebuilt from state already held), so nothing new is stored, logged or sent (PDPA). Cleared once seen.
-    @Published public private(set) var awaySince: Date?
+    /// Start of the last away period that left something to report. With `awayEnd` it is saved (two dates, #168) so a restart
+    /// still knows which period the digest covers; the rows come from state already held plus the content-free activity log. Cleared once seen.
+    @Published public private(set) var awaySince: Date? { didSet { persistAway() } }
     /// When the user came back; the digest covers only `awaySince...awayEnd`, so later finishes never fold in.
-    @Published public private(set) var awayEnd: Date?
+    @Published public private(set) var awayEnd: Date? { didSet { persistAway() } }
+    /// The content-free activity log (#168), or nil (tests, the gallery): nothing is written without it.
+    private let activity: ActivityLog?
+    /// What the log held at launch. Only events from before this run: everything since is in memory, where the user can handle it.
+    private var loggedBefore: [ActivityEvent] = []
+    /// Test hooks (#168): the log's file, and the terminal-ask path without a socket.
+    var debugActivityURL: URL? { activity?.url }
+    func debugNoteTerminal(_ req: PendingRequest, now: Date) { noteTerminal(req, now: now) }
+    private func persistAway() { activity?.saveWindow(since: awaySince, end: awayEnd) }
+    private func record(_ status: ActivityEvent.Status, sessionId: String, cwd: String, project: String, at: Date) {
+        guard let activity, !Tour.isDemo(sessionId) else { return }
+        activity.record(status, sessionId: sessionId, label: identities.label(cwd: cwd, project: project), at: at)
+    }
     /// Last time the away signal was read; `sweep` runs every 0.5s but the signal is polled at most every `awayPollInterval`.
     private var lastAwayPoll: Date?
     public static let awayPollInterval: TimeInterval = 5
@@ -124,6 +136,7 @@ public final class NotchModel: ObservableObject {
                 always: AlwaysStore = AlwaysStore(), log: EventLog = EventLog(),
                 clock: @escaping () -> TimeInterval = PeekGate.monotonicNow,
                 identities: RepoIdentityCache = RepoIdentityCache(),
+                activity: ActivityLog? = nil,
                 tick: @escaping (@escaping () -> Void) -> Void = { DispatchQueue.main.async(execute: $0) }) {
         self.clock = clock
         self.identities = identities
@@ -133,9 +146,14 @@ public final class NotchModel: ObservableObject {
         self.always = always
         self.log = log
         self.tick = tick
+        self.activity = activity
         // A label that changed after git was read redraws the rows. Observers add up (a shared cache keeps every owner's),
         // and a burst of resolutions becomes one refresh per runloop tick.
         identities.addObserver { [weak self] in self?.labelsChanged() }
+        if let activity {
+            loggedBefore = activity.events()
+            if let w = activity.loadWindow() { awaySince = w.since; awayEnd = w.end; refresh() } // a restart mid-digest: rebuild it from the log
+        }
     }
 
     private let tick: (@escaping () -> Void) -> Void
@@ -210,7 +228,8 @@ public final class NotchModel: ObservableObject {
         let d = AwayDigest.build(since: since, until: until ?? .distantFuture, terminal: terminalItems, done: doneItems, recent: recent.items,
                                  label: { [identities] cwd, project in identities.label(cwd: cwd, project: project) },
                                  resolved: { [identities] in identities.isResolved(cwd: $0) },
-                                 cap: .max) // every covered chip is a row: none hides behind "+N more"
+                                 cap: .max, // every covered chip is a row: none hides behind "+N more"
+                                 logged: loggedBefore, hash: { [activity] in activity?.hash($0) ?? $0 })
         let value = d.isEmpty ? nil : d
         digestCache = (key, value)
         return value
@@ -684,6 +703,7 @@ public final class NotchModel: ObservableObject {
         var items = terminalItems.filter { $0.sessionId != req.sessionId }
         items.append(TerminalItem(sessionId: req.sessionId, project: req.project, at: now, host: host(for: req), tool: req.toolName, cwd: req.cwd))
         set(\.terminalItems, items)
+        record(.needsYou, sessionId: req.sessionId, cwd: req.cwd, project: req.project, at: now)
         // The row the user had selected turned into this terminal row (new id): selection follows it, not the top of the list.
         if listSelection == .pending(req.id) { listSelection = .terminal(req.sessionId) }
     }
@@ -979,6 +999,7 @@ public final class NotchModel: ObservableObject {
                 items.append(DoneItem(sessionId: r.id, project: r.project, branch: r.branch,
                                           files: r.filesEdited.count, added: r.added, removed: r.removed, reply: r.lastReply, prompt: r.lastPrompt, at: now, host: r.host, cwd: r.cwd))
                 set(\.doneItems, items)
+                if let d = items.last { record(d.asksYou ? .asksYou : .finished, sessionId: d.sessionId, cwd: d.cwd, project: d.project, at: now) }
                 let quiet = silence()
                 if !quiet.isQuiet { peek.start(now: clock(), hovering: hovering) }
                 if isNew, !Tour.isDemo(r.id) { onSound?(.done, r.id, r.host ?? payload.host, quiet) }
