@@ -12,8 +12,8 @@ struct StateIcon: View {
     }
 }
 
-/// Incoming content: fades in with a small scale and blur, a beat after the shape starts growing.
-/// Reduce Motion: a near-instant fade, no scale or blur.
+/// Incoming content: fades in with a small scale from the top, a beat after the shape starts growing (#214: no blur).
+/// Reduce Motion: a near-instant fade, no scale.
 struct Reveal: ViewModifier {
     let delay: Double
     @Environment(\.accessibilityReduceMotion) private var reduce
@@ -23,7 +23,6 @@ struct Reveal: ViewModifier {
         content
             .opacity(on ? 1 : 0)
             .scaleEffect(reduce || on ? 1 : 0.96, anchor: .top)
-            .blur(radius: reduce || on ? 0 : 4)
             .onAppear { withAnimation(Motion.or(Motion.enter.delay(delay), reduce: reduce)) { on = true } }
     }
 }

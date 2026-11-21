@@ -7,8 +7,8 @@ enum Motion {
     static let press = Animation.easeOut(duration: 0.12)
     /// Hover and selection highlights (colour only).
     static let hover = Animation.easeOut(duration: 0.12)
-    /// Incoming content (`Reveal`); callers add their own `.delay`.
-    static let enter = Animation.easeOut(duration: 0.24)
+    /// Incoming content (`Reveal`); callers add their own `.delay`. A strong ease-out (#214): fast start, soft settle.
+    static let enter = Animation.timingCurve(0.23, 1, 0.32, 1, duration: 0.22)
     /// Outgoing content fade.
     static let exit = Animation.easeOut(duration: 0.1)
     /// PlanCard "Show more" / "Show less".
