@@ -4,7 +4,7 @@ import Combine
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    let model = NotchModel()
+    let model = NotchModel(activity: ActivityLog.launch()) // content-free log so the away digest survives a restart (#168)
     private var panel: NotchPanel?
     private var statusItem: NSStatusItem?
     /// The one menu: the status item shows it, and so do the notch's right-click and gear (never rebuilt).

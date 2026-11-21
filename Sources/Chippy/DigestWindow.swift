@@ -53,7 +53,7 @@ struct DigestWindowView: View {
                 .foregroundStyle(r.needsYou ? Color.orange : .secondary).frame(width: 18)
             IdentityMark(identity: model.marks.identity(repo: r.repo, resolved: r.resolved), size: 14)
             Text(r.name).bold().lineLimit(1).truncationMode(.middle)
-            Text(r.statusText).foregroundStyle(.secondary).lineLimit(1)
+            Text(r.ended ? "\(r.statusText) · ended" : r.statusText).foregroundStyle(.secondary).lineLimit(1)
             Spacer(minLength: 8)
             Text(age).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             if let t = r.target { Button("Open") { model.activate(t) } }
