@@ -674,7 +674,7 @@ public final class NotchModel: ObservableObject {
     public var questionTimeout: TimeInterval = TimeInterval(SettingsInstaller.defaultQuestionTimeout)
 
     /// The stored session host first, then the one the request arrived with (same order everywhere).
-    private func host(for req: PendingRequest) -> HostInfo? {
+    func host(for req: PendingRequest) -> HostInfo? {
         sessions.first { $0.id == req.sessionId }?.host ?? req.host
     }
 
@@ -743,6 +743,8 @@ public final class NotchModel: ObservableObject {
             }
             echoInputs[req.id] = payload.toolInput
         }
+        store.learnHost(payload.sessionId, payload.host)
+        set(\.sessions, store.rows)
         req.lastPrompt = sessions.first { $0.id == payload.sessionId }?.lastPrompt
         if req.questions == nil, !req.isPlanApproval, always.contains(req) {
             conn.respond(Decision.allow.reply)

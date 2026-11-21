@@ -11,7 +11,7 @@ public struct HookPayload {
     public let prompt: String?
     /// Claude's final message (Stop only). In memory for the done card; never logged or sent anywhere.
     public let lastMessage: String?
-    /// Host app + tty added by the relay (SessionStart/UserPromptSubmit/Stop). In memory only.
+    /// Host app + tty added by the relay on the `HostFields.events`. In memory only.
     public let host: HostInfo?
     /// What Claude said just before an AskUserQuestion, added by the relay. In memory only: never logged or sent anywhere.
     public let leadIn: String?
@@ -84,4 +84,11 @@ public enum DiffCounts {
             return nil
         }
     }
+}
+
+
+/// The hook events the relay adds the host app and tty to. Tool events are left out: no process-tree lookup per tool call.
+/// PermissionRequest is in so a session that predates Chippy still reports its host with its first approval (#164).
+public enum HostFields {
+    public static let events: Set<String> = ["SessionStart", "UserPromptSubmit", "Stop", "PermissionRequest"]
 }

@@ -27,8 +27,8 @@ func relay(_ args: [String]) -> Never {
     guard let fd = SocketClient.connect() else {
         debug("Chippy.app not running, exit in \(ms())"); exit(0) // fail-open: agent never blocked
     }
-    // Tell Chippy which app/tty hosts this session, for "Open terminal". Only on the events that make a chip.
-    if var d = obj as? [String: Any], ["SessionStart", "UserPromptSubmit", "Stop"].contains(d["hook_event_name"] as? String ?? ""),
+    // Tell Chippy which app/tty hosts this session, for "Open terminal". Only on the events in HostFields.events.
+    if var d = obj as? [String: Any], HostFields.events.contains(d["hook_event_name"] as? String ?? ""),
        let h = HostLookup.find() {
         if h.pid > 0 { d["chippy_host_pid"] = Int(h.pid) }
         if let b = h.bundle { d["chippy_host_bundle"] = b }
