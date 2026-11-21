@@ -616,28 +616,44 @@ struct PressStyle: ButtonStyle {
 
 /// The same feedback for a row that opens on `onTapGesture`. The pointer-down state comes from a zero-distance drag
 /// that runs alongside the tap, so only a real press shows it; arrow/Return selection never does (#208).
+/// `dimOnly` dims instead of scaling, for rows that hold their own buttons: a scaled row would move those buttons under
+/// a stationary pointer. `enabled: false` adds nothing (a row with no row-level tap).
 struct PressFeedback: ViewModifier {
     var scale: CGFloat = 0.98
-    @State private var pressed = false
+    var dimOnly = false
+    var enabled = true
+    /// `@GestureState` resets itself when the gesture is cancelled, so a row cannot stay shrunk.
+    @GestureState private var pressed = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
-        content
-            .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in pressed = true }.onEnded { _ in pressed = false })
-            .scaleEffect(pressed && !reduceMotion ? scale : 1)
-            .opacity(pressed && reduceMotion ? 0.6 : 1)
-            .animation(Motion.press, value: pressed)
+        if enabled {
+            let dims = dimOnly || reduceMotion
+            content
+                .simultaneousGesture(DragGesture(minimumDistance: 0).updating($pressed) { _, state, _ in state = true })
+                .scaleEffect(pressed && !dims ? scale : 1)
+                .opacity(pressed && dims ? (dimOnly ? 0.8 : 0.6) : 1)
+                .animation(Motion.press, value: pressed)
+        } else {
+            content
+        }
     }
 }
 
 extension View {
-    func pressFeedback(scale: CGFloat = 0.98) -> some View { modifier(PressFeedback(scale: scale)) }
+    func pressFeedback(scale: CGFloat = 0.98, dimOnly: Bool = false, enabled: Bool = true) -> some View {
+        modifier(PressFeedback(scale: scale, dimOnly: dimOnly, enabled: enabled))
+    }
 
     /// A 24pt-tall, 24pt-wide hit frame around a view drawn `drawn`pt tall (C27). The extra height is given back with a
     /// negative padding, so the layout, and so every settled row height, stays as drawn. Attach the tap or Button after it.
-    func hitTarget24(drawn: CGFloat) -> some View {
+    /// `below` grows the target downward only, for a control directly under a row it must not cover.
+    func hitTarget24(drawn: CGFloat, below: Bool = false) -> some View {
         let inset = max(0, (24 - drawn) / 2)
-        return padding(.vertical, inset).frame(minWidth: 24, minHeight: 24).contentShape(Rectangle()).padding(.vertical, -inset)
+        if below {
+            return AnyView(padding(.bottom, inset * 2).frame(minWidth: 24, minHeight: 24, alignment: .top).contentShape(Rectangle()).padding(.bottom, -inset * 2))
+        }
+        return AnyView(padding(.vertical, inset).frame(minWidth: 24, minHeight: 24).contentShape(Rectangle()).padding(.vertical, -inset))
     }
 }
 
@@ -1301,7 +1317,7 @@ struct PanelRowView: View {
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(hover && !row.hasButton && canOpen ? 0.1 : 0)))
         .contentShape(Rectangle())
         .onHover { hover = $0 }
-        .pressFeedback(scale: row.hasButton ? 1 : 0.98) // a row with its own buttons has no row tap
+        .pressFeedback(enabled: !row.hasButton) // a row with its own buttons has no row tap
         .onTapGesture { if !row.hasButton { openApp() } }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(spoken)
@@ -1396,7 +1412,7 @@ struct WaitingListView: View {
         return Text(text).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(selected ? 0.9 : 0.55))
             .padding(.horizontal, 10).frame(maxWidth: .infinity, minHeight: WaitingList.moreRowHeight, maxHeight: WaitingList.moreRowHeight, alignment: .leading)
             .background(rowBackground(selected: selected, hover: false))
-            .hitTarget24(drawn: WaitingList.moreRowHeight) // drawn 18pt (settled row height), 24pt target (C27)
+            .hitTarget24(drawn: WaitingList.moreRowHeight, below: true) // drawn 18pt (settled row height), 24pt target (C27)
             .pressFeedback().onTapGesture { model.toggleFinished() }
             .accessibilityLabel(layout.expanded ? "Show fewer finished" : "\(layout.hiddenFinished) more finished, show all")
             .accessibilityAddTraits(.isButton)
@@ -1602,7 +1618,7 @@ struct NeedsRow: View {
         .background(rowBackground(selected: selected, hover: hover))
         .contentShape(Rectangle())
         .onHover { hover = $0 }
-        .pressFeedback()
+        .pressFeedback(dimOnly: true) // holds its own buttons: dim, never scale
         .onTapGesture(perform: open)
         .animation(nil, value: selected) // keyboard-driven: instant (#208)
         .animation(Motion.hover, value: hover)
@@ -1645,7 +1661,7 @@ struct FinishedRow: View {
         .background(rowBackground(selected: selected, hover: hover))
         .contentShape(Rectangle())
         .onHover { hover = $0 }
-        .pressFeedback()
+        .pressFeedback(dimOnly: true) // holds its own buttons: dim, never scale
         .onTapGesture(perform: open)
         .animation(nil, value: selected) // keyboard-driven: instant (#208)
         .animation(Motion.hover, value: hover)
