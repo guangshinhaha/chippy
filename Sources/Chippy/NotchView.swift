@@ -535,11 +535,11 @@ struct PlanCard: View {
                 if plan.truncated || v.hidden > 0 {
                     let more = v.hidden > 0 ? "\(CountLabel.counted(v.hidden, "more line"))" : nil
                     let tail = plan.truncated ? "plan continues in the terminal" : nil
-                    Text(ApprovalIntent.marker([more, tail].compactMap { $0 }.joined(separator: " · "))).font(.caption2).foregroundStyle(.white.opacity(0.6))
+                    Text(ApprovalIntent.marker([more, tail].compactMap { $0 }.joined(separator: " · "))).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.6))
                 }
                 let removed = plan.hiddenRemoved(expanded: expanded)
                 if removed > 0 {
-                    Text("\(CountLabel.counted(removed, "hidden character")) removed").font(.caption2).foregroundStyle(.orange.opacity(0.85))
+                    Text("\(CountLabel.counted(removed, "hidden character")) removed").font(.caption2.monospacedDigit()).foregroundStyle(.orange.opacity(0.85))
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -741,7 +741,7 @@ struct QuestionCard: View {
                     .onTapGesture { leadExpanded.toggle() }
             }
             Text(count > 1 ? "\(q.header.isEmpty ? "Question" : q.header) · \(step + 1) of \(count)" : (q.header.isEmpty ? "Claude asks" : q.header))
-                .font(.caption2).foregroundStyle(.white.opacity(0.6))
+                .font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.6))
             Text(q.question).font(.caption.bold()).foregroundStyle(.white).lineLimit(3)
             ForEach(Array(q.options.enumerated()), id: \.offset) { i, o in
                 let on = q.multiSelect && answers[q.question]?.contains(o.label) == true
@@ -977,7 +977,7 @@ struct SummaryView: View {
             case .paragraph(let r), .heading(let r): text(r).foregroundColor(.white.opacity(0.85))
             case .ordered(let n, let r):
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("\(n).").font(.caption).foregroundColor(.white.opacity(0.5))
+                    Text("\(n).").font(.caption.monospacedDigit()).foregroundColor(.white.opacity(0.5))
                     text(r).foregroundColor(.white.opacity(0.85))
                 }
             case .bullet(let r):
@@ -1291,7 +1291,7 @@ struct PanelRowView: View {
             Image(systemName: symbol).font(.caption).foregroundStyle(tint).frame(width: 18)
             VStack(alignment: .leading, spacing: 2) {
                 RepoTitle(repo: row.label.repo, worktree: row.label.worktree, mark: mark)
-                Text(subtitle).font(.caption2).foregroundStyle(failure != nil ? Color.red.opacity(0.9) : (row.kind == .finished ? Color.white.opacity(0.6) : tint.opacity(0.95))).lineLimit(1).truncationMode(.tail).help(subtitle)
+                Text(subtitle).font(.caption2.monospacedDigit()).foregroundStyle(failure != nil ? Color.red.opacity(0.9) : (row.kind == .finished ? Color.white.opacity(0.6) : tint.opacity(0.95))).lineLimit(1).truncationMode(.tail).help(subtitle)
             }
             .layoutPriority(1)
             Spacer(minLength: 6)
@@ -1580,7 +1580,7 @@ struct NeedsRow: View {
             Image(systemName: symbol).font(.caption).foregroundStyle(tint).frame(width: 18)
             VStack(alignment: .leading, spacing: 2) {
                 RepoTitle(repo: item.repo, worktree: item.worktree, mark: mark)
-                Text("\(item.label) · \(age)").font(.caption2).foregroundStyle(tint.opacity(0.95)).lineLimit(1).truncationMode(.tail).help("\(item.label) · \(age)")
+                Text("\(item.label) · \(age)").font(.caption2.monospacedDigit()).foregroundStyle(tint.opacity(0.95)).lineLimit(1).truncationMode(.tail).help("\(item.label) · \(age)")
             }
             .layoutPriority(1) // the names give way last-but-one; the buttons keep their size
             Spacer(minLength: 6)

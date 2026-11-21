@@ -32,7 +32,7 @@ struct DigestWindowView: View {
     var body: some View {
         let rows = DigestWindowRows.rows(from: model.awayDigest)
         VStack(alignment: .leading, spacing: 0) {
-            Text(DigestWindowRows.title(model.awayDigest)).font(.headline).padding([.horizontal, .top], 16).padding(.bottom, 8)
+            Text(DigestWindowRows.title(model.awayDigest)).font(.headline.monospacedDigit()).padding([.horizontal, .top], 16).padding(.bottom, 8)
             if rows.isEmpty {
                 Text("No agent finished or asked for you while you were away, or you already dealt with it.")
                     .font(.callout).foregroundStyle(.secondary).padding(16)
