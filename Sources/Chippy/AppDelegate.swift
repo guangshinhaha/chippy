@@ -334,11 +334,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    func menuWillOpen(_ menu: NSMenu) {
+    /// A sound submenu is filled here, before it is shown (the reliable hook for a submenu), with only its own list.
+    func menuNeedsUpdate(_ menu: NSMenu) {
         if let parent = menu.supermenu?.items.first(where: { $0.submenu === menu }), parent.representedObject as? String == "sound" {
-            fillSoundMenu(menu, kind: parent.tag == 0 ? .needsYou : .done) // a sound submenu: only its own list
-            return
+            fillSoundMenu(menu, kind: parent.tag == 0 ? .needsYou : .done)
         }
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        if let parent = menu.supermenu?.items.first(where: { $0.submenu === menu }), parent.representedObject as? String == "sound" { return }
         focusHintItem.isHidden = !sounds.focusUnreadable // a hint in the menu only, never a nag
         let stale = hookStaleness()
         repairItem.isHidden = stale.isEmpty

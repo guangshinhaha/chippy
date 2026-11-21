@@ -71,7 +71,8 @@ final class SoundPlayer {
         guard SoundPolicy.shouldPlay(kind: kind, enabled: enabled, hostFrontmost: frontmost, quiet: quiet.isQuiet,
                                      lastPlayed: cooldowns.lastPlayed(kind, session: sessionId), now: now) else { return }
         // The named sound is a shared instance and play() on a playing one is a no-op: play a copy.
-        guard play(soundName(kind)) else { return }
+        // A saved sound that is on disk but will not load falls back to the default, so a pick never makes a kind silent.
+        guard play(soundName(kind)) || play(SoundChoice.defaultName(kind)) else { return }
         cooldowns.record(kind, session: sessionId, at: now)
     }
 
