@@ -58,6 +58,8 @@ public final class NotchModel: ObservableObject {
     @Published public private(set) var partials: [String: PartialAnswers] = [:]
     /// Asleep after 5 quiet minutes (#54); any hook event wakes it. Only changes the mascot's pose.
     @Published public private(set) var asleep = false
+    /// When `asleep` last turned on (#181), so the mascot can stop animating after a long sleep. Set before `asleep` flips.
+    public private(set) var asleepSince: Date?
     private var idleClock = IdleClock()
     /// Away detection (#92): the app says whether the screen is locked and how long the keyboard and mouse were idle.
     /// Default is never away, so tests and the gallery are unaffected.
@@ -731,12 +733,16 @@ public final class NotchModel: ObservableObject {
     /// User interaction (hover, click) wakes the mascot and restarts the countdown, like an event does.
     public func wake(now: Date = Date()) {
         idleClock.noteEvent(now: now)
+        asleepSince = nil
         if asleep { asleep = false }
     }
 
     private func updateSleep(now: Date) {
         let s = SleepPolicy.shouldSleep(state: state, hasDoneChips: !doneItems.isEmpty, clock: idleClock, now: now)
-        if s != asleep { asleep = s }
+        if s != asleep {
+            asleepSince = s ? now : nil
+            asleep = s
+        }
     }
 
     /// A PermissionRequest hook is waiting on `conn`. Main thread only.

@@ -66,3 +66,49 @@ final class SleepPolicyTests: XCTestCase {
         XCTAssertTrue(m.asleep)
     }
 }
+
+/// #181: the sleeping mascot animates only while someone could see it, and only for a bounded time.
+final class SleepAnimationTests: XCTestCase {
+    private func go(asleep: Bool = true, reduceMotion: Bool = false, locked: Bool = false, for d: TimeInterval = 60) -> Bool {
+        SleepAnimation.shouldAnimate(asleep: asleep, reduceMotion: reduceMotion, screenLocked: locked, asleepFor: d)
+    }
+
+    func testAnimatesWhenAsleepVisibleAndRecent() { XCTAssertTrue(go()) }
+    func testAwakeNeverAnimates() { XCTAssertFalse(go(asleep: false)) }
+    func testReduceMotionIsStatic() { XCTAssertFalse(go(reduceMotion: true)) }
+    func testLockedScreenIsStatic() { XCTAssertFalse(go(locked: true)) }
+
+    func testStopsAfterTheLimit() {
+        XCTAssertEqual(SleepAnimation.maxAsleep, 600)
+        XCTAssertTrue(go(for: 0))
+        XCTAssertTrue(go(for: 599.9))
+        XCTAssertFalse(go(for: 600))
+        XCTAssertFalse(go(for: 3 * 3600))
+        XCTAssertTrue(SleepAnimation.shouldAnimate(asleep: true, reduceMotion: false, screenLocked: false, asleepFor: 50, maxAsleep: 60))
+        XCTAssertFalse(SleepAnimation.shouldAnimate(asleep: true, reduceMotion: false, screenLocked: false, asleepFor: 60, maxAsleep: 60))
+    }
+
+    func testEndIsLimitAfterSleepBegan() {
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        XCTAssertEqual(SleepAnimation.end(asleepSince: t0), t0.addingTimeInterval(600))
+    }
+
+    /// Offline arithmetic from the policy constants, NOT a measurement of wakeups.
+    func testRedrawBudgetIsBounded() {
+        XCTAssertEqual(60 / SleepAnimation.frameInterval, 120) // redraws per minute while animating
+        XCTAssertEqual(SleepAnimation.maxAsleep / SleepAnimation.frameInterval, 1200) // total per sleep, then 0 until the next wake
+    }
+
+    func testModelRecordsWhenSleepBeganAndClearsOnWake() {
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        let m = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: scratchURL("chippy-test-\(UUID()).jsonl")))
+        m.wake(now: t0)
+        XCTAssertNil(m.asleepSince)
+        m.sweep(now: t0.addingTimeInterval(301))
+        XCTAssertEqual(m.asleepSince, t0.addingTimeInterval(301))
+        m.sweep(now: t0.addingTimeInterval(400)) // still asleep: the start does not move
+        XCTAssertEqual(m.asleepSince, t0.addingTimeInterval(301))
+        m.wake(now: t0.addingTimeInterval(401))
+        XCTAssertNil(m.asleepSince)
+    }
+}

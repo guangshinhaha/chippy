@@ -200,7 +200,7 @@ struct NotchView: View {
         let big: CGFloat = 28 * 1.4
         let small = NotchMetrics.glanceIcon
         let open = model.density == .expanded
-        return ChipmunkView(state: model.state, sleeping: model.asleep).frame(width: big, height: big)
+        return ChipmunkView(state: model.state, sleeping: model.asleep, asleepSince: model.asleepSince).frame(width: big, height: big)
             .scaleEffect(open ? 1 : small / big, anchor: .topLeading)
             .offset(x: iconX(open: open, small: small, size: size), y: open ? m.height + 2 : iconY(small: small, size: size))
             .frame(width: size.width, height: size.height, alignment: .topLeading)

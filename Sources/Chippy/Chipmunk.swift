@@ -1,4 +1,5 @@
 import ChippyCore
+import Combine
 import SwiftUI
 
 /// Chippy, static (no animation, no sound: v1.1). Original geometric design drawn from scratch in a
@@ -7,7 +8,11 @@ struct ChipmunkView: View {
     let state: ChippyState
     /// Idle for 5 minutes (#54): closed eyes, slow breathing and drifting z's. Static under Reduce Motion.
     var sleeping = false
+    /// When sleep began (#181); the breath stops `SleepAnimation.maxAsleep` later. Nil = unknown, treated as just now.
+    var asleepSince: Date?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Screen lock, kept current by the lock/unlock distributed notifications (no polling, no timer).
+    @State private var locked = false
 
     private let fur = Color(red: 0.74, green: 0.46, blue: 0.22)
     private let dark = Color(red: 0.30, green: 0.17, blue: 0.09)
@@ -15,12 +20,25 @@ struct ChipmunkView: View {
     private let pink = Color(red: 0.93, green: 0.62, blue: 0.58)
 
     var body: some View {
-        if sleeping && !reduceMotion {
-            // 2 fps is plenty for a 4 s breath; the schedule exists only while a sleeping mascot is on screen.
-            TimelineView(.periodic(from: Date(timeIntervalSinceReferenceDate: 0), by: 0.5)) { tl in canvas(t: tl.date.timeIntervalSinceReferenceDate) }
-        } else {
-            canvas(t: nil)
+        Group {
+            if sleeping && !reduceMotion && !locked {
+                // Ticks stop at `end` (and the last tick draws the static pose), so a long sleep costs no wakeups.
+                let since = asleepSince ?? Date()
+                TimelineView(CountdownSchedule(end: SleepAnimation.end(asleepSince: since), step: SleepAnimation.frameInterval)) { tl in
+                    canvas(t: animates(at: tl.date, since: since) ? tl.date.timeIntervalSinceReferenceDate : nil)
+                }
+            } else {
+                canvas(t: nil)
+            }
         }
+        .onAppear { locked = SoundPlayer.screenIsLocked() }
+        .onChange(of: sleeping) { now in if now { locked = SoundPlayer.screenIsLocked() } } // heal a missed notification
+        .onReceive(DistributedNotificationCenter.default().publisher(for: Notification.Name("com.apple.screenIsLocked"))) { _ in locked = true }
+        .onReceive(DistributedNotificationCenter.default().publisher(for: Notification.Name("com.apple.screenIsUnlocked"))) { _ in locked = false }
+    }
+
+    private func animates(at date: Date, since: Date) -> Bool {
+        SleepAnimation.shouldAnimate(asleep: sleeping, reduceMotion: reduceMotion, screenLocked: locked, asleepFor: date.timeIntervalSince(since))
     }
 
     /// `t` nil = static pose (no animation).
