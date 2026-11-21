@@ -594,10 +594,9 @@ struct ChipButton: View {
                 if let hint { Text(hint).font(.caption2).opacity(0.75) }
             }
         }
-            .buttonStyle(ChipStyle(kind: kind, hover: hover && !disabled))
+            .buttonStyle(ChipStyle(kind: kind, hover: hover && !disabled, disabled: disabled))
             .disabled(disabled)
             .keyboardShortcut(isDefault ? .defaultAction : nil)
-            .opacity(disabled ? 0.4 : 1)
             .onHover { hover = $0 }
     }
 }
@@ -605,10 +604,13 @@ struct ChipButton: View {
 struct ChipStyle: ButtonStyle {
     let kind: ChipButton.Kind
     let hover: Bool
+    /// Disabled draws a neutral grey pill with dimmed text (#213), not a faded kind colour.
+    var disabled = false
     /// Reduce Motion drops the press scale (movement); the fill colour still animates.
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var fill: Color {
+        if disabled { return Color.white.opacity(0.12) }
         switch kind {
         case .primary: return Color.green.opacity(hover ? 0.95 : 0.8)
         case .destructive: return Color.red.opacity(hover ? 0.32 : 0.2)
@@ -617,6 +619,7 @@ struct ChipStyle: ButtonStyle {
         }
     }
     private var text: Color {
+        if disabled { return .white.opacity(0.5) }
         switch kind {
         case .primary: return .black
         case .destructive: return Color(red: 1, green: 0.55, blue: 0.5)
@@ -625,12 +628,16 @@ struct ChipStyle: ButtonStyle {
         }
     }
 
+    private var quietLead: CGFloat { kind == .quiet ? 12 : 0 }
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.caption.weight(kind == .quiet ? .regular : .semibold)).foregroundStyle(text)
-            .padding(.horizontal, 12).frame(minHeight: 28)
-            .background(Capsule().fill(fill))
-            .padding(4).contentShape(Rectangle()).padding(-4)
+            // Quiet has no visible leading padding so its label lines up with the card text (#213); its hover pill and
+            // hit area still reach 12pt to the left, outside the layout.
+            .padding(.leading, kind == .quiet ? 0 : 12).padding(.trailing, 12).frame(minHeight: 28)
+            .background(Capsule().fill(fill).padding(.leading, kind == .quiet ? -12 : 0))
+            .padding(4).padding(.leading, quietLead).contentShape(Rectangle()).padding(.leading, -quietLead).padding(-4)
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
             .animation(Motion.press, value: configuration.isPressed)
             .animation(Motion.hover, value: hover)
@@ -1259,6 +1266,7 @@ struct PanelRowView: View {
     @ViewBuilder private var handledButton: some View {
         if row.kind == .terminal || row.kind == .asksYou {
             ChipButton(title: "Handled", kind: .quiet, action: handled).accessibilityLabel("Handled, \(row.label.repo)")
+                .padding(.leading, 12) // quiet has no leading padding (#213); keep the gap after Jump
         }
     }
 
@@ -1406,7 +1414,7 @@ struct IdentityMark: View {
     var body: some View {
         ZStack {
             shape
-            Text(identity.glyph).font(.system(size: size * 0.58, weight: .heavy, design: .rounded)).foregroundStyle(.black.opacity(0.78))
+            Text(identity.glyph).font(.system(size: SessionIdentity.glyphSize(for: size), weight: .heavy, design: .rounded)).foregroundStyle(.black.opacity(0.78))
                 .offset(y: identity.shape == .triangle ? size * 0.1 : 0)
         }
         .frame(width: size, height: size)
@@ -1535,6 +1543,7 @@ struct NeedsRow: View {
                         OpenTerminalButton(host: host, title: "Jump", kind: .primary).accessibilityLabel("Jump to terminal, \(subject)")
                     }
                     ChipButton(title: "Handled", kind: .quiet, action: handled).accessibilityLabel("Handled, \(subject)")
+                        .padding(.leading, 12) // quiet has no leading padding (#213); keep the gap after Jump
                 } else {
                     ChipButton(title: actionTitle, kind: .primary, action: open).accessibilityLabel("\(actionTitle), \(subject)")
                 }
