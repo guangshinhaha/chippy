@@ -57,7 +57,7 @@ final class JumpFeedbackTests: XCTestCase {
 
     /// The process behind a timed-out select must be gone when `run` returns, not left running in the background.
     private func assertGoneAfterTimeout(_ script: String, within seconds: TimeInterval, file: StaticString = #filePath, line: UInt = #line) throws {
-        let pidFile = FileManager.default.temporaryDirectory.appendingPathComponent("chippy-136-\(UUID().uuidString).pid")
+        let pidFile = scratchURL("chippy-136-\(UUID().uuidString).pid")
         defer { try? FileManager.default.removeItem(at: pidFile) }
         let t0 = Date()
         let r = HostProcess.run(sh, ["-c", "echo $$ > '\(pidFile.path)'; \(script)"], timeout: 1)

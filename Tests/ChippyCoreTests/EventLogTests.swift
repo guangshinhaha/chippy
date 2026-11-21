@@ -10,7 +10,7 @@ final class EventLogTests: XCTestCase {
         return PendingRequest(payload: p, now: t)
     }
 
-    func tmp() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent("ev-\(UUID()).jsonl") }
+    func tmp() -> URL { scratchURL("ev-\(UUID()).jsonl") }
 
     func testLineHasTimestampWaitAndChannelButNoCommandText() throws {
         let url = tmp(); let log = EventLog(url: url)

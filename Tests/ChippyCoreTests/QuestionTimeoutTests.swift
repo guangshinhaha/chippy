@@ -54,8 +54,8 @@ final class QuestionTimeoutTests: XCTestCase {
     }
 
     func testHandBackSendsNothingRemovesRequestAndLogsIt() throws {
-        let logURL = FileManager.default.temporaryDirectory.appendingPathComponent("ev-\(UUID()).jsonl")
-        let m = NotchModel(always: AlwaysStore(url: FileManager.default.temporaryDirectory.appendingPathComponent("always-\(UUID()).json")),
+        let logURL = scratchURL("ev-\(UUID()).jsonl")
+        let m = NotchModel(always: AlwaysStore(url: scratchURL("always-\(UUID()).json")),
                            log: EventLog(url: logURL))
         var fds: [Int32] = [0, 0]
         XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, &fds), 0)

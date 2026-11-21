@@ -7,7 +7,7 @@ final class NeedsYouFinishedTests: XCTestCase {
     private func model(identities: RepoIdentityCache = RepoIdentityCache(),
                        tick: @escaping (@escaping () -> Void) -> Void = { $0() }) -> NotchModel {
         NotchModel(always: AlwaysStore(url: nil),
-                   log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("chippy-101-\(UUID()).jsonl")),
+                   log: EventLog(url: scratchURL("chippy-101-\(UUID()).jsonl")),
                    identities: identities, tick: tick)
     }
     private func conn() -> Connection {

@@ -7,7 +7,7 @@ final class SleepDisablerTests: XCTestCase {
     var pending: [(Bool) -> Void] = []   // completions held to simulate a slow sudo
 
     override func setUp() {
-        marker = FileManager.default.temporaryDirectory.appendingPathComponent("chippy-\(UUID().uuidString)/disablesleep-on")
+        marker = scratchURL("chippy-\(UUID().uuidString)/disablesleep-on")
         calls = []; pending = []
     }
     func make() -> SleepDisabler {

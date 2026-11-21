@@ -102,7 +102,7 @@ final class SilencePolicyTests: XCTestCase {
         m.receiveApproval(h, Connection(fd: p[0]))
     }
     private func model() -> NotchModel {
-        NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("chippy-test-\(UUID()).jsonl")))
+        NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: scratchURL("chippy-test-\(UUID()).jsonl")))
     }
 
     func testQuietApprovalArrivesFoldedOnBadgeAndStaysPending() {

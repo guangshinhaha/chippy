@@ -7,7 +7,7 @@ final class RestingTests: XCTestCase {
 
     private func model() -> NotchModel {
         NotchModel(always: AlwaysStore(url: nil),
-                   log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("chippy-test-\(UUID()).jsonl")))
+                   log: EventLog(url: scratchURL("chippy-test-\(UUID()).jsonl")))
     }
     private func ev(_ e: String, _ sid: String = "a", cwd: String = "/x/p") -> HookPayload {
         HookPayload(json: Data(#"{"session_id":"\#(sid)","hook_event_name":"\#(e)","cwd":"\#(cwd)","chippy_branch":"main"}"#.utf8))!

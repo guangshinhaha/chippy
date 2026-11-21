@@ -21,7 +21,7 @@ final class NotchModelTests: XCTestCase {
 
     private func model() -> NotchModel {
         NotchModel(always: AlwaysStore(url: nil),
-                   log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("chippy-test-\(UUID()).jsonl")))
+                   log: EventLog(url: scratchURL("chippy-test-\(UUID()).jsonl")))
     }
     private func ev(_ e: String, _ sid: String = "a") -> HookPayload {
         HookPayload(json: Data(#"{"session_id":"\#(sid)","hook_event_name":"\#(e)","cwd":"/x/p"}"#.utf8))!
@@ -101,7 +101,7 @@ final class NotchModelTests: XCTestCase {
     }
 
     func testClickWithNoSessionsOpensTheRestPanel() {
-        let m = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("chippy-test-\(UUID()).jsonl")))
+        let m = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: scratchURL("chippy-test-\(UUID()).jsonl")))
         m.toggleOpen()
         XCTAssertEqual(m.density, Density.expanded)
         XCTAssertTrue(m.restOpen)

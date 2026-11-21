@@ -36,7 +36,7 @@ final class SleepPolicyTests: XCTestCase {
     }
 
     func testModelSleepsAndWakesOnEvent() {
-        let log = EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("chippy-test-\(UUID()).jsonl"))
+        let log = EventLog(url: scratchURL("chippy-test-\(UUID()).jsonl"))
         let m = NotchModel(always: AlwaysStore(url: nil), log: log)
         let p = HookPayload(json: Data(#"{"session_id":"s","hook_event_name":"Stop","cwd":"/x/r"}"#.utf8))!
         m.apply(p, now: t0)
@@ -51,7 +51,7 @@ final class SleepPolicyTests: XCTestCase {
     }
 
     func testInteractionWakes() {
-        let log = EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("chippy-test-\(UUID()).jsonl"))
+        let log = EventLog(url: scratchURL("chippy-test-\(UUID()).jsonl"))
         let m = NotchModel(always: AlwaysStore(url: nil), log: log)
         m.wake(now: t0)
         m.sweep(now: t0.addingTimeInterval(301))

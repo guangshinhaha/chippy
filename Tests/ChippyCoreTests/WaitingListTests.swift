@@ -6,7 +6,7 @@ import XCTest
 final class WaitingListTests: XCTestCase {
     private func model() -> NotchModel {
         NotchModel(always: AlwaysStore(url: nil),
-                   log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("chippy-wl-\(UUID()).jsonl")))
+                   log: EventLog(url: scratchURL("chippy-wl-\(UUID()).jsonl")))
     }
     private func conn() -> Connection {
         var fds: [Int32] = [0, 0]
@@ -196,7 +196,7 @@ final class WaitingListTests: XCTestCase {
     func testHoverIsIgnoredWhileTheListIsOpen() {
         var now: TimeInterval = 100
         let m = NotchModel(always: AlwaysStore(url: nil),
-                           log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("chippy-wl-\(UUID()).jsonl")),
+                           log: EventLog(url: scratchURL("chippy-wl-\(UUID()).jsonl")),
                            clock: { now })
         stop(m, "d")
         m.openList()

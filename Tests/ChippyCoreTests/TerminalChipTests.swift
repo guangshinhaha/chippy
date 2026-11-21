@@ -4,7 +4,7 @@ import XCTest
 /// Issue #42: a question/approval that fell back to the terminal leaves a sticky `repo · asked in terminal` chip.
 final class TerminalChipTests: XCTestCase {
     private func model() -> NotchModel {
-        NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("tc-\(UUID()).jsonl")))
+        NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: scratchURL("tc-\(UUID()).jsonl")))
     }
     private func hook(_ ev: String, _ sid: String = "s1") -> HookPayload {
         HookPayload(json: Data(#"{"session_id":"\#(sid)","hook_event_name":"\#(ev)","cwd":"/Users/x/repos/api-server","chippy_branch":"main"}"#.utf8))!

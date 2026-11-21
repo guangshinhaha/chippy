@@ -72,7 +72,7 @@ final class NeedsMeFoldTests: XCTestCase {
     private func model() -> NotchModel {
         clockNow = 1000
         return NotchModel(always: AlwaysStore(url: nil),
-                          log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("chippy-test-\(UUID()).jsonl")),
+                          log: EventLog(url: scratchURL("chippy-test-\(UUID()).jsonl")),
                           clock: { [unowned self] in self.clockNow })
     }
     @discardableResult private func ask(_ m: NotchModel, _ cmd: String = "ls", wait: Int? = nil) -> String {

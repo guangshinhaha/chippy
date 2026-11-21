@@ -20,8 +20,8 @@ final class ApprovalHostTests: XCTestCase {
     }
 
     func model() -> NotchModel {
-        NotchModel(always: AlwaysStore(url: FileManager.default.temporaryDirectory.appendingPathComponent("always-\(UUID()).json")),
-                   log: EventLog(url: FileManager.default.temporaryDirectory.appendingPathComponent("ev-\(UUID()).jsonl")))
+        NotchModel(always: AlwaysStore(url: scratchURL("always-\(UUID()).json")),
+                   log: EventLog(url: scratchURL("ev-\(UUID()).jsonl")))
     }
 
     let terminal = (pid: 4242, bundle: "com.apple.Terminal")
