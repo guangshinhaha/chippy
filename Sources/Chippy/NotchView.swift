@@ -13,7 +13,7 @@ struct StateIcon: View {
 }
 
 /// Incoming content: fades in with a small scale from the top, a beat after the shape starts growing (#214: no blur).
-/// Reduce Motion: a near-instant fade, no scale.
+/// Reduce Motion: a short fade, no scale.
 struct Reveal: ViewModifier {
     let delay: Double
     @Environment(\.accessibilityReduceMotion) private var reduce
@@ -23,7 +23,7 @@ struct Reveal: ViewModifier {
         content
             .opacity(on ? 1 : 0)
             .scaleEffect(reduce || on ? 1 : 0.96, anchor: .top)
-            .onAppear { withAnimation(Motion.or(Motion.enter.delay(delay), reduce: reduce)) { on = true } }
+            .onAppear { withAnimation(Motion.fade(Motion.enter.delay(delay), reduce: reduce)) { on = true } }
     }
 }
 
@@ -173,7 +173,7 @@ struct NotchView: View {
             ZStack(alignment: .top) {
                 content
                     .id(model.density)
-                    .transition(.asymmetric(insertion: .identity, removal: .opacity.animation(reduceMotion ? Motion.instantEase : Motion.exit)))
+                    .transition(.asymmetric(insertion: .identity, removal: .opacity.animation(Motion.fade(Motion.exit, reduce: reduceMotion))))
             }
             .frame(width: size.width, height: size.height, alignment: .top)
             .animation(nil, value: size)
