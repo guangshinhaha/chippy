@@ -469,6 +469,15 @@ public final class NotchModel: ObservableObject {
         activate(t)
     }
 
+    /// Delete / Backspace (#211): dismiss the highlighted FINISHED row, the same call as its x. Returns false (key not used) for
+    /// any other row. The selection then falls to the row now at the old index, or the new last row (refresh's reconcile).
+    @discardableResult
+    public func dismissSelection() -> Bool {
+        guard listOpen, case .done(let sid) = listSelection else { return false }
+        dismissDone(sid)
+        return true
+    }
+
     /// "+N more" / "Show fewer": expand FINISHED to every row, or fold it back. The selection stays on the toggle row.
     public func toggleFinished() {
         guard listOpen, waitingLayout.hasToggle else { return }

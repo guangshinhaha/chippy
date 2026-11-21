@@ -184,6 +184,61 @@ final class NeedsYouFinishedTests: XCTestCase {
         XCTAssertTrue(m.listOpen) // the list stays up for the approval
     }
 
+    // #211: Delete / Backspace on the selected FINISHED row
+    func testDeleteDismissesTheSelectedFinishedRowAndSelectsTheNextRow() {
+        let m = model(); let t0 = Date()
+        approval(m, "a")
+        for i in 0..<3 { stop(m, "d\(i)", cwd: "/w/d\(i)", at: t0.addingTimeInterval(Double(i))) }
+        m.openList()
+        m.moveSelection(1) // past the approval onto the first FINISHED row
+        let order = m.waitingLayout.selectableTargets
+        guard case .done(let sid)? = m.listSelection else { return XCTFail("expected a FINISHED row") }
+        XCTAssertTrue(m.dismissSelection())
+        XCTAssertFalse(m.doneItems.contains { $0.sessionId == sid })
+        XCTAssertEqual(m.recent.items.count, 1) // it went to Recent, like the x
+        XCTAssertEqual(m.listSelection, order[2]) // the next row, now at the old index
+        XCTAssertTrue(m.waitingLayout.selectableTargets.contains(m.listSelection!))
+        XCTAssertTrue(m.listOpen)
+    }
+
+    func testDeleteOnTheLastFinishedRowSelectsThePreviousRow() {
+        let m = model(); let t0 = Date()
+        approval(m, "a")
+        for i in 0..<2 { stop(m, "d\(i)", cwd: "/w/d\(i)", at: t0.addingTimeInterval(Double(i))) }
+        m.openList()
+        for _ in 0..<5 { m.moveSelection(1) } // clamps on the last row
+        let order = m.waitingLayout.selectableTargets
+        XCTAssertEqual(m.listSelection, order.last)
+        XCTAssertTrue(m.dismissSelection())
+        XCTAssertEqual(m.listSelection, order[order.count - 2])
+    }
+
+    func testDeleteDoesNothingOnNeedsYouRowsOrTheMoreRow() {
+        let m = model(); let t0 = Date()
+        approval(m, "a")
+        for i in 0..<5 { stop(m, "d\(i)", cwd: "/w/d\(i)", at: t0.addingTimeInterval(Double(i))) }
+        XCTAssertFalse(m.dismissSelection()) // list closed: not ours
+        m.openList()
+        XCTAssertEqual(m.listSelection, m.waitingLayout.needs.first?.target)
+        XCTAssertFalse(m.dismissSelection()) // NEEDS YOU uses Review/Handled
+        XCTAssertEqual(m.pending.count, 1)
+        for _ in 0..<12 { m.moveSelection(1) }
+        XCTAssertEqual(m.listSelection, .moreToggle)
+        XCTAssertFalse(m.dismissSelection())
+        XCTAssertEqual(m.doneItems.count, 5)
+        XCTAssertTrue(m.recent.items.isEmpty)
+    }
+
+    func testDeleteOnTheOnlyFinishedRowClosesTheEmptyList() {
+        let m = model()
+        stop(m, "d")
+        m.openList()
+        XCTAssertEqual(m.listSelection, .done("d"))
+        XCTAssertTrue(m.dismissSelection())
+        XCTAssertFalse(m.listOpen)
+        XCTAssertTrue(m.waitingLayout.selectableTargets.isEmpty)
+    }
+
     func testTimeoutKeepsSelectionOnTheTerminalRowItBecame() {
         let m = model(); let t0 = Date()
         stop(m, "d", at: t0)
