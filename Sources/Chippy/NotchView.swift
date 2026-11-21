@@ -465,7 +465,7 @@ struct ApprovalCard: View {
             if let intent = req.intent {
                 // Agent-written text is unverified: small, secondary, captioned. The raw command below is the dominant element.
                 VStack(alignment: .leading, spacing: 1) {
-                    if intent.fromAgent { Text("Claude says (unverified):").font(.caption2).foregroundStyle(.white.opacity(0.45)) }
+                    if intent.fromAgent { Text("Claude says (unverified):").font(.caption2).foregroundStyle(.white.opacity(0.6)) }
                     Text(intent.text).font(.caption).foregroundStyle(.white.opacity(intent.fromAgent ? 0.65 : 0.85)).lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }.frame(maxWidth: .infinity, alignment: .leading)
@@ -477,7 +477,7 @@ struct ApprovalCard: View {
                 .lineLimit(12) // backstop only: preview() already bounds rows and keeps head, tail and a hidden-count marker
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.4)).lineLimit(1).truncationMode(.head)
+            Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(1).truncationMode(.head)
             TourCaption(sessionId: req.sessionId, step: .approval)
             HStack(spacing: 8) {
                 ChipButton(title: "Allow", hint: "\(ShortcutKeys.prefix)Y", kind: .primary) { decide(.allow) }
@@ -522,7 +522,7 @@ struct PlanCard: View {
             if let p = req.lastPrompt, !p.isEmpty {
                 Text("“\(p)”").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
             }
-            Text("Claude says (unverified):").font(.caption2).foregroundStyle(.white.opacity(0.45))
+            Text("Claude says (unverified):").font(.caption2).foregroundStyle(.white.opacity(0.6))
             let rows = VStack(alignment: .leading, spacing: 3) {
                 Text(plan.title ?? "Proposed plan").font(.callout.weight(.semibold)).foregroundStyle(.white)
                     .fixedSize(horizontal: false, vertical: true) // no line limit: rows are capped in core, so nothing is ellipsized silently
@@ -533,7 +533,7 @@ struct PlanCard: View {
                 if plan.truncated || v.hidden > 0 {
                     let more = v.hidden > 0 ? "\(v.hidden) more line\(v.hidden == 1 ? "" : "s")" : nil
                     let tail = plan.truncated ? "plan continues in the terminal" : nil
-                    Text(ApprovalIntent.marker([more, tail].compactMap { $0 }.joined(separator: " · "))).font(.caption2).foregroundStyle(.white.opacity(0.45))
+                    Text(ApprovalIntent.marker([more, tail].compactMap { $0 }.joined(separator: " · "))).font(.caption2).foregroundStyle(.white.opacity(0.6))
                 }
                 let removed = plan.hiddenRemoved(expanded: expanded)
                 if removed > 0 {
@@ -549,9 +549,9 @@ struct PlanCard: View {
             .onPreferenceChange(QuestionBodyHeight.self) { bodyHeight = $0 }
             HStack(spacing: 6) {
                 if plan.stepCount > 0 { Text("\(plan.stepCount) step\(plan.stepCount == 1 ? "" : "s")").font(.caption2).foregroundStyle(.white.opacity(0.5)) }
-                if let f = plan.fileName { Text(f).font(.caption2).foregroundStyle(.white.opacity(0.4)).lineLimit(1).truncationMode(.middle) }
+                if let f = plan.fileName { Text(f).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(1).truncationMode(.middle) }
             }
-            Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.4)).lineLimit(1).truncationMode(.head)
+            Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(1).truncationMode(.head)
             HStack(spacing: 8) {
                 ChipButton(title: plan.truncated ? "Approve (partly shown)" : "Approve", kind: .primary) { decide(.allow) }
                     .help(plan.truncated ? "Approve the part shown (click only: the plan continues in the terminal)"
@@ -588,7 +588,7 @@ struct ChipButton: View {
         Button(action: action) {
             HStack(spacing: 5) {
                 Text(title)
-                if let hint { Text(hint).font(.caption2).opacity(0.5) }
+                if let hint { Text(hint).font(.caption2).opacity(0.75) }
             }
         }
             .buttonStyle(ChipStyle(kind: kind, hover: hover && !disabled))
@@ -701,7 +701,7 @@ struct QuestionCard: View {
                         Image(systemName: on ? "checkmark.square.fill" : "square").font(.caption)
                             .foregroundStyle(on ? Color.accentColor : .white.opacity(0.5)).padding(.top, 1)
                     }
-                    if i < 9 { Text("\(i + 1)").font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.4)).padding(.top, 1) }
+                    if i < 9 { Text("\(i + 1)").font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.6)).padding(.top, 1) }
                     VStack(alignment: .leading, spacing: 1) {
                         Text(o.label).font(.caption.bold()).foregroundStyle(.white)
                         if !o.description.isEmpty { Text(o.description).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(3) }
@@ -1236,7 +1236,7 @@ struct PanelRowView: View {
             Image(systemName: symbol).font(.caption).foregroundStyle(tint).frame(width: 18)
             VStack(alignment: .leading, spacing: 2) {
                 RepoTitle(repo: row.label.repo, worktree: row.label.worktree, mark: mark)
-                Text(subtitle).font(.caption2).foregroundStyle(failure != nil ? Color.red.opacity(0.9) : tint.opacity(row.kind == .finished ? 1 : 0.95)).lineLimit(1).truncationMode(.tail)
+                Text(subtitle).font(.caption2).foregroundStyle(failure != nil ? Color.red.opacity(0.9) : (row.kind == .finished ? Color.white.opacity(0.6) : tint.opacity(0.95))).lineLimit(1).truncationMode(.tail)
             }
             .layoutPriority(1)
             Spacer(minLength: 6)
@@ -1374,7 +1374,7 @@ struct WaitingListView: View {
                 }
             }
             Text("↑↓ move · Return open · Esc close")
-                .font(.caption2).foregroundStyle(.white.opacity(0.4)).padding(.leading, 4)
+                .font(.caption2).foregroundStyle(.white.opacity(0.6)).padding(.leading, 4)
                 .frame(height: NotchMetrics.keyHintHeight, alignment: .bottomLeading)
         }
     }
