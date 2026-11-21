@@ -54,7 +54,7 @@ struct TimeoutNote: View {
             let left = Int(NeedsMeFold.timeLeft(createdAt: createdAt, timeout: timeout, now: ctx.date).rounded(.up))
             if left > 0 {
                 Text("times out in \(left)s").font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.55))
-                    .accessibilityLabel("Times out to the terminal in \(left) seconds")
+                    .accessibilityLabel("Times out to the terminal in \(CountLabel.counted(left, "second"))")
             }
         }
     }
@@ -111,7 +111,7 @@ struct CountBadge: View {
         let fraction = deadline.map { NeedsMeFold.fractionLeft(createdAt: $0.start, timeout: $0.end.timeIntervalSince($0.start), now: now) } ?? 1
         let showMark = mark != nil && maxWidth >= 34
         let label = needsYou
-            ? "\(text) waiting, needs you" + (showMark ? mark.map { ", next from \(markRepo ?? "one repo"), \($0.spokenShort)" } ?? "" : "") + (left.map { ", times out to the terminal in \(Int($0.rounded(.up))) seconds" } ?? "")
+            ? "\(text) waiting, needs you" + (showMark ? mark.map { ", next from \(markRepo ?? "one repo"), \($0.spokenShort)" } ?? "" : "") + (left.map { ", times out to the terminal in \(CountLabel.counted(Int($0.rounded(.up)), "second"))" } ?? "")
             : "\(text) finished waiting"
         let pulsing = needsYou && pulse && !reduceMotion
         return HStack(spacing: 3) {
@@ -256,7 +256,7 @@ struct NotchView: View {
                 GlanceRow(label: model.repoLabel(cwd: row.cwd, project: row.project), mark: model.identity(cwd: row.cwd, project: row.project), text: line.text, live: line.live)
             }
             if ordered.count > Self.sessionRowCap {
-                Text("\(ordered.count - Self.sessionRowCap) more sessions").font(.caption2).foregroundStyle(.white.opacity(0.6))
+                Text("\(CountLabel.counted(ordered.count - Self.sessionRowCap, "more session"))").font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.6))
             }
         }
     }
@@ -266,7 +266,7 @@ struct NotchView: View {
         ForEach(model.terminalItems.reversed().prefix(Self.terminalCardCap)) { t in TerminalCard(item: t, repo: model.repoLabel(cwd: t.cwd, project: t.project).text, mark: model.identity(cwd: t.cwd, project: t.project)) { model.dismissTerminal(t.sessionId) }.reveal(0.12) }
         let hidden = model.terminalItems.count - Self.terminalCardCap
         if hidden > 0 {
-            Text("\(hidden) more asked in terminal").font(.caption2).foregroundStyle(.white.opacity(0.6)).reveal(0.12)
+            Text("\(hidden) more asked in terminal").font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.6)).reveal(0.12)
         }
     }
 
@@ -316,7 +316,7 @@ struct NotchView: View {
                     if let m = chip.mark { IdentityMark(identity: m, size: 12) }
                     Text(chip.text).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.tail)
                     if model.doneItems.count + model.terminalItems.count > 1 {
-                        Text("+" + CountLabel.short(model.doneItems.count + model.terminalItems.count - 1)).font(.caption2).foregroundStyle(.white.opacity(0.6))
+                        Text("+" + CountLabel.short(model.doneItems.count + model.terminalItems.count - 1)).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.6))
                             .accessibilityLabel("\(model.doneItems.count + model.terminalItems.count - 1) more")
                     }
                     Spacer(minLength: 0)
@@ -339,7 +339,7 @@ struct NotchView: View {
                         .font(.caption.bold()).foregroundStyle(.white)
                         .lineLimit(1).truncationMode(.tail)
                     if model.doneItems.count + model.terminalItems.count > 1 {
-                        Text("+" + CountLabel.short(model.doneItems.count + model.terminalItems.count - 1)).font(.caption2).foregroundStyle(.white.opacity(0.6))
+                        Text("+" + CountLabel.short(model.doneItems.count + model.terminalItems.count - 1)).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.6))
                             .accessibilityLabel("\(model.doneItems.count + model.terminalItems.count - 1) more")
                     }
                     Spacer(minLength: 0)
@@ -533,13 +533,13 @@ struct PlanCard: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if plan.truncated || v.hidden > 0 {
-                    let more = v.hidden > 0 ? "\(v.hidden) more line\(v.hidden == 1 ? "" : "s")" : nil
+                    let more = v.hidden > 0 ? "\(CountLabel.counted(v.hidden, "more line"))" : nil
                     let tail = plan.truncated ? "plan continues in the terminal" : nil
                     Text(ApprovalIntent.marker([more, tail].compactMap { $0 }.joined(separator: " · "))).font(.caption2).foregroundStyle(.white.opacity(0.6))
                 }
                 let removed = plan.hiddenRemoved(expanded: expanded)
                 if removed > 0 {
-                    Text("\(removed) hidden character\(removed == 1 ? "" : "s") removed").font(.caption2).foregroundStyle(.orange.opacity(0.85))
+                    Text("\(CountLabel.counted(removed, "hidden character")) removed").font(.caption2).foregroundStyle(.orange.opacity(0.85))
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -550,7 +550,7 @@ struct PlanCard: View {
             }
             .onPreferenceChange(QuestionBodyHeight.self) { bodyHeight = $0 }
             HStack(spacing: 6) {
-                if plan.stepCount > 0 { Text("\(plan.stepCount) step\(plan.stepCount == 1 ? "" : "s")").font(.caption2).foregroundStyle(.white.opacity(0.5)) }
+                if plan.stepCount > 0 { Text(CountLabel.counted(plan.stepCount, "step")).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.5)) }
                 if let f = plan.fileName { Text(f).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(1).truncationMode(.middle) }
             }
             Text(req.cwd).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(1).truncationMode(.head)
@@ -589,7 +589,7 @@ struct ChipButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 5) {
-                Text(title)
+                Text(title).monospacedDigit() // "All 12" keeps its width as the count changes
                 if let hint { Text(hint).font(.caption2).opacity(0.85) } // quiet 0.6 x 0.85 = 0.51 (C39)
             }
         }
@@ -886,8 +886,8 @@ struct DoneCard: View {
                 .id(reply)
             TourCaption(sessionId: item.sessionId, step: .done)
             HStack {
-                Text(item.files == 0 ? "No file edits" : "\(item.files) file\(item.files == 1 ? "" : "s") · +\(item.added) −\(item.removed)")
-                    .font(.caption2).foregroundStyle(.white.opacity(0.6))
+                Text(item.files == 0 ? "No file edits" : "\(CountLabel.counted(item.files, "file")) · +\(item.added) −\(item.removed)")
+                    .font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.6))
                 Spacer()
                 if TerminalJump.available(item.host) {
                     OpenTerminalButton(host: item.host, onOpened: dismiss)
@@ -1093,13 +1093,13 @@ struct AwayDigestView: View {
         TimelineView(.periodic(from: .now, by: 15)) { ctx in
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text("WHILE YOU WERE AWAY (\(digest.total))").font(.caption2.weight(.bold)).foregroundStyle(.white.opacity(0.5)).tracking(0.6)
+                    Text("WHILE YOU WERE AWAY (\(digest.total))").font(.caption2.weight(.bold).monospacedDigit()).foregroundStyle(.white.opacity(0.5)).tracking(0.6)
                     Spacer(minLength: 0)
                     ChipButton(title: "Dismiss", kind: .neutral) { model.dismissAwayDigest() }
                         .accessibilityHint("Moves the finished threads to Recent")
                 }
                 ForEach(digest.rows) { row in rowView(row, now: ctx.date) }
-                if digest.hidden > 0 { Text("+\(digest.hidden) more").font(.caption2).foregroundStyle(.white.opacity(0.55)).padding(.leading, 10) }
+                if digest.hidden > 0 { Text("+\(digest.hidden) more").font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.55)).padding(.leading, 10) }
             }
         }
     }
@@ -1309,7 +1309,7 @@ struct WaitingListView: View {
 
     private func section(_ title: String, count: Int, clearAll: (() -> Void)? = nil) -> some View {
         HStack {
-            Text("\(title) (\(count))").font(.caption2.weight(.bold)).foregroundStyle(.white.opacity(0.5)).tracking(0.6)
+            Text("\(title) (\(count))").font(.caption2.weight(.bold).monospacedDigit()).foregroundStyle(.white.opacity(0.5)).tracking(0.6)
             Spacer(minLength: 0)
             if let clearAll {
                 Button(action: clearAll) { Text("Clear all").font(.caption2).foregroundStyle(.white.opacity(0.6)).padding(.horizontal, 6).frame(minHeight: 24).contentShape(Rectangle()) } // 24pt target; the 22pt header frame keeps its height
@@ -1345,7 +1345,7 @@ struct WaitingListView: View {
     private func moreRow(_ layout: WaitingLayout) -> some View {
         let selected = model.listSelection == .moreToggle
         let text = layout.expanded ? "Show fewer" : "+\(layout.hiddenFinished) more"
-        return Text(text).font(.caption2).foregroundStyle(.white.opacity(selected ? 0.9 : 0.55))
+        return Text(text).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(selected ? 0.9 : 0.55))
             .padding(.horizontal, 10).frame(maxWidth: .infinity, minHeight: WaitingList.moreRowHeight, maxHeight: WaitingList.moreRowHeight, alignment: .leading)
             .background(rowBackground(selected: selected, hover: false))
             .contentShape(Rectangle()).onTapGesture { model.toggleFinished() }
