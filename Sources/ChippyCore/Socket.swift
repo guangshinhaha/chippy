@@ -1,7 +1,12 @@
 import Darwin
 import Foundation
 
-public enum SocketError: Error { case failed(String) }
+public enum SocketError: Error {
+    case failed(String)
+    /// Another process is already listening on the path (#176).
+    public static let alreadyRunning = SocketError.failed("already running")
+    public var isAlreadyRunning: Bool { if case .failed("already running") = self { return true } else { return false } }
+}
 
 private func makeAddr(_ path: String) throws -> sockaddr_un {
     var addr = sockaddr_un()
@@ -103,6 +108,8 @@ public final class SocketServer {
     private let path: String
     private let handler: Handler
     private var listenFd: Int32 = -1
+    /// Device and inode of the file this server bound, so `stop()` never unlinks a socket another process put there (#176).
+    private var bound: (dev: dev_t, ino: ino_t)?
     private var source: DispatchSourceRead?
     private let queue = DispatchQueue(label: "chippy.socket.accept")
     private let workers = DispatchQueue(label: "chippy.socket.workers", attributes: .concurrent)
@@ -115,7 +122,8 @@ public final class SocketServer {
     public func start() throws {
         try FileManager.default.createDirectory(
             at: URL(fileURLWithPath: path).deletingLastPathComponent(), withIntermediateDirectories: true)
-        unlink(path)
+        if let live = SocketClient.connect(path: path) { close(live); throw SocketError.alreadyRunning } // a live listener owns the path: leave it alone
+        unlink(path) // no listener: a stale file from a crash, safe to replace
         let fd = try newSocket()
         var addr = try makeAddr(path)
         let rc = withUnsafePointer(to: &addr) {
@@ -125,6 +133,8 @@ public final class SocketServer {
         }
         guard rc == 0 else { close(fd); throw SocketError.failed("bind: \(errno)") }
         chmod(path, 0o600)
+        var st = stat()
+        if stat(path, &st) == 0 { bound = (st.st_dev, st.st_ino) }
         guard listen(fd, 16) == 0 else { close(fd); throw SocketError.failed("listen: \(errno)") }
         listenFd = fd
         let src = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
@@ -136,7 +146,9 @@ public final class SocketServer {
     public func stop() {
         source?.cancel(); source = nil
         if listenFd >= 0 { close(listenFd); listenFd = -1 }
-        unlink(path)
+        var st = stat()
+        if let bound, stat(path, &st) == 0, st.st_dev == bound.dev, st.st_ino == bound.ino { unlink(path) }
+        bound = nil
     }
 
     private func accept() {

@@ -75,7 +75,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         sweeper = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.model.sweep() }
         do { try server.start(); self.server = server }
-        catch { NSLog("Chippy: socket start failed: \(error)") }
+        catch let e as SocketError where e.isAlreadyRunning {
+            // A second copy would replace nothing and show a second, deaf notch (#176): quit, the first keeps running.
+            // exit, not NSApp.terminate: willTerminate would run keepAwake.stop() and clear the first copy's lid-closed setting.
+            NSLog("Chippy: already running, quitting this copy")
+            exit(0)
+        } catch { NSLog("Chippy: socket start failed: \(error)") }
     }
 
     // MARK: keyboard shortcuts (#36). Keys exist only while a card is on screen.

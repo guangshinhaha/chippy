@@ -84,4 +84,49 @@ final class LiveSessionTests: XCTestCase {
         XCTAssertTrue(writeLine(fd: fds[0], Data("hi".utf8)))
         XCTAssertEqual(readLine(fd: fds[1]), Data("hi".utf8))
     }
+
+    /// #176: a second server must refuse a path a live one owns, and leave it reachable.
+    func testSecondServerRefusedWhileFirstIsLive() throws {
+        let path = scratchURL("chippy-\(getpid())a.sock").path
+        let a = SocketServer(path: path) { _, conn in conn.respond(nil) }
+        try a.start()
+        defer { a.stop() }
+        let b = SocketServer(path: path) { _, conn in conn.respond(nil) }
+        XCTAssertThrowsError(try b.start()) { XCTAssertTrue(($0 as? SocketError)?.isAlreadyRunning == true) }
+        let fd = try XCTUnwrap(SocketClient.connect(path: path))
+        close(fd)
+    }
+
+    /// #176: A's stop must not unlink the socket B bound after the file was removed from under A.
+    func testStopLeavesSocketBoundByAnotherServer() throws {
+        let path = scratchURL("chippy-\(getpid())b.sock").path
+        let a = SocketServer(path: path) { _, conn in conn.respond(nil) }
+        try a.start()
+        unlink(path)
+        let b = SocketServer(path: path) { _, conn in conn.respond(nil) }
+        try b.start()
+        defer { b.stop() }
+        a.stop()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path))
+        let fd = try XCTUnwrap(SocketClient.connect(path: path))
+        close(fd)
+    }
+
+    /// #176: a stale file with no listener (a crash) is still replaced.
+    func testStaleSocketFileIsReplaced() throws {
+        let path = scratchURL("chippy-\(getpid())c.sock").path
+        let first = SocketServer(path: path) { _, conn in conn.respond(nil) }
+        try first.start()
+        // Simulate a crash: close the listener without unlinking (stop() would unlink).
+        let stale = scratchURL("chippy-\(getpid())c.keep").path
+        XCTAssertEqual(rename(path, stale), 0)
+        first.stop() // path is gone, so nothing to unlink
+        XCTAssertEqual(rename(stale, path), 0) // dead socket file back at the path
+        XCTAssertNil(SocketClient.connect(path: path))
+        let second = SocketServer(path: path) { _, conn in conn.respond(nil) }
+        try second.start()
+        defer { second.stop() }
+        let fd = try XCTUnwrap(SocketClient.connect(path: path))
+        close(fd)
+    }
 }
