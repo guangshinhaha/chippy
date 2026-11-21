@@ -1069,15 +1069,20 @@ struct NotchShape: Shape {
     }
 
     func path(in rect: CGRect) -> Path {
+        // Cubic corners with longer handles than a circular arc (0.5523) ease curvature in and out like a continuous corner.
+        // Endpoints stay `radius` from the corner, so the silhouette never leaves the rect.
+        let handle = radius * 0.68
         var p = Path()
         p.move(to: CGPoint(x: rect.minX, y: rect.minY))
         p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
         p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - radius))
-        p.addQuadCurve(to: CGPoint(x: rect.maxX - radius, y: rect.maxY),
-                       control: CGPoint(x: rect.maxX, y: rect.maxY))
+        p.addCurve(to: CGPoint(x: rect.maxX - radius, y: rect.maxY),
+                   control1: CGPoint(x: rect.maxX, y: rect.maxY - radius + handle),
+                   control2: CGPoint(x: rect.maxX - radius + handle, y: rect.maxY))
         p.addLine(to: CGPoint(x: rect.minX + radius, y: rect.maxY))
-        p.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.maxY - radius),
-                       control: CGPoint(x: rect.minX, y: rect.maxY))
+        p.addCurve(to: CGPoint(x: rect.minX, y: rect.maxY - radius),
+                   control1: CGPoint(x: rect.minX + radius - handle, y: rect.maxY),
+                   control2: CGPoint(x: rect.minX, y: rect.maxY - radius + handle))
         p.closeSubpath()
         return p
     }
