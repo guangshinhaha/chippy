@@ -58,9 +58,30 @@ final class LiveSessionTests: XCTestCase {
         try server.start()
         defer { server.stop() }
         let fd = try XCTUnwrap(SocketClient.connect(path: path))
-        writeLine(fd: fd, Data(#"{"session_id":"a","hook_event_name":"Stop"}"#.utf8))
+        XCTAssertTrue(writeLine(fd: fd, Data(#"{"session_id":"a","hook_event_name":"Stop"}"#.utf8)))
         close(fd)
         wait(for: [got], timeout: 2)
         XCTAssertNotNil(HookPayload(json: try XCTUnwrap(received)))
+    }
+
+    /// #175: a peer that never reads must make `writeLine` report failure at the send timeout, not hang or pretend.
+    func testWriteLineReportsFailureWhenPeerNeverReads() throws {
+        var fds: [Int32] = [-1, -1]
+        XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, &fds), 0)
+        defer { close(fds[0]); close(fds[1]) }
+        var snd = timeval(tv_sec: 0, tv_usec: 200_000)
+        setsockopt(fds[0], SOL_SOCKET, SO_SNDTIMEO, &snd, socklen_t(MemoryLayout<timeval>.size))
+        let start = Date()
+        let ok = writeLine(fd: fds[0], Data(repeating: 0x61, count: 256 * 1024))
+        XCTAssertFalse(ok)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 1)
+    }
+
+    func testWriteLineReportsSuccessWhenPeerReads() throws {
+        var fds: [Int32] = [-1, -1]
+        XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, &fds), 0)
+        defer { close(fds[0]); close(fds[1]) }
+        XCTAssertTrue(writeLine(fd: fds[0], Data("hi".utf8)))
+        XCTAssertEqual(readLine(fd: fds[1]), Data("hi".utf8))
     }
 }
