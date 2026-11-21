@@ -11,6 +11,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var mainMenu: NSMenu?
     private let todayItem = NSMenuItem(), weekItem = NSMenuItem()
     private let focusHintItem = NSMenuItem(title: "Focus detection needs Full Disk Access (open Settings)", action: #selector(openFullDiskAccess), keyEquivalent: "")
+    private let digestItem = NSMenuItem(title: "While you were away", action: #selector(showDigestWindow), keyEquivalent: "")
+    private lazy var digestWindow = DigestWindowController(model: model)
     private var server: SocketServer?
     private var sweeper: Timer?
     private var outsideClick: Any?
@@ -180,6 +182,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let peek = NSMenuItem(title: "Show sessions", action: #selector(peekSessions), keyEquivalent: "")
         peek.target = self
         menu.addItem(peek)
+        digestItem.target = self; digestItem.isHidden = true // shown only while there is a digest (#167)
+        menu.addItem(digestItem)
         let glance = NSMenuItem(title: "Show reply text beside the camera", action: #selector(toggleGlance(_:)), keyEquivalent: "")
         glance.target = self; glance.state = model.showReplyInGlance ? .on : .off
         menu.addItem(glance)
@@ -343,6 +347,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         if let parent = menu.supermenu?.items.first(where: { $0.submenu === menu }), parent.representedObject as? String == "sound" { return }
+        digestItem.isHidden = model.awayDigest == nil
         focusHintItem.isHidden = !sounds.focusUnreadable // a hint in the menu only, never a nag
         let stale = hookStaleness()
         repairItem.isHidden = stale.isEmpty
@@ -438,6 +443,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func peekSessions() { model.toggleOpen() }
+
+    @objc private func showDigestWindow() { digestWindow.show() }
 
     @objc private func goLive() { model.debugLock = false }
 
