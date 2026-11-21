@@ -1093,7 +1093,7 @@ struct AwayDigestView: View {
     }
 
     private func status(_ r: DigestRow) -> String {
-        switch r.status { case .needsYou: return "asked in terminal"; case .asksYou: return "asks you"; case .finished: return "finished" }
+        DigestWindowRows.statusText(r.status)
     }
 
     private func rowView(_ r: DigestRow, now: Date) -> some View {
