@@ -37,15 +37,17 @@ public func readLine(fd: Int32) -> Data? {
     }
 }
 
-public func writeLine(fd: Int32, _ data: Data) {
+/// Writes `data` plus a newline. True only when every byte went out; false on error or a send timeout (SO_SNDTIMEO).
+public func writeLine(fd: Int32, _ data: Data) -> Bool {
     var out = data; out.append(10)
-    out.withUnsafeBytes { raw in
+    return out.withUnsafeBytes { raw in
         var off = 0
         while off < raw.count {
             let n = write(fd, raw.baseAddress! + off, raw.count - off)
-            if n <= 0 { return }
+            if n <= 0 { return false }
             off += n
         }
+        return true
     }
 }
 
@@ -81,7 +83,7 @@ public final class Connection {
         lock.lock(); defer { lock.unlock() }
         guard !closed else { return }
         closed = true
-        if let reply { writeLine(fd: fd, reply) }
+        if let reply { _ = writeLine(fd: fd, reply) } // the peer is gone or stuck; nothing more to do but close
         close(fd)
     }
 

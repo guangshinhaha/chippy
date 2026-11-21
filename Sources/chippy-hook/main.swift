@@ -54,7 +54,9 @@ func relay(_ args: [String]) -> Never {
     }
     var snd = timeval(tv_sec: 1, tv_usec: 0) // a frozen app must not block the agent on a big payload
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &snd, socklen_t(MemoryLayout<timeval>.size))
-    writeLine(fd: fd, line)
+    guard writeLine(fd: fd, line) else { // Chippy never got it, so no reply is coming: show the terminal prompt now (#175)
+        debug("write to Chippy failed after \(ms()), falling back to terminal"); close(fd); exit(0)
+    }
     let dict = obj as? [String: Any]
     let wantsAnswer = dict?["hook_event_name"] as? String == "PermissionRequest"
     guard wantsAnswer else { debug("relayed in \(ms())"); close(fd); exit(0) }
@@ -157,7 +159,7 @@ func demo(_ args: [String]) -> Never {
     let kind = args.first ?? "approval"
     func send(_ o: [String: Any], wait: Bool = false) -> String? {
         guard let fd = SocketClient.connect() else { print("Chippy.app is not running."); exit(1) }
-        writeLine(fd: fd, try! JSONSerialization.data(withJSONObject: o))
+        guard writeLine(fd: fd, try! JSONSerialization.data(withJSONObject: o)) else { close(fd); print("Chippy.app did not take the event."); exit(1) }
         guard wait else { close(fd); return nil }
         var tv = timeval(tv_sec: 60, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
