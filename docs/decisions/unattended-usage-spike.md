@@ -46,8 +46,8 @@ Approvals by SGT hour: 09: 1, 10: 8, 11: 4, 13: 2, 14: 4, 15: 1, 16: 4, 17: 3, 1
 
 ## 6. What this implies for #167 and #168, and what it cannot tell
 
-- **#167 (menu bar window):** the premise is that the user leaves and agents wait or finish. One approval in 43 waited past the 5-minute away threshold. With a median wait of 17 s the usual pattern is attended. The digest would have fired about once in four days from approvals alone. **Wait.**
-- **#168 (persisted log with finishes):** this is the piece that can answer the question, because it would record finishes, not only approval waits. It does not depend on #167 being built. **Reshape the order: #168's finish events (or a counter) before more digest UI.**
+- **#167 (menu bar window):** the premise is that the user leaves and agents wait or finish. One approval in 43 waited past the 5-minute away threshold. With a median wait of 17 s the usual pattern is attended. The digest would have fired about once in four days from approvals alone. The window itself has already shipped (`DigestWindow.swift`, menu item "While you were away"), so there is nothing to hold back; the call is **no more digest UI** until use shows it earns it.
+- **#168 (persisted log with finishes):** also already shipped (`ActivityLog`, `activity.jsonl`, 14 days, 2000 lines, content-free). It records finishes and asks, which `events.jsonl` does not, so it is the file that can answer the question. At the time of this note no `activity.jsonl` existed yet on the machine (the running app predates #168), so there is no finish data to analyse. **Relaunch the app on current main and let it accumulate.**
 
 **Not covered:**
 - No finish (Stop) events, no "asks you" events, no away periods are in the log. An agent that finished while the user was away leaves no trace. The honest question ("how many finishes happened while I was away") cannot be answered from this file.
@@ -76,4 +76,4 @@ Privacy check: a case-insensitive whole-word grep of this note for every distinc
 
 ## Recommendation
 
-**Validate first: keep logging for about 10 working days and add finish events to the log via #168 before building more on #167.** Build nothing for #167 until the numbers show agents finishing while the user is away.
+**Validate first: relaunch on current main so `activity.jsonl` starts recording finishes, run for about 10 working days, then count finishes inside away windows (aggregates only, same method). Build no further digest UI until that shows agents finishing while the user is away.**
