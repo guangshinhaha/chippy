@@ -99,7 +99,7 @@ public final class NotchModel: ObservableObject {
         let label = cwd == NSHomeDirectory() ? RepoLabel(repo: "~") : identities.label(cwd: cwd, project: project)
         activity.record(status, sessionId: sessionId, label: label, at: at)
     }
-    /// Last time the away signal was read; `sweep` runs every 0.5s but the signal is polled at most every `awayPollInterval`.
+    /// Last time the away signal was read; `sweep` runs every 0.5s or 5s (`SweepCadence`) but the signal is polled at most every `awayPollInterval`.
     private var lastAwayPoll: Date?
     public static let awayPollInterval: TimeInterval = 5
     public static let doneSeconds: TimeInterval = 600
@@ -960,6 +960,15 @@ public final class NotchModel: ObservableObject {
         record(req, channel: .terminal, decision: stale ? "none" : "handed_back", now: now)
         refresh()
     }
+
+    /// What the app's sweep timer should use right now (#180): `SweepCadence.fast` while anything time-based is on screen or
+    /// waiting, `slow` otherwise. Read after every state change; see `SweepCadence` for what each input covers.
+    public var sweepInputs: SweepCadence.Inputs {
+        SweepCadence.Inputs(hasPending: !pending.isEmpty, hasChips: !doneItems.isEmpty || !terminalItems.isEmpty,
+                            peeking: peeking || peek.isPeeking(now: clock()), folded: folded, quietFolded: !quietFolded.isEmpty,
+                            panelOpen: restOpen || listOpen || doneOpen || focus != nil)
+    }
+    public var sweepInterval: TimeInterval { SweepCadence.interval(sweepInputs) }
 
     /// Drop requests whose hook went away (timeout fallback, or answered in the terminal).
     public func sweep(now: Date = Date()) {

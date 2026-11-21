@@ -15,6 +15,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private lazy var digestWindow = DigestWindowController(model: model)
     private var server: SocketServer?
     private var sweeper: Timer?
+    private var sweepPacer = SweepPacer()
+    private var sweepWatch: AnyCancellable?
     private var outsideClick: Any?
     private var escKey: Any?
     private let hotKeys = HotKeys()
@@ -73,7 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 conn.respond(nil)
             }
         }
-        sweeper = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.model.sweep() }
+        startSweeping()
         do { try server.start(); self.server = server }
         catch let e as SocketError where e.isAlreadyRunning {
             // A second copy would replace nothing and show a second, deaf notch (#176): quit, the first keeps running.
@@ -81,6 +83,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSLog("Chippy: already running, quitting this copy")
             exit(0)
         } catch { NSLog("Chippy: socket start failed: \(error)") }
+    }
+
+    /// Sweep at `SweepCadence`'s pace (#180): 0.5s while something time-based is on screen, 5s when idle. Any published model change
+    /// may flip the answer, so it is re-read once the change has settled; the timer is replaced only when the answer differs.
+    private func startSweeping() {
+        sweepWatch = model.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.scheduleSweep() }
+        scheduleSweep()
+    }
+
+    private func scheduleSweep() {
+        let wanted = model.sweepInterval
+        guard sweepPacer.needsSchedule(for: wanted) else { return }
+        sweeper?.invalidate()
+        // One-shot, rescheduled after each sweep, so two sweeps are never closer than the interval (the away poll counts on it).
+        let t = Timer.scheduledTimer(withTimeInterval: wanted, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            self.sweepPacer.didFire()
+            self.model.sweep()
+            self.scheduleSweep()
+        }
+        t.tolerance = SweepCadence.tolerance(for: wanted)
+        sweeper = t
+        sweepPacer.didSchedule(wanted)
     }
 
     // MARK: keyboard shortcuts (#36). Keys exist only while a card is on screen.

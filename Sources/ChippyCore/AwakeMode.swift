@@ -47,6 +47,13 @@ public extension AwakePolicy {
         return mode
     }
 
+    /// Whether keep-awake needs its 5s re-check (#180): only while an effective mode is on. It ends a deadline, lets the debounce
+    /// release the assertion, and re-reads the battery for lid-closed mode; with the mode off (or just expired) none of that exists.
+    static func needsTimer(effective: AwakeMode) -> Bool { effective != .off }
+
+    /// The battery matters only to lid-closed mode (`lidDecision` ignores it otherwise), so only that mode reads it.
+    static func needsBattery(effective: AwakeMode) -> Bool { effective == .agentsLid }
+
     /// "1h 20m", "45m", "<1m" for the time left until `until`.
     static func timeLeftText(until: Date, now: Date) -> String {
         let secs = until.timeIntervalSince(now)
