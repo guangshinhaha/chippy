@@ -139,8 +139,12 @@ final class AwayDigestTests: XCTestCase {
     // MARK: model
 
     private func model(locked: @escaping () -> Bool = { false }, idle: @escaping () -> TimeInterval = { 0 }) -> NotchModel {
+        // The default cache reads git on a global queue and flips `isResolved` (part of the digest's cache key) at a random moment,
+        // so a refresh could build the digest twice (#169). Resolve inline instead: the flag is settled before the first row shows.
+        let cache = RepoIdentityCache(resolver: { RepoResolver.fallback(cwd: $0) }, background: { $0() }, deliver: { $0() })
         let m = NotchModel(always: AlwaysStore(url: nil),
-                           log: EventLog(url: scratchURL("chippy-test-\(UUID()).jsonl")))
+                           log: EventLog(url: scratchURL("chippy-test-\(UUID()).jsonl")),
+                           identities: cache)
         m.awaySignal = { (locked(), idle()) }
         return m
     }
