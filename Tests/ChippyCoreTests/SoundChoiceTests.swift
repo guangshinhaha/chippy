@@ -6,6 +6,7 @@ final class SoundChoiceTests: XCTestCase {
     let installed = ["Basso", "Glass", "Pop", "Submarine", "Tink"]
 
     func testDefaultsStayPopAndTink() {
+        XCTFail("ci probe")
         XCTAssertEqual(SoundChoice.defaultName(.needsYou), "Pop")
         XCTAssertEqual(SoundChoice.defaultName(.done), "Tink")
     }
