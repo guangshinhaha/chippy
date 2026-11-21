@@ -30,6 +30,10 @@ public struct SessionIdentity: Equatable {
         return String(c)
     }
 
+    /// Point size of the mark's letter for a mark `size` points wide: 58% of it, never below 8pt so the letter stays
+    /// readable on the 12pt glance mark (#213; the letter is what keeps identity from being colour alone, #89).
+    public static func glyphSize(for size: CGFloat) -> CGFloat { max(size * 0.58, 8) }
+
     /// For previews (the gallery's sheet of every mark).
     public init(colour: Int, shape: Shape, glyph: String) { self.colour = colour; self.shape = shape; self.glyph = glyph }
 

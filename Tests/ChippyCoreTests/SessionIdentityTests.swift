@@ -74,4 +74,11 @@ final class SessionIdentityTests: XCTestCase {
     }
 
     func testHashIsFixed() { XCTAssertEqual(IdentityBook.fnv1a(""), 0xcbf29ce484222325) }
+
+    func testGlyphSizeHasAnEightPointFloor() { // #213: the 12pt glance mark's letter was about 7pt
+        XCTAssertEqual(SessionIdentity.glyphSize(for: 11), 8)
+        XCTAssertEqual(SessionIdentity.glyphSize(for: 12), 8)
+        XCTAssertEqual(SessionIdentity.glyphSize(for: 14), 14 * 0.58, accuracy: 0.0001)
+        XCTAssertEqual(SessionIdentity.glyphSize(for: 22), 22 * 0.58, accuracy: 0.0001)
+    }
 }
