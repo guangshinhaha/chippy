@@ -275,7 +275,7 @@ final class NotchPanel: NSPanel {
         }
     }
 
-    /// The waiting list is keyboard-driven (#53): arrows move, Return opens. Other keys pass through untouched.
+    /// The waiting list is keyboard-driven (#53): arrows move, Return opens, Delete dismisses a FINISHED row (#211). Other keys pass through untouched.
     override func keyDown(with event: NSEvent) {
         if firstResponder is NSText { super.keyDown(with: event); return } // typing: never a list or card key
         guard model.listOpen, event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { super.keyDown(with: event); return }
@@ -283,6 +283,8 @@ final class NotchPanel: NSPanel {
         case 125: model.moveSelection(1)           // down
         case 126: model.moveSelection(-1)          // up
         case 36, 76: model.activateSelection()     // return, keypad enter
+        case 51, 117:                              // delete (Backspace), forward delete: a FINISHED row goes to Recent (#211)
+            if !model.dismissSelection() { super.keyDown(with: event) } // any other row: not ours, pass it on
         default: super.keyDown(with: event)
         }
     }

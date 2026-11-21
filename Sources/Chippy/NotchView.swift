@@ -1287,7 +1287,7 @@ struct PanelRowView: View {
 /// The waiting list (#53, #101): NEEDS YOU on top (act on these), FINISHED below (FYI). NEEDS YOU rows show the repo, a worktree
 /// tag, a verb-led label (tool name or question count) and the age, never the question or command (PDPA #30). FINISHED rows add
 /// the first line of the reply (60 chars at most, the outcome only, in memory, never logged), or "finished" when there is none.
-/// Arrows, Return and Esc are handled by the panel.
+/// Arrows, Return, Esc and Delete (dismiss a FINISHED row) are handled by the panel.
 private struct StaticRenderKey: EnvironmentKey { static let defaultValue = false }
 extension EnvironmentValues {
     var staticRender: Bool { get { self[StaticRenderKey.self] } set { self[StaticRenderKey.self] = newValue } }
@@ -1303,7 +1303,7 @@ struct WaitingListView: View {
             Text("\(title) (\(count))").font(.caption2.weight(.bold)).foregroundStyle(.white.opacity(0.5)).tracking(0.6)
             Spacer(minLength: 0)
             if let clearAll {
-                Button(action: clearAll) { Text("Clear all").font(.caption2).foregroundStyle(.white.opacity(0.6)).padding(.horizontal, 6).frame(minHeight: 22).contentShape(Rectangle()) }
+                Button(action: clearAll) { Text("Clear all").font(.caption2).foregroundStyle(.white.opacity(0.6)).padding(.horizontal, 6).frame(minHeight: 24).contentShape(Rectangle()) } // 24pt target; the 22pt header frame keeps its height
                     .buttonStyle(.plain).help("Move every finished thread to Recent").accessibilityLabel("Clear all finished")
             }
         }
@@ -1373,7 +1373,7 @@ struct WaitingListView: View {
                     if layout.hasToggle { moreRow(layout) }
                 }
             }
-            Text("↑↓ move · Return open · Esc close")
+            Text("↑↓ move · Return open · ⌫ clear · Esc close")
                 .font(.caption2).foregroundStyle(.white.opacity(0.6)).padding(.leading, 4)
                 .frame(height: NotchMetrics.keyHintHeight, alignment: .bottomLeading)
         }
@@ -1576,8 +1576,9 @@ struct FinishedRow: View {
             Spacer(minLength: 6)
             Text(age).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.5))
             Button(action: dismiss) {
-                Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.white.opacity(0.7)).frame(width: 20, height: 24).contentShape(Rectangle())
+                Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.white.opacity(0.7)).frame(width: 24, height: 24).contentShape(Rectangle())
             }
+            .padding(.horizontal, -2) // 24 x 24 target, same 20pt layout width: the age and snippet do not move
             .buttonStyle(.plain).opacity(hover || selected ? 1 : 0).allowsHitTesting(hover || selected).help("Dismiss (moves to Recent)").accessibilityLabel("Dismiss")
         }
         .padding(.horizontal, 10)
