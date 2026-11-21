@@ -11,8 +11,8 @@ enum Motion {
     static let enter = Animation.timingCurve(0.23, 1, 0.32, 1, duration: 0.22)
     /// Outgoing content fade.
     static let exit = Animation.easeOut(duration: 0.1)
-    /// PlanCard "Show more" / "Show less".
-    static let expand = Animation.easeOut(duration: 0.18)
+    /// PlanCard "Show more" / "Show less". The same strong ease-out as `enter`, kept short.
+    static let expand = Animation.timingCurve(0.23, 1, 0.32, 1, duration: 0.18)
     /// The notch shape: one spring, slight settle, no bounce.
     static let shape = Animation.spring(response: 0.38, dampingFraction: 0.82)
     /// Near-instant change for Reduce Motion, and to end a repeating animation.
