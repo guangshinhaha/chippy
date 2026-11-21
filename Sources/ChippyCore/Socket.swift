@@ -28,16 +28,40 @@ private func newSocket() throws -> Int32 {
     return fd
 }
 
+/// What `readLineBounded` found.
+enum LineRead: Equatable {
+    case line(Data)
+    case none      // EOF or timeout before any complete line or data
+    case tooLong   // more than `maxBytes` without a newline (#179)
+}
+
 /// Blocking read of one newline-terminated line. Returns nil on EOF/timeout before any data.
 public func readLine(fd: Int32) -> Data? {
+    if case .line(let d) = readLineBounded(fd: fd) { return d }
+    return nil
+}
+
+/// `readLine` with limits (#179). `maxBytes` caps the line; with `within`, the whole read shares one deadline (a `poll` before
+/// each `read`), so a client trickling bytes cannot keep resetting a per-`read` timeout. Hitting the deadline gives `.none`.
+func readLineBounded(fd: Int32, maxBytes: Int = .max, within seconds: TimeInterval? = nil) -> LineRead {
     var data = Data()
     var buf = [UInt8](repeating: 0, count: 4096)
+    let deadline = seconds.map { DispatchTime.now().uptimeNanoseconds + UInt64(max($0, 0) * 1e9) }
     while true {
-        let n = read(fd, &buf, buf.count)
-        if n <= 0 { return data.isEmpty ? nil : data }
-        if let nl = buf[0..<n].firstIndex(of: 10) {
-            data.append(contentsOf: buf[0..<nl]); return data
+        if let deadline {
+            let now = DispatchTime.now().uptimeNanoseconds
+            guard now < deadline else { return .none }
+            var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+            let ms = Int32(min((deadline - now) / 1_000_000 + 1, 60_000))
+            let r = poll(&pfd, 1, ms)
+            if r == 0 || (r < 0 && errno == EINTR) { continue } // loop re-checks the deadline
+            if r < 0 { return .none }
         }
+        let n = read(fd, &buf, buf.count)
+        if n <= 0 { return data.isEmpty ? .none : .line(data) }
+        let nl = buf[0..<n].firstIndex(of: 10)
+        if data.count + (nl ?? n) > maxBytes { return .tooLong }
+        if let nl { data.append(contentsOf: buf[0..<nl]); return .line(data) }
         data.append(contentsOf: buf[0..<n])
     }
 }
@@ -123,8 +147,15 @@ public final class SocketServer {
     /// Device and inode of the file this server bound, so `stop()` never unlinks a socket another process put there (#176).
     private var bound: (dev: dev_t, ino: ino_t)?
     private var source: DispatchSourceRead?
+    private var suspended = false // only touched on `queue`
     private let queue = DispatchQueue(label: "chippy.socket.accept")
     private let workers = DispatchQueue(label: "chippy.socket.workers", attributes: .concurrent)
+    /// Longest line a client may send (#179). Past it the connection is answered with `respond(nil)` and closed.
+    static let maxLineBytes = 16 * 1024 * 1024
+    /// Total time a client has to send its line (#179); trickling bytes does not extend it.
+    static let readDeadline: TimeInterval = 5
+    /// How long accepting pauses when the process is out of fds (EMFILE/ENFILE), so waiting connections stay queued instead of each failed `accept` dropping one.
+    static let acceptBackoff: TimeInterval = 0.5
 
     public init(path: String = ChippyPaths.socket, handler: @escaping Handler) {
         self.path = path
@@ -151,12 +182,15 @@ public final class SocketServer {
         listenFd = fd
         let src = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
         src.setEventHandler { [weak self] in self?.accept() }
-        src.resume()
         source = src
+        src.resume()
     }
 
     public func stop() {
-        source?.cancel(); source = nil
+        queue.sync { // a suspended source must be resumed before it is cancelled and released
+            if suspended { source?.resume(); suspended = false }
+            source?.cancel(); source = nil
+        }
         if listenFd >= 0 { close(listenFd); listenFd = -1 }
         var st = stat()
         if let bound, stat(path, &st) == 0, st.st_dev == bound.dev, st.st_ino == bound.ino { unlink(path) }
@@ -165,14 +199,24 @@ public final class SocketServer {
 
     private func accept() {
         let cfd = Darwin.accept(listenFd, nil, nil)
-        guard cfd >= 0 else { return }
+        guard cfd >= 0 else {
+            if (errno == EMFILE || errno == ENFILE), let source, !suspended {
+                suspended = true
+                source.suspend()
+                queue.asyncAfter(deadline: .now() + SocketServer.acceptBackoff) { [weak self] in
+                    guard let self, self.suspended else { return }
+                    self.suspended = false
+                    self.source?.resume()
+                }
+            }
+            return
+        }
         var one: Int32 = 1
         setsockopt(cfd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
-        var tv = timeval(tv_sec: 2, tv_usec: 0) // a client that never sends a line can't hold a worker
-        setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
         workers.async { [handler] in
             let conn = Connection(fd: cfd)
-            guard let line = readLine(fd: cfd) else { conn.respond(nil); return }
+            // One deadline for the whole line: a client that sends nothing, or trickles, can't hold a worker (#179).
+            guard case .line(let line) = readLineBounded(fd: cfd, maxBytes: SocketServer.maxLineBytes, within: SocketServer.readDeadline) else { conn.respond(nil); return }
             handler(line, conn)
         }
     }
