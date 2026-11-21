@@ -44,6 +44,13 @@ public struct SessionStore {
     public private(set) var rows: [SessionRow] = []
     public init() {}
 
+    /// Fill in the host of a known session that has none (an approval from a session that predates Chippy, #164).
+    /// Never replaces a host already known, and never creates a row.
+    public mutating func learnHost(_ sessionId: String, _ host: HostInfo?) {
+        guard let h = host, h.hasHost, let i = rows.firstIndex(where: { $0.id == sessionId }), !(rows[i].host?.hasHost ?? false) else { return }
+        rows[i].host = h
+    }
+
     public mutating func apply(_ p: HookPayload, now: Date = Date()) {
         if p.event == "SessionEnd" { rows.removeAll { $0.id == p.sessionId }; return }
         let i = rows.firstIndex { $0.id == p.sessionId } ?? {
