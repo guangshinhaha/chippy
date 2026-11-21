@@ -17,8 +17,8 @@ final class DigestWindowController {
             w.title = "While you were away"
             w.isReleasedWhenClosed = false
             w.contentView = NSHostingView(rootView: DigestWindowView(model: model))
+            if !w.setFrameUsingName("ChippyDigestWindow") { w.center() } // keep where the user left it
             w.setFrameAutosaveName("ChippyDigestWindow")
-            w.center()
             window = w
         }
         NSApp.activate(ignoringOtherApps: true)
@@ -59,7 +59,5 @@ struct DigestWindowView: View {
             if let t = r.target { Button("Open") { model.activate(t) } }
         }
         .padding(.vertical, 2)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(r.name), \(r.statusText) \(age) ago")
     }
 }

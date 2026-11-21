@@ -68,8 +68,8 @@ final class DigestWindowRowsTests: XCTestCase {
         XCTAssertEqual(DigestWindowRows.rows(from: d).first?.name, "govapps / fix-1")
     }
 
-    /// The window never touches the digest's state: reading rows from the model leaves it as it was.
-    func testReadingTheRowsDoesNotDismissOrMarkSeenTheNotchDigest() {
+    /// The window's Open button calls `activate`; neither it nor reading the rows may dismiss the digest or mark it seen.
+    func testOpeningARowFromTheWindowKeepsTheNotchDigest() {
         let cache = RepoIdentityCache(resolver: { RepoResolver.fallback(cwd: $0) }, background: { $0() }, deliver: { $0() })
         var locked = true
         let m = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: scratchURL("chippy-test-\(UUID()).jsonl")), identities: cache)
@@ -78,10 +78,9 @@ final class DigestWindowRowsTests: XCTestCase {
         m.apply(HookPayload(json: Data(#"{"session_id":"a","hook_event_name":"Stop","cwd":"/x/p","last_assistant_message":"SECRET"}"#.utf8))!, now: at(50))
         locked = false; m.sweep(now: at(400))
         let before = m.awayDigest
-        XCTAssertNotNil(before)
-        _ = DigestWindowRows.rows(from: m.awayDigest)
-        _ = DigestWindowRows.title(m.awayDigest)
-        XCTAssertEqual(m.awayDigest, before)
-        XCTAssertFalse(m.restOpen, "the notch panel was not opened or closed")
+        XCTAssertEqual(before?.rows.count, 1)
+        let row = DigestWindowRows.rows(from: m.awayDigest)[0]
+        m.activate(row.target!)
+        XCTAssertEqual(m.awayDigest, before, "Open jumps to the thread; the digest and its dot stay")
     }
 }
