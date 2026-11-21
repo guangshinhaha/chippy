@@ -669,7 +669,6 @@ struct QuestionCard: View {
     @FocusState private var fieldFocused: Bool
     /// Typed text per question text; replaces the selection for that question. Memory only (the model keeps the drafts).
     @State private var texts: [String: String]
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var step: Int
     /// Why Return did nothing on the field (empty, too long, one line), shown under it on the step where it happened.
     @State private var hint: String?
@@ -719,7 +718,7 @@ struct QuestionCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10).padding(.vertical, 5)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: on ? 0.26 : 0.18)))
-                .animation(reduceMotion ? Motion.instantEase : Motion.hover, value: on)
+                .animation(nil, value: on) // hotkey-driven: instant (#208)
                 .contentShape(Rectangle())
                 .onTapGesture { pick(i) }
                 .accessibilityAddTraits(on ? .isSelected : [])
