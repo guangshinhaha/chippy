@@ -1,88 +1,40 @@
 import AppKit
+import ChippyCore
 
-let args = CommandLine.arguments
-if let i = args.firstIndex(of: "--render-gallery"), i + 1 < args.count {
-    MainActor.assumeIsolated { Gallery.render(to: args[i + 1]) }
-    exit(0)
-}
-
-if let i = args.firstIndex(of: "--render-done-detail"), i + 1 < args.count {
-    MainActor.assumeIsolated { Gallery.renderDoneDetail(to: args[i + 1]) }
-    exit(0)
-}
-
-if let i = args.firstIndex(of: "--render-question"), i + 1 < args.count {
-    MainActor.assumeIsolated { Gallery.renderQuestion(to: args[i + 1]) }
-    exit(0)
-}
-
-if let i = args.firstIndex(of: "--render-terminal-chip"), i + 1 < args.count {
-    MainActor.assumeIsolated { Gallery.renderTerminalChip(to: args[i + 1]) }
-    exit(0)
-}
-
-if let i = args.firstIndex(of: "--render-approval"), i + 1 < args.count {
-    MainActor.assumeIsolated { Gallery.renderApproval(to: args[i + 1]) }
-    exit(0)
-}
-
-if let i = args.firstIndex(of: "--render-plan"), i + 1 < args.count {
-    MainActor.assumeIsolated { Gallery.renderPlan(to: args[i + 1]) }
-    exit(0)
-}
-
-if let i = args.firstIndex(of: "--render-tab"), i + 1 < args.count {
-    MainActor.assumeIsolated { Gallery.renderTab(to: args[i + 1]) }
-    exit(0)
-}
-
-if let i = args.firstIndex(of: "--render-away"), i + 1 < args.count {
-    MainActor.assumeIsolated { Gallery.renderAway(to: args[i + 1]) }
-    exit(0)
-}
-
-if let i = args.firstIndex(of: "--render-resting"), i + 1 < args.count {
-    MainActor.assumeIsolated { Gallery.renderResting(to: args[i + 1]) }
-    exit(0)
-}
-
-if let i = args.firstIndex(of: "--render-waiting"), i + 1 < args.count {
-    MainActor.assumeIsolated { Gallery.renderWaiting(to: args[i + 1]) }
-    exit(0)
-}
-
-if let i = args.firstIndex(of: "--render-needs-finished"), i + 1 < args.count {
-    MainActor.assumeIsolated { Gallery.renderNeedsFinished(to: args[i + 1]) }
-    exit(0)
-}
-
-if let i = args.firstIndex(of: "--render-finished-overflow"), i + 1 < args.count {
-    MainActor.assumeIsolated { Gallery.renderFinishedOverflow(to: args[i + 1]) }
-    exit(0)
-}
-
-if let i = args.firstIndex(of: "--render-badge-dot"), i + 1 < args.count {
-    MainActor.assumeIsolated { Gallery.renderBadgeDot(to: args[i + 1]) }
-    exit(0)
-}
-
-if let i = args.firstIndex(of: "--render-identity"), i + 1 < args.count {
-    MainActor.assumeIsolated { Gallery.renderIdentity(to: args[i + 1]) }
-    exit(0)
-}
-
-if let i = args.firstIndex(of: "--render-glance"), i + 1 < args.count {
-    MainActor.assumeIsolated { Gallery.renderGlance(to: args[i + 1]) }
-    exit(0)
-}
-
-if let i = args.firstIndex(of: "--render-panel"), i + 1 < args.count {
-    MainActor.assumeIsolated { Gallery.renderPanel(to: args[i + 1]) }
-    exit(0)
-}
-
-if let i = args.firstIndex(of: "--render-mixed-header"), i + 1 < args.count {
-    MainActor.assumeIsolated { Gallery.renderMixedHeader(to: args[i + 1]) }
+// Render flags are decided before any app setup (#223): a mistyped `--render-*` exits here, so it never creates the
+// socket, support files or preferences.
+let renderFlag = RenderFlag.parse(CommandLine.arguments)
+switch renderFlag {
+case .none:
+    break
+case .unknown, .missingOutput:
+    FileHandle.standardError.write(Data(RenderFlag.usage(renderFlag).utf8))
+    exit(2)
+case .render(let flag, let out):
+    MainActor.assumeIsolated {
+        switch flag {
+        case "--render-gallery": Gallery.render(to: out)
+        case "--render-done-detail": Gallery.renderDoneDetail(to: out)
+        case "--render-question": Gallery.renderQuestion(to: out)
+        case "--render-terminal-chip": Gallery.renderTerminalChip(to: out)
+        case "--render-approval": Gallery.renderApproval(to: out)
+        case "--render-plan": Gallery.renderPlan(to: out)
+        case "--render-tab": Gallery.renderTab(to: out)
+        case "--render-away": Gallery.renderAway(to: out)
+        case "--render-resting": Gallery.renderResting(to: out)
+        case "--render-waiting": Gallery.renderWaiting(to: out)
+        case "--render-needs-finished": Gallery.renderNeedsFinished(to: out)
+        case "--render-finished-overflow": Gallery.renderFinishedOverflow(to: out)
+        case "--render-badge-dot": Gallery.renderBadgeDot(to: out)
+        case "--render-identity": Gallery.renderIdentity(to: out)
+        case "--render-glance": Gallery.renderGlance(to: out)
+        case "--render-panel": Gallery.renderPanel(to: out)
+        case "--render-mixed-header": Gallery.renderMixedHeader(to: out)
+        default:
+            FileHandle.standardError.write(Data(RenderFlag.usage(.unknown(flag)).utf8))
+            exit(2)
+        }
+    }
     exit(0)
 }
 
