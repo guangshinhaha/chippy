@@ -632,6 +632,13 @@ struct PressFeedback: ViewModifier {
 
 extension View {
     func pressFeedback(scale: CGFloat = 0.98) -> some View { modifier(PressFeedback(scale: scale)) }
+
+    /// A 24pt-tall, 24pt-wide hit frame around a view drawn `drawn`pt tall (C27). The extra height is given back with a
+    /// negative padding, so the layout, and so every settled row height, stays as drawn. Attach the tap or Button after it.
+    func hitTarget24(drawn: CGFloat) -> some View {
+        let inset = max(0, (24 - drawn) / 2)
+        return padding(.vertical, inset).frame(minWidth: 24, minHeight: 24).contentShape(Rectangle()).padding(.vertical, -inset)
+    }
 }
 
 struct ChipStyle: ButtonStyle {
@@ -730,7 +737,7 @@ struct QuestionCard: View {
                 Text(lead).font(.caption2).foregroundStyle(.white.opacity(0.55))
                     .lineLimit(leadExpanded ? nil : 4)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
+                    .hitTarget24(drawn: 13) // one caption2 line, at least
                     .onTapGesture { leadExpanded.toggle() }
             }
             Text(count > 1 ? "\(q.header.isEmpty ? "Question" : q.header) · \(step + 1) of \(count)" : (q.header.isEmpty ? "Claude asks" : q.header))
@@ -750,7 +757,7 @@ struct QuestionCard: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10).padding(.vertical, 5)
+                .padding(.horizontal, 10).padding(.vertical, 5).frame(minHeight: 24) // a one-line option was 22pt: 24pt target (C27)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: on ? 0.26 : 0.18)))
                 .animation(nil, value: on) // hotkey-driven: instant (#208)
                 .contentShape(Rectangle())
@@ -1017,7 +1024,7 @@ struct SummaryView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold)).rotationEffect(.degrees(open ? 90 : 0))
                         Text(open ? "Hide details" : "Show details").font(.caption2)
-                    }.foregroundStyle(.white.opacity(0.6)).contentShape(Rectangle())
+                    }.foregroundStyle(.white.opacity(0.6)).hitTarget24(drawn: 13) // 24pt target, layout unchanged (C27)
                 }.buttonStyle(PressStyle())
                 .accessibilityLabel(open ? "Hide details" : "Show details")
                 if open {
@@ -1389,7 +1396,8 @@ struct WaitingListView: View {
         return Text(text).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(selected ? 0.9 : 0.55))
             .padding(.horizontal, 10).frame(maxWidth: .infinity, minHeight: WaitingList.moreRowHeight, maxHeight: WaitingList.moreRowHeight, alignment: .leading)
             .background(rowBackground(selected: selected, hover: false))
-            .contentShape(Rectangle()).pressFeedback().onTapGesture { model.toggleFinished() }
+            .hitTarget24(drawn: WaitingList.moreRowHeight) // drawn 18pt (settled row height), 24pt target (C27)
+            .pressFeedback().onTapGesture { model.toggleFinished() }
             .accessibilityLabel(layout.expanded ? "Show fewer finished" : "\(layout.hiddenFinished) more finished, show all")
             .accessibilityAddTraits(.isButton)
             .accessibilityAction(.default) { model.toggleFinished() }
