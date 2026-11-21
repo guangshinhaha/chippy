@@ -1354,7 +1354,7 @@ struct WaitingListView: View {
                     if layout.needsScrolls {
                         ScrollViewReader { proxy in
                             ScrollView { needsRows(layout) }.frame(height: layout.needsHeight)
-                                .onChange(of: model.listSelection) { if let t = $0, layout.needs.contains(where: { $0.target == t }) { withAnimation(Motion.hover) { proxy.scrollTo(t) } } }
+                                .onChange(of: model.listSelection) { if let t = $0, layout.needs.contains(where: { $0.target == t }) { proxy.scrollTo(t) } }
                         }
                     } else { needsRows(layout) }
                 }
@@ -1367,7 +1367,7 @@ struct WaitingListView: View {
                     } else if layout.expanded {
                         ScrollViewReader { proxy in
                             ScrollView { finishedRows(layout) }.frame(height: layout.finishedHeight)
-                                .onChange(of: model.listSelection) { if let t = $0, layout.finished.contains(where: { $0.target == t }) { withAnimation(Motion.hover) { proxy.scrollTo(t) } } }
+                                .onChange(of: model.listSelection) { if let t = $0, layout.finished.contains(where: { $0.target == t }) { proxy.scrollTo(t) } }
                         }
                     } else { finishedRows(layout) }
                     if layout.hasToggle { moreRow(layout) }
@@ -1524,7 +1524,7 @@ struct NeedsRow: View {
         .contentShape(Rectangle())
         .onHover { hover = $0 }
         .onTapGesture(perform: open)
-        .animation(Motion.hover, value: selected)
+        .animation(nil, value: selected) // keyboard-driven: instant (#208)
         .animation(Motion.hover, value: hover)
         .accessibilityElement(children: .contain) // the labelled buttons stay reachable inside the row
         .accessibilityLabel("\(subject), \(item.label), \(age)")
@@ -1565,7 +1565,7 @@ struct FinishedRow: View {
         .contentShape(Rectangle())
         .onHover { hover = $0 }
         .onTapGesture(perform: open)
-        .animation(Motion.hover, value: selected)
+        .animation(nil, value: selected) // keyboard-driven: instant (#208)
         .animation(Motion.hover, value: hover)
         // One button for the row; Dismiss is its own action, not a nested element inside a button.
         .accessibilityElement(children: .ignore)
