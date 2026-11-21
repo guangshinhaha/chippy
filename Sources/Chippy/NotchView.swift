@@ -88,7 +88,7 @@ struct CountBadge: View {
             .reveal(0.08)
             .frame(minWidth: min(24, max(maxWidth, 16)), maxWidth: max(maxWidth, 16), minHeight: 24)
             .contentShape(Rectangle())
-            .onTapGesture(perform: onTap)
+            .pressFeedback().onTapGesture(perform: onTap)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(dotLabel)
             .accessibilityHint("Opens the list of everything waiting")
@@ -130,7 +130,7 @@ struct CountBadge: View {
             // A real, larger tap target (24pt), never wider than the wing / tab the badge lives in.
             .frame(minWidth: min(24, max(maxWidth, 16)), maxWidth: max(maxWidth, 16), minHeight: 24)
             .contentShape(Rectangle())
-            .onTapGesture(perform: onTap)
+            .pressFeedback().onTapGesture(perform: onTap)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(label)
             .accessibilityHint("Opens the list of everything waiting")
@@ -738,7 +738,7 @@ struct QuestionCard: View {
                     .lineLimit(leadExpanded ? nil : 4)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .hitTarget24(drawn: 13) // one caption2 line, at least
-                    .onTapGesture { leadExpanded.toggle() }
+                    .pressFeedback().onTapGesture { leadExpanded.toggle() }
             }
             Text(count > 1 ? "\(q.header.isEmpty ? "Question" : q.header) · \(step + 1) of \(count)" : (q.header.isEmpty ? "Claude asks" : q.header))
                 .font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.6))
@@ -761,7 +761,7 @@ struct QuestionCard: View {
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: on ? 0.26 : 0.18)))
                 .animation(nil, value: on) // hotkey-driven: instant (#208)
                 .contentShape(Rectangle())
-                .onTapGesture { pick(i) }
+                .pressFeedback().onTapGesture { pick(i) } // press only: `on` stays instant (#208)
                 .accessibilityAddTraits(on ? .isSelected : [])
             }
             if freeText, !q.multiSelect { replyField(q) }
