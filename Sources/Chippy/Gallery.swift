@@ -530,6 +530,7 @@ enum Gallery {
             switch n {
             case "fix-53", "fix-51": return RepoLabel(repo: "govapps", worktree: n)
             case "verify-58b", "verify-59": return RepoLabel(repo: "factory", worktree: n)
+            case let n where Gallery.stressTags[n] != nil: return RepoLabel(repo: "factory", worktree: Gallery.stressTags[n])
             default: return RepoLabel(repo: n)
             }
         }, background: { $0() }, deliver: { $0() })
@@ -649,9 +650,23 @@ enum Gallery {
                 }
             }
         }
-        let all = HStack(alignment: .top, spacing: 20) { rows; sheet }.padding(16).background(Color(white: 0.25))
+        // Worktree tags short, wide Latin, CJK and emoji (#209): a short tag hugs its text; a wide one stops at 110pt (90pt in
+        // the glance) and the repo name, age and card edge stay put.
+        let wide = listCell(listModel(needs: 1, finished: 3, names: ["wt-wide", "factory", "wt-fix", "wt-wide"], kinds: ["terminal"]), "tags: fix, 16 x W")
+        let cjk = listCell(listModel(needs: 1, finished: 3, names: ["wt-cjk", "wt-cjk", "wt-emoji", "factory"], kinds: ["terminal"]), "tags: 16 CJK, 18 emoji")
+        let gw = NotchMetrics.sample14.size(for: .expanded).width - 64
+        let glance = VStack(alignment: .leading, spacing: 0) {
+            ForEach(["factory", "wt-fix", "wt-wide", "wt-cjk", "wt-emoji"], id: \.self) { n in
+                GlanceRow(label: RepoLabel(repo: "factory", worktree: stressTags[n]), mark: SessionIdentity(colour: 5, shape: .circle, glyph: "F"), text: "Editing", live: true)
+            }
+        }.frame(width: gw).padding(.horizontal, 32).padding(.vertical, 8).background(Color.black)
+        let all = HStack(alignment: .top, spacing: 20) { VStack(alignment: .leading, spacing: 16) { rows; wide; cjk; glance }; sheet }.padding(16).background(Color(white: 0.25))
         writePNG(ImageRenderer(content: all), to: path)
     }
+
+    /// Sample worktree tags for the width stress rows (#209), keyed by the sample folder name.
+    static let stressTags: [String: String] = ["wt-fix": "fix", "wt-wide": "WWWWWWWWWWWWWWWW", "wt-cjk": "功能分支修复登录页面问题测试版本",
+                                               "wt-emoji": String(repeating: "🚀", count: 18)]
 
     /// `Chippy --render-badge-dot out.png` (#101): the collapsed notch with only finished items waiting (a dot).
     @MainActor
