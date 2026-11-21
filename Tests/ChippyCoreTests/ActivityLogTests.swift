@@ -44,6 +44,39 @@ final class ActivityLogTests: XCTestCase {
         XCTAssertEqual((attrs[.posixPermissions] as? Int) ?? 0, 0o600)
     }
 
+    func testEveryFileTheLogWritesIsOwnerOnly() throws {
+        let l = log()
+        l.record(.finished, sessionId: "a", label: RepoLabel(repo: "r"), at: at(0)) // also creates the salt
+        l.saveWindow(since: at(0), end: at(10))
+        l.trim(now: at(1), maxLines: 0) // forces a rewrite through the temp file
+        l.record(.finished, sessionId: "b", label: RepoLabel(repo: "r"), at: at(2))
+        for ext in ["", ".salt", ".window"] {
+            let path = l.url.path + ext
+            let attrs = try FileManager.default.attributesOfItem(atPath: path)
+            XCTAssertEqual((attrs[.posixPermissions] as? Int) ?? 0, 0o600, path)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: l.url.path + ".tmp"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: l.url.path + ".window.tmp"))
+    }
+
+    func testAnEventInTheSecondTheWindowStartsStillCounts() {
+        let l = log()
+        l.record(.finished, sessionId: "a", label: RepoLabel(repo: "r"), at: at(10)) // stored as :10
+        let d = AwayDigest.build(logged: l.events(), since: at(10.6), until: at(100))
+        XCTAssertEqual(d.rows.count, 1)
+    }
+
+    func testAHomeFolderSessionDoesNotLogTheAccountName() throws {
+        let l = log()
+        let m = NotchModel(always: AlwaysStore(url: nil), log: EventLog(url: scratchURL("ev-\(UUID()).jsonl")),
+                           identities: RepoIdentityCache(resolver: { RepoResolver.fallback(cwd: $0) }, background: { $0() }, deliver: { $0() }), activity: l)
+        m.apply(HookPayload(json: try JSONSerialization.data(withJSONObject: ["session_id": "h", "hook_event_name": "UserPromptSubmit", "cwd": NSHomeDirectory()]))!, now: at(1))
+        m.apply(HookPayload(json: try JSONSerialization.data(withJSONObject: ["session_id": "h", "hook_event_name": "Stop", "cwd": NSHomeDirectory()]))!, now: at(2))
+        let text = try String(contentsOf: l.url)
+        XCTAssertFalse(text.contains(NSUserName()), "the account name stays out of the file")
+        XCTAssertEqual(l.events().first?.repo, "~")
+    }
+
     func testTheSessionKeyIsASaltedHashNotTheId() {
         let l = log()
         let k = l.hash("session-123")

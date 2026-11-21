@@ -99,13 +99,14 @@ public enum AwayDigest {
             let held = Set(seen.map(hash))
             var latest: [String: (event: ActivityEvent, at: Date)] = [:]
             for e in logged {
-                guard let d = e.date, d >= since, d <= until, !held.contains(e.sid) else { continue }
+                // The log keeps whole seconds: an event in `since`'s own second still counts.
+                guard let d = e.date, d.addingTimeInterval(1) > since, d <= until, !held.contains(e.sid) else { continue }
                 if let l = latest[e.sid], l.at > d { continue }
                 latest[e.sid] = (e, d)
             }
             for (sid, l) in latest.sorted(by: { $0.key < $1.key }) {
                 let status: DigestRow.Status = l.event.status == .needsYou ? .needsYou : (l.event.status == .asksYou ? .asksYou : .finished)
-                let row = DigestRow(sessionId: sid, status: status, repo: l.event.repo, worktree: l.event.worktree, at: l.at, resolved: true,
+                let row = DigestRow(sessionId: sid, status: status, repo: l.event.repo, worktree: l.event.worktree, at: l.at, resolved: false, // the log keeps no resolved flag: no identity mark (#89)
                                     target: nil, host: nil, ended: true)
                 if status == .needsYou { needs.append(row) } else { finished.append(row) }
             }

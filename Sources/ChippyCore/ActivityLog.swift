@@ -94,9 +94,7 @@ public final class ActivityLog {
         guard keep.count != lines.count else { return }
         var out = Data()
         for l in keep { out.append(Data(l)); out.append(10) }
-        let tmp = URL(fileURLWithPath: url.path + ".tmp")
-        Self.save(out, to: tmp)
-        _ = try? FileManager.default.replaceItemAt(url, withItemAt: tmp)
+        Self.saveAtomically(out, to: url)
     }
 
     // MARK: the away window (two dates), so a restart still knows which period the digest covers
@@ -108,7 +106,7 @@ public final class ActivityLog {
         lock.lock(); defer { lock.unlock() }
         if let last = lastWindow, last == w { return }
         lastWindow = .some(w)
-        if let w, let data = try? JSONEncoder().encode(w) { Self.save(data, to: windowURL) }
+        if let w, let data = try? JSONEncoder().encode(w) { Self.saveAtomically(data, to: windowURL) }
         else { try? FileManager.default.removeItem(at: windowURL) }
     }
 
@@ -116,6 +114,13 @@ public final class ActivityLog {
         lock.lock(); defer { lock.unlock() }
         guard let d = try? Data(contentsOf: windowURL), let w = try? JSONDecoder().decode(Window.self, from: d) else { return nil }
         return (Date(timeIntervalSince1970: w.since), w.end.map { Date(timeIntervalSince1970: $0) })
+    }
+
+    /// Temp file (0600) then a rename: a crash mid-write leaves the old file whole.
+    private static func saveAtomically(_ data: Data, to url: URL) {
+        let tmp = URL(fileURLWithPath: url.path + ".tmp")
+        save(data, to: tmp)
+        _ = try? FileManager.default.replaceItemAt(url, withItemAt: tmp)
     }
 
     private static func save(_ data: Data, to url: URL) {

@@ -93,7 +93,9 @@ public final class NotchModel: ObservableObject {
     private func persistAway() { activity?.saveWindow(since: awaySince, end: awayEnd) }
     private func record(_ status: ActivityEvent.Status, sessionId: String, cwd: String, project: String, at: Date) {
         guard let activity, !Tour.isDemo(sessionId) else { return }
-        activity.record(status, sessionId: sessionId, label: identities.label(cwd: cwd, project: project), at: at)
+        // A session started in the home folder would log the account name as its repo: keep that out of the file.
+        let label = cwd == NSHomeDirectory() ? RepoLabel(repo: "~") : identities.label(cwd: cwd, project: project)
+        activity.record(status, sessionId: sessionId, label: label, at: at)
     }
     /// Last time the away signal was read; `sweep` runs every 0.5s but the signal is polled at most every `awayPollInterval`.
     private var lastAwayPoll: Date?
