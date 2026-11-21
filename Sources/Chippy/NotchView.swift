@@ -368,7 +368,7 @@ struct NotchView: View {
                         Image(systemName: "gearshape.fill").font(.callout).foregroundStyle(.white.opacity(0.7))
                             .frame(width: 28, height: 28).contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(PressStyle())
                     .help("Chippy menu")
                     .accessibilityLabel("Chippy menu")
                 }
@@ -598,6 +598,40 @@ struct ChipButton: View {
             .keyboardShortcut(isDefault ? .defaultAction : nil)
             .onHover { hover = $0 }
     }
+}
+
+/// Press feedback for plain icon and text buttons (#C19): scale on press, a dim instead under Reduce Motion.
+/// Driven by `isPressed`, so keyboard selection (which never presses) does not animate (#208).
+struct PressStyle: ButtonStyle {
+    var scale: CGFloat = 0.96
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed && !reduceMotion ? scale : 1)
+            .opacity(configuration.isPressed && reduceMotion ? 0.6 : 1)
+            .animation(Motion.press, value: configuration.isPressed)
+    }
+}
+
+/// The same feedback for a row that opens on `onTapGesture`. The pointer-down state comes from a zero-distance drag
+/// that runs alongside the tap, so only a real press shows it; arrow/Return selection never does (#208).
+struct PressFeedback: ViewModifier {
+    var scale: CGFloat = 0.98
+    @State private var pressed = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in pressed = true }.onEnded { _ in pressed = false })
+            .scaleEffect(pressed && !reduceMotion ? scale : 1)
+            .opacity(pressed && reduceMotion ? 0.6 : 1)
+            .animation(Motion.press, value: pressed)
+    }
+}
+
+extension View {
+    func pressFeedback(scale: CGFloat = 0.98) -> some View { modifier(PressFeedback(scale: scale)) }
 }
 
 struct ChipStyle: ButtonStyle {
@@ -984,7 +1018,7 @@ struct SummaryView: View {
                         Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold)).rotationEffect(.degrees(open ? 90 : 0))
                         Text(open ? "Hide details" : "Show details").font(.caption2)
                     }.foregroundStyle(.white.opacity(0.6)).contentShape(Rectangle())
-                }.buttonStyle(.plain)
+                }.buttonStyle(PressStyle())
                 .accessibilityLabel(open ? "Hide details" : "Show details")
                 if open {
                     // Measured, not ViewThatFits + maxHeight: that flexible frame claims the full 240pt it is offered,
@@ -1132,7 +1166,7 @@ struct AwayDigestView: View {
         .accessibilityHint(r.target != nil ? "Opens it" : "")
         return HStack(spacing: 4) {
             if let t = r.target {
-                Button { model.activate(t) } label: { content.contentShape(Rectangle()) }.buttonStyle(.plain)
+                Button { model.activate(t) } label: { content.contentShape(Rectangle()) }.buttonStyle(PressStyle(scale: 0.98))
             } else {
                 content
                 if TerminalJump.available(r.host) { OpenTerminalButton(host: r.host) }
@@ -1260,6 +1294,7 @@ struct PanelRowView: View {
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(hover && !row.hasButton && canOpen ? 0.1 : 0)))
         .contentShape(Rectangle())
         .onHover { hover = $0 }
+        .pressFeedback(scale: row.hasButton ? 1 : 0.98) // a row with its own buttons has no row tap
         .onTapGesture { if !row.hasButton { openApp() } }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(spoken)
@@ -1319,7 +1354,7 @@ struct WaitingListView: View {
             Spacer(minLength: 0)
             if let clearAll {
                 Button(action: clearAll) { Text("Clear all").font(.caption2).foregroundStyle(.white.opacity(0.6)).padding(.horizontal, 6).frame(minHeight: 24).contentShape(Rectangle()) } // 24pt target; the 22pt header frame keeps its height
-                    .buttonStyle(.plain).help("Move every finished thread to Recent").accessibilityLabel("Clear all finished")
+                    .buttonStyle(PressStyle()).help("Move every finished thread to Recent").accessibilityLabel("Clear all finished")
             }
         }
         .padding(.horizontal, 10).frame(height: WaitingList.sectionHeaderHeight)
@@ -1354,7 +1389,7 @@ struct WaitingListView: View {
         return Text(text).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(selected ? 0.9 : 0.55))
             .padding(.horizontal, 10).frame(maxWidth: .infinity, minHeight: WaitingList.moreRowHeight, maxHeight: WaitingList.moreRowHeight, alignment: .leading)
             .background(rowBackground(selected: selected, hover: false))
-            .contentShape(Rectangle()).onTapGesture { model.toggleFinished() }
+            .contentShape(Rectangle()).pressFeedback().onTapGesture { model.toggleFinished() }
             .accessibilityLabel(layout.expanded ? "Show fewer finished" : "\(layout.hiddenFinished) more finished, show all")
             .accessibilityAddTraits(.isButton)
             .accessibilityAction(.default) { model.toggleFinished() }
@@ -1559,6 +1594,7 @@ struct NeedsRow: View {
         .background(rowBackground(selected: selected, hover: hover))
         .contentShape(Rectangle())
         .onHover { hover = $0 }
+        .pressFeedback()
         .onTapGesture(perform: open)
         .animation(nil, value: selected) // keyboard-driven: instant (#208)
         .animation(Motion.hover, value: hover)
@@ -1595,12 +1631,13 @@ struct FinishedRow: View {
                 Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.white.opacity(0.7)).frame(width: 24, height: 24).contentShape(Rectangle())
             }
             .padding(.horizontal, -2) // 24 x 24 target, same 20pt layout width: the age and snippet do not move
-            .buttonStyle(.plain).opacity(hover || selected ? 1 : 0).allowsHitTesting(hover || selected).help("Dismiss (moves to Recent)").accessibilityLabel("Dismiss")
+            .buttonStyle(PressStyle()).opacity(hover || selected ? 1 : 0).allowsHitTesting(hover || selected).help("Dismiss (moves to Recent)").accessibilityLabel("Dismiss")
         }
         .padding(.horizontal, 10)
         .background(rowBackground(selected: selected, hover: hover))
         .contentShape(Rectangle())
         .onHover { hover = $0 }
+        .pressFeedback()
         .onTapGesture(perform: open)
         .animation(nil, value: selected) // keyboard-driven: instant (#208)
         .animation(Motion.hover, value: hover)
