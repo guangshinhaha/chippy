@@ -284,6 +284,7 @@ final class NotchPanel: NSPanel {
         case 126: model.moveSelection(-1)          // up
         case 36, 76: model.activateSelection()     // return, keypad enter
         case 51, 117:                              // delete (Backspace), forward delete: a FINISHED row goes to Recent (#211)
+            if event.isARepeat { return }              // one press, one row: holding Delete must not empty FINISHED (replies are lost, no undo)
             if !model.dismissSelection() { super.keyDown(with: event) } // any other row: not ours, pass it on
         default: super.keyDown(with: event)
         }

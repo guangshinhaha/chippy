@@ -1373,7 +1373,7 @@ struct WaitingListView: View {
                     if layout.hasToggle { moreRow(layout) }
                 }
             }
-            Text("↑↓ move · Return open · ⌫ clear · Esc close")
+            Text("↑↓ move · Return open · ⌫ dismiss · Esc close")
                 .font(.caption2).foregroundStyle(.white.opacity(0.6)).padding(.leading, 4)
                 .frame(height: NotchMetrics.keyHintHeight, alignment: .bottomLeading)
         }
