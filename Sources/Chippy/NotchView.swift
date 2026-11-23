@@ -1472,7 +1472,10 @@ struct IdentityMark: View {
         switch identity.shape {
         case .circle: Circle().fill(c)
         case .square: RoundedRectangle(cornerRadius: size * 0.2).fill(c)
-        case .diamond: RoundedRectangle(cornerRadius: size * 0.12).fill(c).rotationEffect(.degrees(45)).scaleEffect(0.78)
+        case .diamond:
+            // Drawn at 0.78 of the mark's size so the rotated corners stay inside the frame (a drawn size, not an entrance).
+            let d = size * 0.78
+            RoundedRectangle(cornerRadius: d * 0.12).fill(c).frame(width: d, height: d).rotationEffect(.degrees(45))
         case .triangle: Tri().fill(c)
         }
     }
