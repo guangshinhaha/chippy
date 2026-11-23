@@ -968,6 +968,7 @@ struct SummaryView: View {
     private let fallback: String?
     @State private var open = false
     @State private var detailsHeight: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     static let maxDetailsHeight: CGFloat = 240
 
     init(reply: String?, decision: String? = nil, compact: Bool = false) {
@@ -1036,7 +1037,7 @@ struct SummaryView: View {
                     .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
             }
             if !compact, let d, !d.details.isEmpty {
-                Button { open.toggle(); if !open { detailsHeight = 0 } } label: {
+                Button { withAnimation(reduceMotion ? nil : Motion.expand) { open.toggle() }; if !open { detailsHeight = 0 } } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold)).rotationEffect(.degrees(open ? 90 : 0))
                         Text(open ? "Hide details" : "Show details").font(.caption2)
@@ -1054,6 +1055,7 @@ struct SummaryView: View {
                     }
                     .opacity(detailsHeight > 0 ? 1 : 0)
                     .onPreferenceChange(QuestionBodyHeight.self) { detailsHeight = $0 }
+                    .transition(.opacity)
                 }
             }
         }
