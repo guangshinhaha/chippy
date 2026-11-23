@@ -697,6 +697,7 @@ struct ChipStyle: ButtonStyle {
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
             .animation(Motion.press, value: configuration.isPressed)
             .animation(Motion.hover, value: hover)
+            .animation(Motion.hover, value: disabled) // colour only, so Reduce Motion needs no variant
     }
 }
 
@@ -1107,7 +1108,7 @@ struct OpenTerminalButton: View {
     }
 
     var body: some View {
-        ChipButton(title: feedback?.title ?? title ?? "Open \(appName)", hint: feedback?.hint, kind: feedback != nil ? .neutral : kind) {
+        ChipButton(title: feedback?.title ?? title ?? "Open \(appName)", hint: feedback?.hint, kind: feedback != nil ? .neutral : kind, disabled: busy) { // busy draws the grey disabled pill at once, same size
             guard !busy else { return }
             busy = true; feedback = nil; token += 1
             TerminalJump.open(host) { v in
@@ -1276,6 +1277,7 @@ struct PanelRowView: View {
     /// Clears a terminal ask or an asking reply that was dealt with elsewhere; without it the count would stay up.
     let handled: () -> Void
     @State private var hover = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var failure: String?
     @State private var busy = false
     @State private var token = 0
@@ -1328,6 +1330,7 @@ struct PanelRowView: View {
         .contentShape(Rectangle())
         .onHover { hover = $0 }
         .pressFeedback(enabled: !row.hasButton) // a row with its own buttons has no row tap
+        .opacity(busy ? 0.6 : 1).animation(Motion.fade(Motion.press, reduce: reduceMotion), value: busy) // a tap waiting on the system dims the row; opacity only, no layout shift
         .onTapGesture { if !row.hasButton { openApp() } }
         .task(id: token) { // the failure line clears after 4s, tied to the row's lifetime
             guard failure != nil else { return }
