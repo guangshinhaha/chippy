@@ -687,12 +687,11 @@ struct ChipStyle: ButtonStyle {
             // Quiet has no visible leading padding so its label lines up with the card text (#213); its hover pill and
             // hit area still reach 12pt to the left, outside the layout.
             .padding(.leading, kind == .quiet ? 0 : 12).padding(.trailing, 12).frame(minHeight: 28)
-            .background(Capsule().fill(fill).padding(.leading, kind == .quiet ? -12 : 0))
+            .background(Capsule().fill(fill).animation(Motion.hover, value: disabled).padding(.leading, kind == .quiet ? -12 : 0)) // the fill alone fades on disabled; a title or width change stays instant
             .padding(4).padding(.leading, quietLead).contentShape(Rectangle()).padding(.leading, -quietLead).padding(-4)
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
             .animation(Motion.press, value: configuration.isPressed)
             .animation(Motion.hover, value: hover)
-            .animation(Motion.hover, value: disabled) // colour only, so Reduce Motion needs no variant
     }
 }
 

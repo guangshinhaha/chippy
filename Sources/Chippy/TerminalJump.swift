@@ -52,7 +52,7 @@ enum TerminalJump {
             switch v {
             case .landed, .workspaceNotSelected: break   // the latter is only produced after this step, by the host's own select
             case .landedUnverified:
-                Log.jump.notice("Chippy: window check inconclusive for \(bundle ?? "?") (\(unreadable ? "window list unreadable" : "no windows found for its processes")), judged by frontmost only")
+                Log.jump.notice("Chippy: window check inconclusive for \(bundle ?? "?", privacy: .public) (\(unreadable ? "window list unreadable" : "no windows found for its processes")), judged by frontmost only")
             case .offSpace:
                 Log.jump.notice("Chippy: app frontmost but its windows are on another Space (check System Settings > Desktop & Dock > \"When switching to an application, switch to a Space with open windows\")")
             case .notFrontmost:
@@ -129,7 +129,7 @@ enum TerminalJump {
                 guard v == .landed || v == .landedUnverified else { completion(v); return }
                 // One place logs every failed exact-target step; each reason is a fixed string or an error domain and code, never an id.
                 func step(_ r: JumpPlan.StepResult) {
-                    if case .failed(let why) = r { Log.jump.error("Chippy: exact-target step failed (\(why)), app left in front") }
+                    if case .failed(let why) = r { Log.jump.error("Chippy: exact-target step failed (\(why, privacy: .public)), app left in front") }
                     completion(JumpPlan.finalVerdict(v, step: r))
                 }
                 switch plan {
