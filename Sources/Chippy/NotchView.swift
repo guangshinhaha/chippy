@@ -1386,10 +1386,10 @@ struct WaitingListView: View {
         .accessibilityAddTraits(.isHeader)
     }
 
-    private func needsRows(_ layout: WaitingLayout) -> some View {
+    private func needsRows(_ layout: WaitingLayout, now: Date) -> some View {
         VStack(spacing: 0) {
             ForEach(layout.needs) { item in
-                NeedsRow(item: item, mark: model.identity(item: item), selected: model.listSelection == item.target, host: model.terminalItems.first { .terminal($0.sessionId) == item.target }?.host,
+                NeedsRow(item: item, now: now, mark: model.identity(item: item), selected: model.listSelection == item.target, host: model.terminalItems.first { .terminal($0.sessionId) == item.target }?.host,
                          open: { model.activate(item.target) },
                          handled: { if case .terminal(let sid) = item.target { model.dismissTerminal(sid) } })
                     .frame(height: WaitingList.needsRowHeight).id(item.target)
@@ -1397,10 +1397,10 @@ struct WaitingListView: View {
         }
     }
 
-    private func finishedRows(_ layout: WaitingLayout) -> some View {
+    private func finishedRows(_ layout: WaitingLayout, now: Date) -> some View {
         VStack(spacing: 0) {
             ForEach(layout.finished) { item in
-                FinishedRow(item: item, mark: model.identity(item: item), selected: model.listSelection == item.target,
+                FinishedRow(item: item, now: now, mark: model.identity(item: item), selected: model.listSelection == item.target,
                             open: { model.activate(item.target) }, dismiss: { if case .done(let sid) = item.target { model.dismissDone(sid) } })
                     .frame(height: WaitingList.finishedRowHeight).id(item.target)
             }
@@ -1422,30 +1422,34 @@ struct WaitingListView: View {
     }
 
     var body: some View {
+        TimelineView(.periodic(from: .now, by: 15)) { ctx in content(now: ctx.date) } // one timeline for the whole list; rows receive `now`
+    }
+
+    private func content(now: Date) -> some View {
         let layout = model.waitingLayout
-        VStack(alignment: .leading, spacing: WaitingList.sectionGap) {
+        return VStack(alignment: .leading, spacing: WaitingList.sectionGap) {
             if !layout.needs.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {
                     section("NEEDS YOU", count: layout.needs.count)
                     if layout.needsScrolls {
                         ScrollViewReader { proxy in
-                            ScrollView { needsRows(layout) }.frame(height: layout.needsHeight)
+                            ScrollView { needsRows(layout, now: now) }.frame(height: layout.needsHeight)
                                 .onChange(of: model.listSelection) { if let t = $0, layout.needs.contains(where: { $0.target == t }) { proxy.scrollTo(t) } }
                         }
-                    } else { needsRows(layout) }
+                    } else { needsRows(layout, now: now) }
                 }
             }
             if layout.totalFinished > 0 {
                 VStack(alignment: .leading, spacing: 0) {
                     section("FINISHED", count: layout.totalFinished, clearAll: { model.dismissDone(nil) })
                     if layout.expanded, staticRender {
-                        finishedRows(layout).frame(height: layout.finishedHeight, alignment: .top).clipped() // gallery only: ImageRenderer draws ScrollView blank
+                        finishedRows(layout, now: now).frame(height: layout.finishedHeight, alignment: .top).clipped() // gallery only: ImageRenderer draws ScrollView blank
                     } else if layout.expanded {
                         ScrollViewReader { proxy in
-                            ScrollView { finishedRows(layout) }.frame(height: layout.finishedHeight)
+                            ScrollView { finishedRows(layout, now: now) }.frame(height: layout.finishedHeight)
                                 .onChange(of: model.listSelection) { if let t = $0, layout.finished.contains(where: { $0.target == t }) { proxy.scrollTo(t) } }
                         }
-                    } else { finishedRows(layout) }
+                    } else { finishedRows(layout, now: now) }
                     if layout.hasToggle { moreRow(layout) }
                 }
             }
@@ -1571,6 +1575,8 @@ private func rowBackground(selected: Bool, hover: Bool) -> some View {
 /// A row you act on: verb-led label, one primary button (terminal rows add "Handled").
 struct NeedsRow: View {
     let item: WaitingItem
+    /// The list's one 15s tick; feeds both the visible age and the VoiceOver label, so they never disagree.
+    let now: Date
     var mark: SessionIdentity? = nil
     let selected: Bool
     let host: HostInfo?
@@ -1591,13 +1597,9 @@ struct NeedsRow: View {
     private var actionTitle: String { item.kind == .question ? "Answer" : "Review" }
     private var subject: String { "\(mark.map { "\($0.spoken), " } ?? "")\(item.repo)\(item.worktree.map { ", worktree \($0)" } ?? "")" }
 
-    /// One 15s timeline per row feeds both the visible age and the VoiceOver label, so they never disagree.
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 15)) { ctx in row(age: WaitingList.age(since: item.at, now: ctx.date)) }
-    }
-
-    private func row(age: String) -> some View {
-        HStack(spacing: 10) {
+        let age = WaitingList.age(since: item.at, now: now)
+        return HStack(spacing: 10) {
             Image(systemName: symbol).font(.caption).foregroundStyle(tint).frame(width: 18)
             VStack(alignment: .leading, spacing: 2) {
                 RepoTitle(repo: item.repo, worktree: item.worktree, mark: mark)
@@ -1636,6 +1638,7 @@ struct NeedsRow: View {
 /// One line, FYI: repo, outcome, age. No buttons; the whole row opens, and an x shows on hover.
 struct FinishedRow: View {
     let item: WaitingItem
+    let now: Date
     var mark: SessionIdentity? = nil
     let selected: Bool
     let open: () -> Void
@@ -1643,11 +1646,8 @@ struct FinishedRow: View {
     @State private var hover = false
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 15)) { ctx in row(age: WaitingList.age(since: item.at, now: ctx.date)) }
-    }
-
-    private func row(age: String) -> some View {
-        HStack(spacing: 10) {
+        let age = WaitingList.age(since: item.at, now: now)
+        return HStack(spacing: 10) {
             Image(systemName: "checkmark.circle").font(.caption).foregroundStyle(.white.opacity(0.45)).frame(width: 18)
             RepoTitle(repo: item.repo, worktree: item.worktree, mark: mark).layoutPriority(1)
             if item.asksYou { Text("asks you").font(.caption2).foregroundStyle(Color.orange).lineLimit(1).fixedSize() }
