@@ -797,6 +797,10 @@ struct QuestionCard: View {
                 .onExitCommand { fieldFocused = false } // Esc: leave the field first, never close the card or lose the draft
                 .padding(.horizontal, 10).padding(.vertical, 5)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: fieldFocused ? 0.26 : 0.18)))
+                .overlay { // the focus ring: an inside stroke (no layout shift) so focus never rests on a grey shift alone (D24)
+                    if fieldFocused { RoundedRectangle(cornerRadius: 8).strokeBorder(Color.white.opacity(0.5), lineWidth: 1).transition(.opacity) }
+                }
+                .animation(Motion.hover, value: fieldFocused)
                 .accessibilityLabel("Type a reply")
                 .accessibilityIdentifier(NotchPanel.replyFieldMarker)
             if let msg = hint ?? (tooLong ? NotchModel.freeTextProblem(text) : nil) {
