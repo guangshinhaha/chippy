@@ -443,11 +443,6 @@ struct ScrollWhenTall<Content: View>: View {
     }
 }
 
-struct ContentHeightKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-}
-
 struct ApprovalCard: View {
     let req: PendingRequest
     /// The resolved repo label, as the list rows show it; the project name until given.
