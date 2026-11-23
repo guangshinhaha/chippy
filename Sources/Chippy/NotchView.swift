@@ -1106,15 +1106,19 @@ struct OpenTerminalButton: View {
         ChipButton(title: feedback?.title ?? title ?? "Open \(appName)", hint: feedback?.hint, kind: feedback != nil ? .neutral : kind) {
             guard !busy else { return }
             busy = true; feedback = nil; token += 1
-            let mine = token
             TerminalJump.open(host) { v in
                 busy = false
                 feedback = JumpFeedback.text(for: v, appName: appName)
                 if feedback == nil { onOpened() } // landed, or landed but unconfirmed: both count as opened (see JumpFeedback)
-                else { DispatchQueue.main.asyncAfter(deadline: .now() + 4) { if token == mine { feedback = nil } } }
+                else { token += 1 } // restarts the reset timer below
             }
         }
         .help(feedback?.help ?? "")
+        .task(id: token) { // the reset timer lives and dies with the view; a new tap bumps token and cancels it
+            guard feedback != nil else { return }
+            try? await Task.sleep(for: .seconds(4))
+            if !Task.isCancelled { feedback = nil }
+        }
     }
 }
 
@@ -1321,6 +1325,11 @@ struct PanelRowView: View {
         .onHover { hover = $0 }
         .pressFeedback(enabled: !row.hasButton) // a row with its own buttons has no row tap
         .onTapGesture { if !row.hasButton { openApp() } }
+        .task(id: token) { // the failure line clears after 4s, tied to the row's lifetime
+            guard failure != nil else { return }
+            try? await Task.sleep(for: .seconds(4))
+            if !Task.isCancelled { failure = nil }
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(spoken)
         .accessibilityAction(named: "Open \(appName ?? "terminal")") { if canOpen || row.kind == .approval || row.kind == .question { primary() } }
@@ -1349,12 +1358,11 @@ struct PanelRowView: View {
     private func openApp() {
         guard canOpen, !busy else { return }
         busy = true; failure = nil; token += 1
-        let mine = token
         TerminalJump.open(row.host) { v in
             busy = false
             guard let text = JumpFeedback.text(for: v, appName: appName ?? "the app") else { return } // landed, or landed unconfirmed
             failure = text.line
-            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { if token == mine { failure = nil } }
+            token += 1 // restarts the reset timer (.task(id: token) on the row)
         }
     }
 }
