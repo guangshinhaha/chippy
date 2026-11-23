@@ -525,7 +525,7 @@ struct PlanCard: View {
                 Text("“\(p)”").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
             }
             Text("Claude says (unverified):").font(.caption2).foregroundStyle(.white.opacity(0.6))
-            let rows = VStack(alignment: .leading, spacing: 3) {
+            let rows = VStack(alignment: .leading, spacing: 4) {
                 Text(plan.title ?? "Proposed plan").font(.callout.weight(.semibold)).foregroundStyle(.white)
                     .fixedSize(horizontal: false, vertical: true) // no line limit: rows are capped in core, so nothing is ellipsized silently
                 ForEach(Array(v.shown.enumerated()), id: \.offset) { _, line in
@@ -588,7 +588,7 @@ struct ChipButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 5) {
+            HStack(spacing: 4) {
                 Text(title).monospacedDigit() // "All 12" keeps its width as the count changes
                 if let hint { Text(hint).font(.caption2).opacity(0.85) } // quiet 0.6 x 0.85 = 0.51 (C39)
             }
@@ -764,16 +764,16 @@ struct QuestionCard: View {
                 HStack(alignment: .top, spacing: 8) {
                     if q.multiSelect {
                         Image(systemName: on ? "checkmark.square.fill" : "square").font(.caption)
-                            .foregroundStyle(on ? Color.accentColor : .white.opacity(0.5)).padding(.top, 1)
+                            .foregroundStyle(on ? Color.accentColor : .white.opacity(0.5)).padding(.top, 2)
                     }
-                    if i < 9 { Text("\(i + 1)").font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.6)).padding(.top, 1) }
+                    if i < 9 { Text("\(i + 1)").font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.6)).padding(.top, 2) }
                     VStack(alignment: .leading, spacing: 1) {
                         Text(o.label).font(.caption.bold()).foregroundStyle(.white)
                         if !o.description.isEmpty { Text(o.description).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(3) }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10).padding(.vertical, 5).frame(minHeight: 24) // a one-line option was 22pt: 24pt target (C27)
+                .padding(.horizontal, 10).padding(.vertical, 4).frame(minHeight: 24) // a one-line option was 22pt: 24pt target (C27)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: on ? 0.26 : 0.18)))
                 .animation(nil, value: on) // hotkey-driven: instant (#208)
                 .contentShape(Rectangle())
@@ -795,7 +795,7 @@ struct QuestionCard: View {
                 .focused($fieldFocused)
                 .onSubmit { submitText(q) }
                 .onExitCommand { fieldFocused = false } // Esc: leave the field first, never close the card or lose the draft
-                .padding(.horizontal, 10).padding(.vertical, 5)
+                .padding(.horizontal, 10).padding(.vertical, 6)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: fieldFocused ? 0.26 : 0.18)))
                 .overlay { // the focus ring: an inside stroke (no layout shift) so focus never rests on a grey shift alone (D24)
                     if fieldFocused { RoundedRectangle(cornerRadius: 8).strokeBorder(Color.white.opacity(0.5), lineWidth: 1).transition(.opacity) }
@@ -1016,7 +1016,7 @@ struct SummaryView: View {
     }
 
     private var detailsBody: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 4) {
             ForEach(Array((doc?.details ?? []).enumerated()), id: \.offset) { _, b in block(b) }
         }.textSelection(.enabled)
     }
@@ -1524,7 +1524,7 @@ struct RepoTitle: View {
     let worktree: String?
     var mark: SessionIdentity? = nil
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 4) {
             if let mark { IdentityMark(identity: mark, size: 14) }
             Text(repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle).help(repo).layoutPriority(1)
             if let worktree {
