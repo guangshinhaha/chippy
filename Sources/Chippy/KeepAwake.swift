@@ -203,7 +203,7 @@ final class KeepAwake {
         guard let shell else { return false }
         var err: NSDictionary?
         NSAppleScript(source: SudoersRule.appleScript(forShell: shell))?.executeAndReturnError(&err)
-        if let err { NSLog("Chippy: admin step failed: \(err[NSAppleScript.errorNumber] ?? "?")") }
+        if let err { Log.keepAwake.error("Chippy: admin step failed: \(String(describing: err[NSAppleScript.errorNumber] ?? "?"))") }
         return err == nil
     }
 

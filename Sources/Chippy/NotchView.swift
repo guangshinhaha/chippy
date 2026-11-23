@@ -443,11 +443,6 @@ struct ScrollWhenTall<Content: View>: View {
     }
 }
 
-struct ContentHeightKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-}
-
 struct ApprovalCard: View {
     let req: PendingRequest
     /// The resolved repo label, as the list rows show it; the project name until given.
@@ -525,7 +520,7 @@ struct PlanCard: View {
                 Text("“\(p)”").font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
             }
             Text("Claude says (unverified):").font(.caption2).foregroundStyle(.white.opacity(0.6))
-            let rows = VStack(alignment: .leading, spacing: 3) {
+            let rows = VStack(alignment: .leading, spacing: 4) {
                 Text(plan.title ?? "Proposed plan").font(.callout.weight(.semibold)).foregroundStyle(.white)
                     .fixedSize(horizontal: false, vertical: true) // no line limit: rows are capped in core, so nothing is ellipsized silently
                 ForEach(Array(v.shown.enumerated()), id: \.offset) { _, line in
@@ -588,7 +583,7 @@ struct ChipButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 5) {
+            HStack(spacing: 4) {
                 Text(title).monospacedDigit() // "All 12" keeps its width as the count changes
                 if let hint { Text(hint).font(.caption2).opacity(0.85) } // quiet 0.6 x 0.85 = 0.51 (C39)
             }
@@ -692,7 +687,7 @@ struct ChipStyle: ButtonStyle {
             // Quiet has no visible leading padding so its label lines up with the card text (#213); its hover pill and
             // hit area still reach 12pt to the left, outside the layout.
             .padding(.leading, kind == .quiet ? 0 : 12).padding(.trailing, 12).frame(minHeight: 28)
-            .background(Capsule().fill(fill).padding(.leading, kind == .quiet ? -12 : 0))
+            .background(Capsule().fill(fill).animation(Motion.hover, value: disabled).padding(.leading, kind == .quiet ? -12 : 0)) // the fill alone fades on disabled; a title or width change stays instant
             .padding(4).padding(.leading, quietLead).contentShape(Rectangle()).padding(.leading, -quietLead).padding(-4)
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
             .animation(Motion.press, value: configuration.isPressed)
@@ -764,16 +759,16 @@ struct QuestionCard: View {
                 HStack(alignment: .top, spacing: 8) {
                     if q.multiSelect {
                         Image(systemName: on ? "checkmark.square.fill" : "square").font(.caption)
-                            .foregroundStyle(on ? Color.accentColor : .white.opacity(0.5)).padding(.top, 1)
+                            .foregroundStyle(on ? Color.accentColor : .white.opacity(0.5)).padding(.top, 2)
                     }
-                    if i < 9 { Text("\(i + 1)").font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.6)).padding(.top, 1) }
+                    if i < 9 { Text("\(i + 1)").font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.6)).padding(.top, 2) }
                     VStack(alignment: .leading, spacing: 1) {
                         Text(o.label).font(.caption.bold()).foregroundStyle(.white)
                         if !o.description.isEmpty { Text(o.description).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(3) }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10).padding(.vertical, 5).frame(minHeight: 24) // a one-line option was 22pt: 24pt target (C27)
+                .padding(.horizontal, 10).padding(.vertical, 4).frame(minHeight: 24) // a one-line option was 22pt: 24pt target (C27)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: on ? 0.26 : 0.18)))
                 .animation(nil, value: on) // hotkey-driven: instant (#208)
                 .contentShape(Rectangle())
@@ -795,8 +790,12 @@ struct QuestionCard: View {
                 .focused($fieldFocused)
                 .onSubmit { submitText(q) }
                 .onExitCommand { fieldFocused = false } // Esc: leave the field first, never close the card or lose the draft
-                .padding(.horizontal, 10).padding(.vertical, 5)
+                .padding(.horizontal, 10).padding(.vertical, 6)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: fieldFocused ? 0.26 : 0.18)))
+                .overlay { // the focus ring: an inside stroke (no layout shift) so focus never rests on a grey shift alone (D24)
+                    if fieldFocused { RoundedRectangle(cornerRadius: 8).strokeBorder(Color.white.opacity(0.5), lineWidth: 1).transition(.opacity) }
+                }
+                .animation(Motion.hover, value: fieldFocused)
                 .accessibilityLabel("Type a reply")
                 .accessibilityIdentifier(NotchPanel.replyFieldMarker)
             if let msg = hint ?? (tooLong ? NotchModel.freeTextProblem(text) : nil) {
@@ -968,6 +967,7 @@ struct SummaryView: View {
     private let fallback: String?
     @State private var open = false
     @State private var detailsHeight: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     static let maxDetailsHeight: CGFloat = 240
 
     init(reply: String?, decision: String? = nil, compact: Bool = false) {
@@ -1011,7 +1011,7 @@ struct SummaryView: View {
     }
 
     private var detailsBody: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 4) {
             ForEach(Array((doc?.details ?? []).enumerated()), id: \.offset) { _, b in block(b) }
         }.textSelection(.enabled)
     }
@@ -1036,7 +1036,7 @@ struct SummaryView: View {
                     .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
             }
             if !compact, let d, !d.details.isEmpty {
-                Button { open.toggle(); if !open { detailsHeight = 0 } } label: {
+                Button { withAnimation(reduceMotion ? nil : Motion.expand) { open.toggle() }; if !open { detailsHeight = 0 } } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold)).rotationEffect(.degrees(open ? 90 : 0))
                         Text(open ? "Hide details" : "Show details").font(.caption2)
@@ -1054,6 +1054,7 @@ struct SummaryView: View {
                     }
                     .opacity(detailsHeight > 0 ? 1 : 0)
                     .onPreferenceChange(QuestionBodyHeight.self) { detailsHeight = $0 }
+                    .transition(.opacity)
                 }
             }
         }
@@ -1101,18 +1102,22 @@ struct OpenTerminalButton: View {
     }
 
     var body: some View {
-        ChipButton(title: feedback?.title ?? title ?? "Open \(appName)", hint: feedback?.hint, kind: feedback != nil ? .neutral : kind) {
+        ChipButton(title: feedback?.title ?? title ?? "Open \(appName)", hint: feedback?.hint, kind: feedback != nil ? .neutral : kind, disabled: busy) { // busy draws the grey disabled pill at once, same size
             guard !busy else { return }
             busy = true; feedback = nil; token += 1
-            let mine = token
             TerminalJump.open(host) { v in
                 busy = false
                 feedback = JumpFeedback.text(for: v, appName: appName)
                 if feedback == nil { onOpened() } // landed, or landed but unconfirmed: both count as opened (see JumpFeedback)
-                else { DispatchQueue.main.asyncAfter(deadline: .now() + 4) { if token == mine { feedback = nil } } }
+                else { token += 1 } // restarts the reset timer below
             }
         }
         .help(feedback?.help ?? "")
+        .task(id: token) { // the reset timer lives and dies with the view; a new tap bumps token and cancels it
+            guard feedback != nil else { return }
+            try? await Task.sleep(for: .seconds(4))
+            if !Task.isCancelled { feedback = nil }
+        }
     }
 }
 
@@ -1266,6 +1271,7 @@ struct PanelRowView: View {
     /// Clears a terminal ask or an asking reply that was dealt with elsewhere; without it the count would stay up.
     let handled: () -> Void
     @State private var hover = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var failure: String?
     @State private var busy = false
     @State private var token = 0
@@ -1318,7 +1324,13 @@ struct PanelRowView: View {
         .contentShape(Rectangle())
         .onHover { hover = $0 }
         .pressFeedback(enabled: !row.hasButton) // a row with its own buttons has no row tap
+        .opacity(busy ? 0.6 : 1).animation(Motion.fade(Motion.press, reduce: reduceMotion), value: busy) // a tap waiting on the system dims the row; opacity only, no layout shift
         .onTapGesture { if !row.hasButton { openApp() } }
+        .task(id: token) { // the failure line clears after 4s, tied to the row's lifetime
+            guard failure != nil else { return }
+            try? await Task.sleep(for: .seconds(4))
+            if !Task.isCancelled { failure = nil }
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(spoken)
         .accessibilityAction(named: "Open \(appName ?? "terminal")") { if canOpen || row.kind == .approval || row.kind == .question { primary() } }
@@ -1347,12 +1359,11 @@ struct PanelRowView: View {
     private func openApp() {
         guard canOpen, !busy else { return }
         busy = true; failure = nil; token += 1
-        let mine = token
         TerminalJump.open(row.host) { v in
             busy = false
             guard let text = JumpFeedback.text(for: v, appName: appName ?? "the app") else { return } // landed, or landed unconfirmed
             failure = text.line
-            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { if token == mine { failure = nil } }
+            token += 1 // restarts the reset timer (.task(id: token) on the row)
         }
     }
 }
@@ -1384,10 +1395,10 @@ struct WaitingListView: View {
         .accessibilityAddTraits(.isHeader)
     }
 
-    private func needsRows(_ layout: WaitingLayout) -> some View {
+    private func needsRows(_ layout: WaitingLayout, now: Date) -> some View {
         VStack(spacing: 0) {
             ForEach(layout.needs) { item in
-                NeedsRow(item: item, mark: model.identity(item: item), selected: model.listSelection == item.target, host: model.terminalItems.first { .terminal($0.sessionId) == item.target }?.host,
+                NeedsRow(item: item, now: now, mark: model.identity(item: item), selected: model.listSelection == item.target, host: model.terminalItems.first { .terminal($0.sessionId) == item.target }?.host,
                          open: { model.activate(item.target) },
                          handled: { if case .terminal(let sid) = item.target { model.dismissTerminal(sid) } })
                     .frame(height: WaitingList.needsRowHeight).id(item.target)
@@ -1395,10 +1406,10 @@ struct WaitingListView: View {
         }
     }
 
-    private func finishedRows(_ layout: WaitingLayout) -> some View {
+    private func finishedRows(_ layout: WaitingLayout, now: Date) -> some View {
         VStack(spacing: 0) {
             ForEach(layout.finished) { item in
-                FinishedRow(item: item, mark: model.identity(item: item), selected: model.listSelection == item.target,
+                FinishedRow(item: item, now: now, mark: model.identity(item: item), selected: model.listSelection == item.target,
                             open: { model.activate(item.target) }, dismiss: { if case .done(let sid) = item.target { model.dismissDone(sid) } })
                     .frame(height: WaitingList.finishedRowHeight).id(item.target)
             }
@@ -1420,30 +1431,34 @@ struct WaitingListView: View {
     }
 
     var body: some View {
+        TimelineView(.periodic(from: .now, by: 15)) { ctx in content(now: ctx.date) } // one timeline for the whole list; rows receive `now`
+    }
+
+    private func content(now: Date) -> some View {
         let layout = model.waitingLayout
-        VStack(alignment: .leading, spacing: WaitingList.sectionGap) {
+        return VStack(alignment: .leading, spacing: WaitingList.sectionGap) {
             if !layout.needs.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {
                     section("NEEDS YOU", count: layout.needs.count)
                     if layout.needsScrolls {
                         ScrollViewReader { proxy in
-                            ScrollView { needsRows(layout) }.frame(height: layout.needsHeight)
+                            ScrollView { needsRows(layout, now: now) }.frame(height: layout.needsHeight)
                                 .onChange(of: model.listSelection) { if let t = $0, layout.needs.contains(where: { $0.target == t }) { proxy.scrollTo(t) } }
                         }
-                    } else { needsRows(layout) }
+                    } else { needsRows(layout, now: now) }
                 }
             }
             if layout.totalFinished > 0 {
                 VStack(alignment: .leading, spacing: 0) {
                     section("FINISHED", count: layout.totalFinished, clearAll: { model.dismissDone(nil) })
                     if layout.expanded, staticRender {
-                        finishedRows(layout).frame(height: layout.finishedHeight, alignment: .top).clipped() // gallery only: ImageRenderer draws ScrollView blank
+                        finishedRows(layout, now: now).frame(height: layout.finishedHeight, alignment: .top).clipped() // gallery only: ImageRenderer draws ScrollView blank
                     } else if layout.expanded {
                         ScrollViewReader { proxy in
-                            ScrollView { finishedRows(layout) }.frame(height: layout.finishedHeight)
+                            ScrollView { finishedRows(layout, now: now) }.frame(height: layout.finishedHeight)
                                 .onChange(of: model.listSelection) { if let t = $0, layout.finished.contains(where: { $0.target == t }) { proxy.scrollTo(t) } }
                         }
-                    } else { finishedRows(layout) }
+                    } else { finishedRows(layout, now: now) }
                     if layout.hasToggle { moreRow(layout) }
                 }
             }
@@ -1470,7 +1485,10 @@ struct IdentityMark: View {
         switch identity.shape {
         case .circle: Circle().fill(c)
         case .square: RoundedRectangle(cornerRadius: size * 0.2).fill(c)
-        case .diamond: RoundedRectangle(cornerRadius: size * 0.12).fill(c).rotationEffect(.degrees(45)).scaleEffect(0.78)
+        case .diamond:
+            // Drawn at 0.78 of the mark's size so the rotated corners stay inside the frame (a drawn size, not an entrance).
+            let d = size * 0.78
+            RoundedRectangle(cornerRadius: d * 0.12).fill(c).frame(width: d, height: d).rotationEffect(.degrees(45))
         case .triangle: Tri().fill(c)
         }
     }
@@ -1503,7 +1521,7 @@ struct RepoTitle: View {
     let worktree: String?
     var mark: SessionIdentity? = nil
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 4) {
             if let mark { IdentityMark(identity: mark, size: 14) }
             Text(repo).font(.caption.bold()).foregroundStyle(.white).lineLimit(1).truncationMode(.middle).help(repo).layoutPriority(1)
             if let worktree {
@@ -1566,6 +1584,8 @@ private func rowBackground(selected: Bool, hover: Bool) -> some View {
 /// A row you act on: verb-led label, one primary button (terminal rows add "Handled").
 struct NeedsRow: View {
     let item: WaitingItem
+    /// The list's one 15s tick; feeds both the visible age and the VoiceOver label, so they never disagree.
+    let now: Date
     var mark: SessionIdentity? = nil
     let selected: Bool
     let host: HostInfo?
@@ -1586,13 +1606,9 @@ struct NeedsRow: View {
     private var actionTitle: String { item.kind == .question ? "Answer" : "Review" }
     private var subject: String { "\(mark.map { "\($0.spoken), " } ?? "")\(item.repo)\(item.worktree.map { ", worktree \($0)" } ?? "")" }
 
-    /// One 15s timeline per row feeds both the visible age and the VoiceOver label, so they never disagree.
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 15)) { ctx in row(age: WaitingList.age(since: item.at, now: ctx.date)) }
-    }
-
-    private func row(age: String) -> some View {
-        HStack(spacing: 10) {
+        let age = WaitingList.age(since: item.at, now: now)
+        return HStack(spacing: 10) {
             Image(systemName: symbol).font(.caption).foregroundStyle(tint).frame(width: 18)
             VStack(alignment: .leading, spacing: 2) {
                 RepoTitle(repo: item.repo, worktree: item.worktree, mark: mark)
@@ -1631,6 +1647,7 @@ struct NeedsRow: View {
 /// One line, FYI: repo, outcome, age. No buttons; the whole row opens, and an x shows on hover.
 struct FinishedRow: View {
     let item: WaitingItem
+    let now: Date
     var mark: SessionIdentity? = nil
     let selected: Bool
     let open: () -> Void
@@ -1638,11 +1655,8 @@ struct FinishedRow: View {
     @State private var hover = false
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 15)) { ctx in row(age: WaitingList.age(since: item.at, now: ctx.date)) }
-    }
-
-    private func row(age: String) -> some View {
-        HStack(spacing: 10) {
+        let age = WaitingList.age(since: item.at, now: now)
+        return HStack(spacing: 10) {
             Image(systemName: "checkmark.circle").font(.caption).foregroundStyle(.white.opacity(0.45)).frame(width: 18)
             RepoTitle(repo: item.repo, worktree: item.worktree, mark: mark).layoutPriority(1)
             if item.asksYou { Text("asks you").font(.caption2).foregroundStyle(Color.orange).lineLimit(1).fixedSize() }

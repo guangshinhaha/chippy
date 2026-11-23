@@ -62,7 +62,7 @@ final class HotKeys {
             let status = RegisterEventHotKey(UInt32(item.keyCode), UInt32(controlKey | optionKey), hkID,
                                              GetApplicationEventTarget(), 0, &ref)
             if status == noErr, let ref { refs[id] = ref; actions[id] = item.action }
-            else { all = false; NSLog("Chippy: hot key \(item.keyCode) not registered (\(status))") }
+            else { all = false; Log.hotKeys.error("Chippy: hot key \(item.keyCode) not registered (\(status))") }
         }
         return all
     }

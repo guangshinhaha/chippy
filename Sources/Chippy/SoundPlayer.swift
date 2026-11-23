@@ -93,7 +93,7 @@ final class SoundPlayer {
     func play(_ name: String) -> Bool {
         // The named sound is a shared instance and play() on a playing one is a no-op: play a copy.
         guard let s = (NSSound(named: name)?.copy() as? NSSound) else {
-            if !warnedMissing { warnedMissing = true; NSLog("Chippy: built-in sound missing") }
+            if !warnedMissing { warnedMissing = true; Log.sound.error("Chippy: built-in sound missing") }
             return false
         }
         playing.removeAll { !$0.isPlaying }
