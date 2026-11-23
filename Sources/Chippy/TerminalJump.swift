@@ -52,11 +52,11 @@ enum TerminalJump {
             switch v {
             case .landed, .workspaceNotSelected: break   // the latter is only produced after this step, by the host's own select
             case .landedUnverified:
-                NSLog("Chippy: window check inconclusive for %@ (%@), judged by frontmost only", bundle ?? "?", unreadable ? "window list unreadable" : "no windows found for its processes")
+                Log.jump.notice("Chippy: window check inconclusive for \(bundle ?? "?") (\(unreadable ? "window list unreadable" : "no windows found for its processes")), judged by frontmost only")
             case .offSpace:
-                NSLog("Chippy: app frontmost but its windows are on another Space (check System Settings > Desktop & Dock > \"When switching to an application, switch to a Space with open windows\")")
+                Log.jump.notice("Chippy: app frontmost but its windows are on another Space (check System Settings > Desktop & Dock > \"When switching to an application, switch to a Space with open windows\")")
             case .notFrontmost:
-                NSLog("Chippy: open terminal failed for pid %d (%@): %@", pid, bundle ?? "?", String(describing: err))
+                Log.jump.error("Chippy: open terminal failed for pid \(pid) (\(bundle ?? "?")): \(String(describing: err))")
             }
             completion(v)
         }
@@ -89,7 +89,7 @@ enum TerminalJump {
     /// Reads the answer with `OrcaCLI.interpret` (exit code plus an `ok` flag). `completion` runs on the main queue.
     static func runCLI(_ cli: URL, arguments: [String], completion: @escaping (JumpPlan.StepResult) -> Void) {
         func finish(_ s: OrcaCLI.Select) {
-            if s == .unconfirmed { NSLog("Chippy: host CLI step gave no readable answer, judged by exit code only") }
+            if s == .unconfirmed { Log.jump.notice("Chippy: host CLI step gave no readable answer, judged by exit code only") }
             DispatchQueue.main.async { completion(s.step) }
         }
         guard FileManager.default.isExecutableFile(atPath: cli.path) else { finish(.failed("host CLI not found in the running app")); return }
@@ -129,7 +129,7 @@ enum TerminalJump {
                 guard v == .landed || v == .landedUnverified else { completion(v); return }
                 // One place logs every failed exact-target step; each reason is a fixed string or an error domain and code, never an id.
                 func step(_ r: JumpPlan.StepResult) {
-                    if case .failed(let why) = r { NSLog("Chippy: exact-target step failed (%@), app left in front", why) }
+                    if case .failed(let why) = r { Log.jump.error("Chippy: exact-target step failed (\(why)), app left in front") }
                     completion(JumpPlan.finalVerdict(v, step: r))
                 }
                 switch plan {

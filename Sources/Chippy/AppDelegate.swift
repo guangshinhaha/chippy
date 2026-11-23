@@ -80,9 +80,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         catch let e as SocketError where e.isAlreadyRunning {
             // A second copy would replace nothing and show a second, deaf notch (#176): quit, the first keeps running.
             // exit, not NSApp.terminate: willTerminate would run keepAwake.stop() and clear the first copy's lid-closed setting.
-            NSLog("Chippy: already running, quitting this copy")
+            Log.app.notice("Chippy: already running, quitting this copy")
             exit(0)
-        } catch { NSLog("Chippy: socket start failed: \(error)") }
+        } catch { Log.app.error("Chippy: socket start failed: \(error)") }
     }
 
     /// Sweep at `SweepCadence`'s pace (#180): 0.5s while something time-based is on screen, 5s when idle. Any published model change
